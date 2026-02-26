@@ -473,28 +473,157 @@ impl DbAdapter for PostgresAdapter {
         Ok(rows_inserted)
     }
 
-    // ===== Schema Discovery (stubs - will be implemented in arni-37z.3.4) =====
+    // ===== Schema Discovery =====
 
     async fn list_databases(&self) -> Result<Vec<String>> {
-        Err(DataError::NotSupported(
-            "list_databases will be implemented in task arni-37z.3.4".to_string(),
-        ))
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        // Query pg_database catalog
+        let query = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
+        let rows = client
+            .query(query, &[])
+            .await
+            .map_err(|e| DataError::Query(format!("Failed to list databases: {}", e)))?;
+
+        let databases: Vec<String> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+
+        Ok(databases)
     }
 
-    async fn list_tables(&self, _schema: Option<&str>) -> Result<Vec<String>> {
-        Err(DataError::NotSupported(
-            "list_tables will be implemented in task arni-37z.3.4".to_string(),
-        ))
+    async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        // Query information_schema.tables
+        let query = if let Some(schema_name) = schema {
+            format!(
+                "SELECT table_name FROM information_schema.tables \
+                 WHERE table_schema = '{}' AND table_type = 'BASE TABLE' \
+                 ORDER BY table_name",
+                schema_name
+            )
+        } else {
+            // Default to 'public' schema if none specified
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_type = 'BASE TABLE' \
+             ORDER BY table_name"
+                .to_string()
+        };
+
+        let rows = client
+            .query(&query, &[])
+            .await
+            .map_err(|e| DataError::Query(format!("Failed to list tables: {}", e)))?;
+
+        let tables: Vec<String> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+
+        Ok(tables)
     }
 
     async fn describe_table(
         &self,
-        _table_name: &str,
-        _schema: Option<&str>,
+        table_name: &str,
+        schema: Option<&str>,
     ) -> Result<crate::adapter::TableInfo> {
-        Err(DataError::NotSupported(
-            "describe_table will be implemented in task arni-37z.3.4".to_string(),
-        ))
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        // Use provided schema or default to 'public'
+        let schema_name = schema.unwrap_or("public");
+
+        // Query information_schema.columns for column details
+        let column_query = format!(
+            "SELECT column_name, data_type, is_nullable, column_default \
+             FROM information_schema.columns \
+             WHERE table_schema = '{}' AND table_name = '{}' \
+             ORDER BY ordinal_position",
+            schema_name, table_name
+        );
+
+        let rows = client
+            .query(&column_query, &[])
+            .await
+            .map_err(|e| DataError::Query(format!("Failed to describe table: {}", e)))?;
+
+        if rows.is_empty() {
+            return Err(DataError::Query(format!(
+                "Table '{}.{}' not found",
+                schema_name, table_name
+            )));
+        }
+
+        // Query for primary key constraints
+        let pk_query = format!(
+            "SELECT a.attname \
+             FROM pg_index i \
+             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
+             WHERE i.indrelid = '\"{}\".\"{}\"'::regclass AND i.indisprimary",
+            schema_name, table_name
+        );
+
+        let pk_rows = client
+            .query(&pk_query, &[])
+            .await
+            .map_err(|e| DataError::Query(format!("Failed to query primary keys: {}", e)))?;
+
+        let primary_keys: std::collections::HashSet<String> =
+            pk_rows.iter().map(|row| row.get::<_, String>(0)).collect();
+
+        // Build column info
+        let columns: Vec<crate::adapter::ColumnInfo> = rows
+            .iter()
+            .map(|row| {
+                let col_name: String = row.get(0);
+                let data_type: String = row.get(1);
+                let is_nullable: String = row.get(2);
+                let default_value: Option<String> = row.get(3);
+
+                crate::adapter::ColumnInfo {
+                    name: col_name.clone(),
+                    data_type,
+                    nullable: is_nullable == "YES",
+                    default_value,
+                    is_primary_key: primary_keys.contains(&col_name),
+                }
+            })
+            .collect();
+
+        Ok(crate::adapter::TableInfo {
+            name: table_name.to_string(),
+            schema: Some(schema_name.to_string()),
+            columns,
+        })
     }
 }
 
@@ -1096,7 +1225,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_databases_not_implemented() {
+    async fn test_list_databases_not_connected() {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
@@ -1104,11 +1233,39 @@ mod tests {
 
         let result = DbAdapter::list_databases(&adapter).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), DataError::NotSupported(_)));
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, DataError::Connection(_)),
+            "Expected Connection error, got: {:?}",
+            err
+        );
     }
 
     #[tokio::test]
-    async fn test_list_tables_not_implemented() {
+    #[ignore]
+    async fn test_list_databases() {
+        use crate::adapter::{Connection, DbAdapter};
+
+        let config = create_test_config();
+        let mut adapter = PostgresAdapter::new(config);
+        Connection::connect(&mut adapter)
+            .await
+            .expect("Failed to connect");
+
+        let result = DbAdapter::list_databases(&adapter).await;
+        assert!(result.is_ok());
+
+        let databases = result.unwrap();
+        assert!(databases.len() > 0);
+        assert!(databases.contains(&"postgres".to_string()));
+
+        Connection::disconnect(&mut adapter)
+            .await
+            .expect("Failed to disconnect");
+    }
+
+    #[tokio::test]
+    async fn test_list_tables_not_connected() {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
@@ -1116,11 +1273,66 @@ mod tests {
 
         let result = DbAdapter::list_tables(&adapter, None).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), DataError::NotSupported(_)));
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, DataError::Connection(_)),
+            "Expected Connection error, got: {:?}",
+            err
+        );
     }
 
     #[tokio::test]
-    async fn test_describe_table_not_implemented() {
+    #[ignore]
+    async fn test_list_tables_default_schema() {
+        use crate::adapter::{Connection, DbAdapter};
+
+        let config = create_test_config();
+        let mut adapter = PostgresAdapter::new(config);
+        Connection::connect(&mut adapter)
+            .await
+            .expect("Failed to connect");
+
+        let result = DbAdapter::list_tables(&adapter, None).await;
+        assert!(result.is_ok());
+
+        let tables = result.unwrap();
+        // Should list tables from 'public' schema by default
+        for table in &tables {
+            println!("Found table: {}", table);
+        }
+
+        Connection::disconnect(&mut adapter)
+            .await
+            .expect("Failed to disconnect");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_list_tables_custom_schema() {
+        use crate::adapter::{Connection, DbAdapter};
+
+        let config = create_test_config();
+        let mut adapter = PostgresAdapter::new(config);
+        Connection::connect(&mut adapter)
+            .await
+            .expect("Failed to connect");
+
+        let result = DbAdapter::list_tables(&adapter, Some("information_schema")).await;
+        assert!(result.is_ok());
+
+        let tables = result.unwrap();
+        // information_schema should have standard tables
+        assert!(tables.len() > 0);
+        assert!(tables.contains(&"tables".to_string()));
+        assert!(tables.contains(&"columns".to_string()));
+
+        Connection::disconnect(&mut adapter)
+            .await
+            .expect("Failed to disconnect");
+    }
+
+    #[tokio::test]
+    async fn test_describe_table_not_connected() {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
@@ -1128,7 +1340,84 @@ mod tests {
 
         let result = DbAdapter::describe_table(&adapter, "test_table", None).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), DataError::NotSupported(_)));
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, DataError::Connection(_)),
+            "Expected Connection error, got: {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_describe_table_not_found() {
+        use crate::adapter::{Connection, DbAdapter};
+
+        let config = create_test_config();
+        let mut adapter = PostgresAdapter::new(config);
+        Connection::connect(&mut adapter)
+            .await
+            .expect("Failed to connect");
+
+        let result = DbAdapter::describe_table(&adapter, "nonexistent_table_xyz", None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, DataError::Query(_)),
+            "Expected Query error, got: {:?}",
+            err
+        );
+
+        Connection::disconnect(&mut adapter)
+            .await
+            .expect("Failed to disconnect");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_describe_table() {
+        use crate::adapter::{Connection, DbAdapter};
+
+        let config = create_test_config();
+        let mut adapter = PostgresAdapter::new(config);
+        Connection::connect(&mut adapter)
+            .await
+            .expect("Failed to connect");
+
+        // Describe a standard information_schema table
+        let result =
+            DbAdapter::describe_table(&adapter, "tables", Some("information_schema")).await;
+        assert!(result.is_ok());
+
+        let table_info = result.unwrap();
+        assert_eq!(table_info.name, "tables");
+        assert_eq!(table_info.schema, Some("information_schema".to_string()));
+        assert!(table_info.columns.len() > 0);
+
+        // Verify column structure
+        for col in &table_info.columns {
+            assert!(!col.name.is_empty());
+            assert!(!col.data_type.is_empty());
+            println!(
+                "Column: {} ({}){}{} {}",
+                col.name,
+                col.data_type,
+                if col.nullable { " NULL" } else { " NOT NULL" },
+                if col.is_primary_key {
+                    " PRIMARY KEY"
+                } else {
+                    ""
+                },
+                col.default_value
+                    .as_ref()
+                    .map(|d| format!("DEFAULT {}", d))
+                    .unwrap_or_default()
+            );
+        }
+
+        Connection::disconnect(&mut adapter)
+            .await
+            .expect("Failed to disconnect");
     }
 
     #[test]
