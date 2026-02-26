@@ -1,0 +1,37 @@
+[package]
+name = "arni"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Multi-database adapter library for Rust, returning Polars DataFrames"
+keywords = ["database", "adapter", "polars", "dataframe", "sql"]
+categories = ["database", "data-structures"]
+
+[lib]
+name = "arni"
+path = "src/lib.rs"
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+async-trait = { workspace = true }
+polars = { workspace = true }
+tokio-postgres = { workspace = true }
+mongodb = { workspace = true }
+oracle = { workspace = true }
+tiberius = { workspace = true }
+duckdb = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+tokio = { workspace = true, features = ["test-util", "macros"] }
+tracing-subscriber = { workspace = true }
