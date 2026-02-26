@@ -27,8 +27,11 @@ pub trait DbAdapter: Connection {
     async fn query(&self, sql: &str) -> Result<DataFrame>;
 
     /// Execute a query with parameters
-    async fn query_with_params(&self, sql: &str, params: &[&dyn std::any::Any])
-        -> Result<DataFrame>;
+    async fn query_with_params(
+        &self,
+        sql: &str,
+        params: &[&dyn std::any::Any],
+    ) -> Result<DataFrame>;
 
     /// Insert data
     async fn insert(&self, table: &str, data: &DataFrame) -> Result<u64>;
@@ -57,18 +60,18 @@ mod tests {
     #[tokio::test]
     async fn test_connection_trait() {
         let mut conn = MockConnection::new();
-        
+
         // Initially not connected
         assert!(!conn.is_connected());
-        
+
         // Connect
         conn.connect().await.unwrap();
         assert!(conn.is_connected());
-        
+
         // Health check when connected
         let health = conn.health_check().await.unwrap();
         assert!(health);
-        
+
         // Disconnect
         conn.disconnect().await.unwrap();
         assert!(!conn.is_connected());
@@ -79,10 +82,10 @@ mod tests {
         let adapter = MockDbAdapter::new();
         let test_df = create_test_dataframe();
         adapter.set_query_result(test_df.clone());
-        
+
         let result = adapter.query("SELECT * FROM users").await;
         assert!(result.is_ok());
-        
+
         let calls = adapter.connection.get_calls();
         assert!(calls.iter().any(|c| c.contains("query")));
     }
@@ -92,7 +95,7 @@ mod tests {
         let adapter = MockDbAdapter::new();
         let test_df = create_test_dataframe();
         adapter.set_query_result(test_df);
-        
+
         let params: Vec<&dyn std::any::Any> = vec![&1, &"test"];
         let result = adapter
             .query_with_params("SELECT * FROM users WHERE id = ?", &params)
@@ -104,10 +107,10 @@ mod tests {
     async fn test_dbadapter_insert() {
         let adapter = MockDbAdapter::new();
         let test_df = create_test_dataframe();
-        
+
         let rows = adapter.insert("users", &test_df).await.unwrap();
         assert_eq!(rows, 1);
-        
+
         let calls = adapter.connection.get_calls();
         assert!(calls.iter().any(|c| c.contains("insert")));
     }
@@ -116,13 +119,10 @@ mod tests {
     async fn test_dbadapter_update() {
         let adapter = MockDbAdapter::new();
         let test_df = create_test_dataframe();
-        
-        let rows = adapter
-            .update("users", &test_df, "id = 1")
-            .await
-            .unwrap();
+
+        let rows = adapter.update("users", &test_df, "id = 1").await.unwrap();
         assert_eq!(rows, 1);
-        
+
         let calls = adapter.connection.get_calls();
         assert!(calls.iter().any(|c| c.contains("update")));
     }
@@ -130,10 +130,10 @@ mod tests {
     #[tokio::test]
     async fn test_dbadapter_delete() {
         let adapter = MockDbAdapter::new();
-        
+
         let rows = adapter.delete("users", "id = 1").await.unwrap();
         assert_eq!(rows, 1);
-        
+
         let calls = adapter.connection.get_calls();
         assert!(calls.iter().any(|c| c.contains("delete")));
     }
@@ -143,10 +143,10 @@ mod tests {
         let adapter = MockDbAdapter::new();
         let test_df = create_test_dataframe();
         adapter.set_query_result(test_df);
-        
+
         let result = adapter.list_tables().await;
         assert!(result.is_ok());
-        
+
         let calls = adapter.connection.get_calls();
         assert!(calls.iter().any(|c| c.contains("list_tables")));
     }
@@ -156,10 +156,10 @@ mod tests {
         let adapter = MockDbAdapter::new();
         let test_df = create_test_dataframe();
         adapter.set_query_result(test_df);
-        
+
         let result = adapter.describe_table("users").await;
         assert!(result.is_ok());
-        
+
         let calls = adapter.connection.get_calls();
         assert!(calls.iter().any(|c| c.contains("describe_table")));
     }
@@ -169,10 +169,10 @@ mod tests {
         let adapter = MockDbAdapter::new();
         let test_df = create_test_dataframe();
         adapter.set_query_result(test_df);
-        
+
         let result = adapter.list_columns("users").await;
         assert!(result.is_ok());
-        
+
         let calls = adapter.connection.get_calls();
         assert!(calls.iter().any(|c| c.contains("list_columns")));
     }

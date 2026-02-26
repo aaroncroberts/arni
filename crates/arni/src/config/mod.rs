@@ -67,7 +67,13 @@ impl Profile {
     /// Validate profile configuration
     pub fn validate(&self) -> Result<()> {
         match self {
-            Profile::Postgres { host, port, database, username, .. } => {
+            Profile::Postgres {
+                host,
+                port,
+                database,
+                username,
+                ..
+            } => {
                 if host.is_empty() {
                     return Err(Error::Config("Postgres host cannot be empty".to_string()));
                 }
@@ -75,10 +81,14 @@ impl Profile {
                     return Err(Error::Config("Postgres port must be non-zero".to_string()));
                 }
                 if database.is_empty() {
-                    return Err(Error::Config("Postgres database cannot be empty".to_string()));
+                    return Err(Error::Config(
+                        "Postgres database cannot be empty".to_string(),
+                    ));
                 }
                 if username.is_empty() {
-                    return Err(Error::Config("Postgres username cannot be empty".to_string()));
+                    return Err(Error::Config(
+                        "Postgres username cannot be empty".to_string(),
+                    ));
                 }
             }
             Profile::MongoDB { uri, database } => {
@@ -86,15 +96,25 @@ impl Profile {
                     return Err(Error::Config("MongoDB URI cannot be empty".to_string()));
                 }
                 if database.is_empty() {
-                    return Err(Error::Config("MongoDB database cannot be empty".to_string()));
+                    return Err(Error::Config(
+                        "MongoDB database cannot be empty".to_string(),
+                    ));
                 }
             }
             Profile::Oracle { connection_string } => {
                 if connection_string.is_empty() {
-                    return Err(Error::Config("Oracle connection string cannot be empty".to_string()));
+                    return Err(Error::Config(
+                        "Oracle connection string cannot be empty".to_string(),
+                    ));
                 }
             }
-            Profile::MsSql { host, port, database, username, .. } => {
+            Profile::MsSql {
+                host,
+                port,
+                database,
+                username,
+                ..
+            } => {
                 if host.is_empty() {
                     return Err(Error::Config("MsSql host cannot be empty".to_string()));
                 }
@@ -134,10 +154,10 @@ impl Config {
     pub fn from_yaml_file(path: &str) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("Failed to read config file '{}': {}", path, e)))?;
-        
+
         let config: Config = serde_yaml::from_str(&contents)
             .map_err(|e| Error::Config(format!("Failed to parse YAML config: {}", e)))?;
-        
+
         config.validate()?;
         Ok(config)
     }
@@ -146,10 +166,10 @@ impl Config {
     pub fn from_toml_file(path: &str) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("Failed to read config file '{}': {}", path, e)))?;
-        
+
         let config: Config = toml::from_str(&contents)
             .map_err(|e| Error::Config(format!("Failed to parse TOML config: {}", e)))?;
-        
+
         config.validate()?;
         Ok(config)
     }
@@ -160,12 +180,17 @@ impl Config {
         let extension = path_ref
             .extension()
             .and_then(|e| e.to_str())
-            .ok_or_else(|| Error::Config("Config file must have .yaml, .yml, or .toml extension".to_string()))?;
-        
+            .ok_or_else(|| {
+                Error::Config("Config file must have .yaml, .yml, or .toml extension".to_string())
+            })?;
+
         match extension {
             "yaml" | "yml" => Self::from_yaml_file(path_ref.to_str().unwrap()),
             "toml" => Self::from_toml_file(path_ref.to_str().unwrap()),
-            _ => Err(Error::Config(format!("Unsupported config file extension: .{}", extension))),
+            _ => Err(Error::Config(format!(
+                "Unsupported config file extension: .{}",
+                extension
+            ))),
         }
     }
 
@@ -177,13 +202,15 @@ impl Config {
     /// Validate configuration
     pub fn validate(&self) -> Result<()> {
         if self.profiles.is_empty() {
-            return Err(Error::Config("Configuration must contain at least one profile".to_string()));
+            return Err(Error::Config(
+                "Configuration must contain at least one profile".to_string(),
+            ));
         }
 
         for (name, profile) in &self.profiles {
-            profile.validate().map_err(|e| {
-                Error::Config(format!("Invalid profile '{}': {}", name, e))
-            })?;
+            profile
+                .validate()
+                .map_err(|e| Error::Config(format!("Invalid profile '{}': {}", name, e)))?;
         }
 
         Ok(())
@@ -293,7 +320,7 @@ mod tests {
             },
         );
         let config = Config { profiles };
-        
+
         assert!(config.get_profile("test").is_some());
         assert!(config.get_profile("missing").is_none());
     }
@@ -316,7 +343,7 @@ profiles:
 
         let config = Config::from_yaml_file(temp_file.path().to_str().unwrap());
         assert!(config.is_ok());
-        
+
         let config = config.unwrap();
         assert_eq!(config.profiles.len(), 1);
         assert!(config.get_profile("test_pg").is_some());
@@ -339,7 +366,7 @@ password = "testpass"
 
         let config = Config::from_toml_file(temp_file.path().to_str().unwrap());
         assert!(config.is_ok());
-        
+
         let config = config.unwrap();
         assert_eq!(config.profiles.len(), 1);
         assert!(config.get_profile("test_pg").is_some());

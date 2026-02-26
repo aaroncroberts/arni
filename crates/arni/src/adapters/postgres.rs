@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::{Connection, DbAdapter, DataFrame, Error, Result};
+use crate::{Connection, DataFrame, DbAdapter, Error, Result};
 
 /// PostgreSQL adapter
 pub struct PostgresAdapter {

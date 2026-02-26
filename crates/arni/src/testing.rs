@@ -1,11 +1,11 @@
 //! Test utilities and helpers
-//! 
+//!
 //! This module provides common utilities for testing, including mock implementations
 //! and test data generators. Only available when testing.
 
 #![cfg(test)]
 
-use crate::{Connection, DbAdapter, DataFrame, Error, Result};
+use crate::{Connection, DataFrame, DbAdapter, Error, Result};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 
@@ -114,16 +114,12 @@ impl MockDbAdapter {
 
     /// Get the next query result or return empty DataFrame
     fn get_query_result(&self) -> DataFrame {
-        self.query_results
-            .lock()
-            .unwrap()
-            .pop()
-            .unwrap_or_else(|| {
-                // Return empty DataFrame
-                use polars::prelude::*;
-                let df = DataFrame::default();
-                crate::DataFrame::from(df)
-            })
+        self.query_results.lock().unwrap().pop().unwrap_or_else(|| {
+            // Return empty DataFrame
+            use polars::prelude::*;
+            let df = DataFrame::default();
+            crate::DataFrame::from(df)
+        })
     }
 }
 
@@ -199,13 +195,15 @@ impl DbAdapter for MockDbAdapter {
 
     async fn describe_table(&self, table: &str) -> Result<DataFrame> {
         self.check_error()?;
-        self.connection.log_call(&format!("describe_table: {}", table));
+        self.connection
+            .log_call(&format!("describe_table: {}", table));
         Ok(self.get_query_result())
     }
 
     async fn list_columns(&self, table: &str) -> Result<DataFrame> {
         self.check_error()?;
-        self.connection.log_call(&format!("list_columns: {}", table));
+        self.connection
+            .log_call(&format!("list_columns: {}", table));
         Ok(self.get_query_result())
     }
 }
@@ -213,14 +211,14 @@ impl DbAdapter for MockDbAdapter {
 /// Create a sample DataFrame for testing
 pub fn create_test_dataframe() -> DataFrame {
     use polars::prelude::*;
-    
+
     let df = df! {
         "id" => &[1, 2, 3],
         "name" => &["Alice", "Bob", "Charlie"],
         "age" => &[30, 25, 35],
     }
     .unwrap();
-    
+
     crate::DataFrame::from(df)
 }
 

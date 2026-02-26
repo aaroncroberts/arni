@@ -38,7 +38,7 @@ impl std::fmt::Display for DataFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-use polars::prelude::*;
+    use polars::prelude::*;
 
     #[test]
     fn test_dataframe_new() {
