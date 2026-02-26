@@ -26,8 +26,7 @@ impl TestDbConfig {
                 .unwrap_or(5432),
             database: env::var("TEST_POSTGRES_DB").unwrap_or_else(|_| "arni_test".to_string()),
             username: env::var("TEST_POSTGRES_USER").unwrap_or_else(|_| "postgres".to_string()),
-            password: env::var("TEST_POSTGRES_PASSWORD")
-                .unwrap_or_else(|_| "postgres".to_string()),
+            password: env::var("TEST_POSTGRES_PASSWORD").unwrap_or_else(|_| "postgres".to_string()),
         }
     }
 
