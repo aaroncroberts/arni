@@ -52,6 +52,40 @@ Currently supported databases:
 - ⏳ SQL Server (planned)
 - ⏳ DuckDB (planned)
 
+## Quick Start
+
+### Development
+
+Use the Makefile for common development tasks:
+
+```bash
+make help           # Show all available commands
+make build          # Build in debug mode
+make test           # Run all tests
+make check          # Fast compilation check
+make fmt            # Format code
+make clippy         # Lint code
+make dev            # Watch mode (auto-rebuild on changes)
+```
+
+See the [scripts README](scripts/README.md) for more detailed information about individual scripts.
+
+### Common Workflows
+
+```bash
+# Quick validation
+make check-all      # Format check, lint, compile check, test
+
+# Pre-commit checks
+make pre-commit     # Format, fix lints, check, test
+
+# Development with auto-reload
+make dev-test       # Watch and run tests on changes
+
+# Full CI pipeline
+make ci-check       # Format check, lint, build release, test, coverage
+```
+
 ## License
 
 MIT
