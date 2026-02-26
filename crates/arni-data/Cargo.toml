@@ -1,0 +1,47 @@
+[package]
+name = "arni-data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+description = "Unified database access with Polars DataFrames"
+keywords = ["database", "polars", "dataframe", "sql", "adapter"]
+categories = ["database"]
+
+[dependencies]
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Async
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+toml.workspace = true
+
+# Data manipulation
+polars = { workspace = true, features = ["lazy", "dtype-full", "serde"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = []
+
+# Database-specific features (to be implemented)
+postgres = []
+mysql = []
+sqlite = []
+mongodb = []
+mssql = []
+oracle = []
+duckdb = []
+
+# Convenience feature to enable all databases
+all-databases = ["postgres", "mysql", "sqlite", "mongodb", "mssql", "oracle", "duckdb"]
