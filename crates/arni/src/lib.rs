@@ -34,6 +34,9 @@ pub mod error;
 pub mod traits;
 pub mod types;
 
+#[cfg(test)]
+pub mod testing;
+
 // Re-exports
 pub use error::{Error, Result};
 pub use traits::{Connection, DbAdapter};
