@@ -8,6 +8,7 @@
 //! # Available Adapters
 //!
 //! - [`postgres`] - PostgreSQL adapter (requires `postgres` feature)
+//! - [`mysql`] - MySQL adapter (requires `mysql` feature)
 //!
 //! # Examples
 //!
@@ -21,3 +22,6 @@
 
 #[cfg(feature = "postgres")]
 pub mod postgres;
+
+#[cfg(feature = "mysql")]
+pub mod mysql;
