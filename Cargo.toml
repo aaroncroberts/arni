@@ -25,8 +25,10 @@ polars = { version = "0.36", features = ["lazy", "parquet", "json"] }
 tokio-postgres = "0.7"
 mongodb = "2.8"
 oracle = "0.5"
-tiberius = { version = "0.12", features = ["rustls"] }
-duckdb = { version = "0.10", features = ["bundled"] }
+# TODO: Re-enable tiberius once upstream build issues are resolved
+# tiberius = { version = "0.12", features = ["rustls"] }
+# TODO: Re-enable duckdb once build issues are resolved (macOS SDK compatibility)
+# duckdb = { version = "0.10", features = ["bundled"] }
 
 # Configuration
 serde = { version = "1.0", features = ["derive"] }

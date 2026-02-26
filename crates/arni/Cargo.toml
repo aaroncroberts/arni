@@ -22,8 +22,8 @@ polars = { workspace = true }
 tokio-postgres = { workspace = true }
 mongodb = { workspace = true }
 oracle = { workspace = true }
-tiberius = { workspace = true }
-duckdb = { workspace = true }
+# tiberius = { workspace = true }  # Temporarily disabled due to build issues
+# duckdb = { workspace = true }  # Temporarily disabled due to build issues
 serde = { workspace = true }
 serde_yaml = { workspace = true }
 toml = { workspace = true }
