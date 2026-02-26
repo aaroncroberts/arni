@@ -29,6 +29,11 @@ toml.workspace = true
 # Data manipulation
 polars = { workspace = true, features = ["lazy", "dtype-full", "serde"] }
 
+# Database drivers (optional, enabled via features)
+tokio-postgres = { version = "0.7", optional = true }
+postgres-native-tls = { version = "0.5", optional = true }
+native-tls = { version = "0.2", optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
@@ -36,7 +41,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 default = []
 
 # Database-specific features (to be implemented)
-postgres = []
+postgres = ["dep:tokio-postgres", "dep:postgres-native-tls", "dep:native-tls"]
 mysql = []
 sqlite = []
 mongodb = []
