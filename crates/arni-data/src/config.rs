@@ -132,9 +132,9 @@ impl ArniConfig {
 
         // Validate each profile
         for (profile_name, profile) in &self.profiles {
-            profile.validate().map_err(|e| {
-                DataError::Config(format!("Profile '{}': {}", profile_name, e))
-            })?;
+            profile
+                .validate()
+                .map_err(|e| DataError::Config(format!("Profile '{}': {}", profile_name, e)))?;
         }
 
         Ok(())
@@ -316,7 +316,12 @@ fn substitute_env_var(value: &str) -> Result<String> {
                     ))
                 })?;
 
-                result = format!("{}{}{}", &result[..start], env_value, &result[start + end + 1..]);
+                result = format!(
+                    "{}{}{}",
+                    &result[..start],
+                    env_value,
+                    &result[start + end + 1..]
+                );
                 changed = true;
             }
         }
@@ -617,10 +622,7 @@ mod tests {
     fn test_substitute_env_var_missing() {
         let result = substitute_env_var("prefix_${MISSING_VAR}_suffix");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("MISSING_VAR")); 
+        assert!(result.unwrap_err().to_string().contains("MISSING_VAR"));
     }
 
     #[test]

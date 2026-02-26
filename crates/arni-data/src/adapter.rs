@@ -311,6 +311,112 @@ pub struct TableMetadata {
     pub table_type: Option<String>,
 }
 
+/// Trait for managing database connection lifecycle
+///
+/// This trait provides a focused interface for connection management, separate from
+/// the higher-level [`DbAdapter`] trait. Implementations handle the low-level details
+/// of establishing, maintaining, and closing database connections.
+///
+/// # Lifecycle
+///
+/// 1. **Connection**: Call [`connect()`](Connection::connect) to establish a connection
+/// 2. **Validation**: Use [`health_check()`](Connection::health_check) to verify the connection is working
+/// 3. **Usage**: The connection is ready for database operations
+/// 4. **Disconnection**: Call [`disconnect()`](Connection::disconnect) when done
+///
+/// # Health Checks
+///
+/// The [`health_check()`](Connection::health_check) method should verify the connection is:
+/// - Active and responsive
+/// - Capable of executing queries
+/// - Within acceptable latency bounds
+///
+/// # Examples
+///
+/// ```ignore
+/// use arni_data::adapter::{Connection, ConnectionConfig, DatabaseType};
+///
+/// async fn example(mut conn: impl Connection) -> Result<()> {
+///     // Establish connection
+///     conn.connect().await?;
+///     
+///     // Verify it's working
+///     if conn.is_connected() {
+///         let healthy = conn.health_check().await?;
+///         println!("Connection healthy: {}", healthy);
+///     }
+///     
+///     // Clean up
+///     conn.disconnect().await?;
+///     Ok(())
+/// }
+/// ```
+#[async_trait]
+pub trait Connection: Send + Sync {
+    /// Establish a connection to the database
+    ///
+    /// This method should:
+    /// - Validate the connection configuration
+    /// - Establish network connection (if applicable)
+    /// - Authenticate with provided credentials
+    /// - Prepare the connection for queries
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataError::Connection`] if:
+    /// - Configuration is invalid
+    /// - Network connection fails
+    /// - Authentication fails
+    /// - Database is unreachable
+    async fn connect(&mut self) -> Result<()>;
+
+    /// Close the database connection
+    ///
+    /// This method should:
+    /// - Gracefully close the connection
+    /// - Release any resources
+    /// - Clean up internal state
+    ///
+    /// Calling disconnect on an already-closed connection should be a no-op.
+    async fn disconnect(&mut self) -> Result<()>;
+
+    /// Check if the connection is currently active
+    ///
+    /// Returns `true` if connected, `false` otherwise.
+    /// This is a fast, non-blocking check of internal state.
+    fn is_connected(&self) -> bool;
+
+    /// Perform a health check on the connection
+    ///
+    /// This method should:
+    /// - Execute a lightweight query (e.g., `SELECT 1`)
+    /// - Verify the response is received within acceptable time
+    /// - Return `true` if the connection is healthy
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DataError::Connection`] if:
+    /// - The connection is closed
+    /// - The query fails
+    /// - The response times out
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if conn.health_check().await? {
+    ///     println!("Connection is healthy");
+    /// } else {
+    ///     println!("Connection needs attention");
+    /// }
+    /// ```
+    async fn health_check(&self) -> Result<bool>;
+
+    /// Get the connection configuration
+    ///
+    /// Returns a reference to the configuration used to establish this connection.
+    fn config(&self) -> &ConnectionConfig;
+}
+
 /// Main trait that all database adapters must implement
 ///
 /// This trait provides a unified interface for database access with two data formats:
@@ -609,7 +715,10 @@ mod tests {
         assert_eq!(format!("{}", QueryValue::Bool(true)), "true");
         assert_eq!(format!("{}", QueryValue::Int(42)), "42");
         assert_eq!(format!("{}", QueryValue::Float(3.14)), "3.14");
-        assert_eq!(format!("{}", QueryValue::Text("hello".to_string())), "hello");
+        assert_eq!(
+            format!("{}", QueryValue::Text("hello".to_string())),
+            "hello"
+        );
         assert_eq!(format!("{}", QueryValue::Bytes(vec![1, 2, 3])), "<3 bytes>");
     }
 
@@ -623,7 +732,10 @@ mod tests {
             QueryValue::Text("hello".to_string()),
             QueryValue::Text("hello".to_string())
         );
-        assert_eq!(QueryValue::Bytes(vec![1, 2, 3]), QueryValue::Bytes(vec![1, 2, 3]));
+        assert_eq!(
+            QueryValue::Bytes(vec![1, 2, 3]),
+            QueryValue::Bytes(vec![1, 2, 3])
+        );
     }
 
     #[test]
@@ -727,5 +839,199 @@ mod tests {
         let df = result.to_dataframe().unwrap();
         assert_eq!(df.height(), 2);
         assert_eq!(df.width(), 4);
+    }
+
+    // ===== Connection Trait Tests =====
+
+    /// Mock connection for testing the Connection trait
+    struct MockConnection {
+        config: ConnectionConfig,
+        connected: bool,
+        fail_health_check: bool,
+    }
+
+    impl MockConnection {
+        fn new(config: ConnectionConfig) -> Self {
+            Self {
+                config,
+                connected: false,
+                fail_health_check: false,
+            }
+        }
+
+        #[allow(dead_code)]
+        fn set_fail_health_check(&mut self, fail: bool) {
+            self.fail_health_check = fail;
+        }
+    }
+
+    #[async_trait]
+    impl Connection for MockConnection {
+        async fn connect(&mut self) -> Result<()> {
+            if self.connected {
+                return Err(crate::DataError::Connection(
+                    "Already connected".to_string(),
+                ));
+            }
+            self.connected = true;
+            Ok(())
+        }
+
+        async fn disconnect(&mut self) -> Result<()> {
+            self.connected = false;
+            Ok(())
+        }
+
+        fn is_connected(&self) -> bool {
+            self.connected
+        }
+
+        async fn health_check(&self) -> Result<bool> {
+            if !self.connected {
+                return Err(crate::DataError::Connection("Not connected".to_string()));
+            }
+            if self.fail_health_check {
+                return Ok(false);
+            }
+            Ok(true)
+        }
+
+        fn config(&self) -> &ConnectionConfig {
+            &self.config
+        }
+    }
+
+    #[tokio::test]
+    async fn test_connection_lifecycle() {
+        let config = ConnectionConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            db_type: DatabaseType::Postgres,
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            database: "test".to_string(),
+            username: Some("user".to_string()),
+            use_ssl: false,
+            parameters: HashMap::new(),
+        };
+
+        let mut conn = MockConnection::new(config);
+
+        // Initially not connected
+        assert!(!conn.is_connected());
+
+        // Connect
+        conn.connect().await.unwrap();
+        assert!(conn.is_connected());
+
+        // Health check should pass
+        assert!(conn.health_check().await.unwrap());
+
+        // Disconnect
+        conn.disconnect().await.unwrap();
+        assert!(!conn.is_connected());
+    }
+
+    #[tokio::test]
+    async fn test_connection_double_connect() {
+        let config = ConnectionConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            db_type: DatabaseType::Postgres,
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            database: "test".to_string(),
+            username: Some("user".to_string()),
+            use_ssl: false,
+            parameters: HashMap::new(),
+        };
+
+        let mut conn = MockConnection::new(config);
+
+        // First connect succeeds
+        conn.connect().await.unwrap();
+
+        // Second connect should fail
+        let result = conn.connect().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_connection_health_check_not_connected() {
+        let config = ConnectionConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            db_type: DatabaseType::Postgres,
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            database: "test".to_string(),
+            username: Some("user".to_string()),
+            use_ssl: false,
+            parameters: HashMap::new(),
+        };
+
+        let conn = MockConnection::new(config);
+
+        // Health check on disconnected connection should error
+        let result = conn.health_check().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_connection_config_access() {
+        let config = ConnectionConfig {
+            id: "test-id".to_string(),
+            name: "Test Name".to_string(),
+            db_type: DatabaseType::MySQL,
+            host: Some("db.example.com".to_string()),
+            port: Some(3306),
+            database: "mydb".to_string(),
+            username: Some("admin".to_string()),
+            use_ssl: true,
+            parameters: HashMap::new(),
+        };
+
+        let conn = MockConnection::new(config.clone());
+
+        // Should be able to access config
+        let retrieved_config = conn.config();
+        assert_eq!(retrieved_config.id, "test-id");
+        assert_eq!(retrieved_config.name, "Test Name");
+        assert_eq!(retrieved_config.db_type, DatabaseType::MySQL);
+        assert_eq!(retrieved_config.host, Some("db.example.com".to_string()));
+        assert_eq!(retrieved_config.port, Some(3306));
+        assert_eq!(retrieved_config.database, "mydb");
+        assert_eq!(retrieved_config.username, Some("admin".to_string()));
+        assert!(retrieved_config.use_ssl);
+    }
+
+    #[tokio::test]
+    async fn test_connection_disconnect_idempotent() {
+        let config = ConnectionConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            db_type: DatabaseType::Postgres,
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            database: "test".to_string(),
+            username: Some("user".to_string()),
+            use_ssl: false,
+            parameters: HashMap::new(),
+        };
+
+        let mut conn = MockConnection::new(config);
+
+        // Disconnect when not connected should be no-op
+        conn.disconnect().await.unwrap();
+        assert!(!conn.is_connected());
+
+        // Connect then disconnect
+        conn.connect().await.unwrap();
+        conn.disconnect().await.unwrap();
+        assert!(!conn.is_connected());
+
+        // Disconnect again should be no-op
+        conn.disconnect().await.unwrap();
+        assert!(!conn.is_connected());
     }
 }
