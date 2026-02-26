@@ -168,6 +168,127 @@ impl ArniConfig {
 
         Ok(self)
     }
+
+    /// Load configuration from a file
+    ///
+    /// Automatically detects format (YAML or TOML) based on file extension.
+    /// Supports `.yaml`, `.yml`, and `.toml` extensions.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the configuration file
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use arni_data::config::ArniConfig;
+    ///
+    /// let config = ArniConfig::load_from_file("config.yaml")?;
+    /// ```
+    pub fn load_from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            DataError::Config(format!(
+                "Failed to read config file '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        // Determine format from extension
+        let extension = path.extension().and_then(|e| e.to_str()).ok_or_else(|| {
+            DataError::Config(format!(
+                "Cannot determine config format for file: {}",
+                path.display()
+            ))
+        })?;
+
+        let config = match extension.to_lowercase().as_str() {
+            "yaml" | "yml" => Self::from_yaml(&content)?,
+            "toml" => Self::from_toml(&content)?,
+            _ => {
+                return Err(DataError::Config(format!(
+                    "Unsupported config format: .{}. Use .yaml, .yml, or .toml",
+                    extension
+                )))
+            }
+        };
+
+        // Validate before returning
+        config.validate()?;
+
+        Ok(config)
+    }
+
+    /// Load configuration from default locations
+    ///
+    /// Tries the following locations in order:
+    /// 1. `~/.arni/config.yaml`
+    /// 2. `~/.arni/config.toml`
+    /// 3. `./arni.yaml`
+    /// 4. `./arni.toml`
+    /// 5. `./.arni.yaml`
+    /// 6. `./.arni.toml`
+    ///
+    /// Returns the first configuration file found, or an error if none exist.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use arni_data::config::ArniConfig;
+    ///
+    /// let config = ArniConfig::load_from_default_paths()?;
+    /// ```
+    pub fn load_from_default_paths() -> Result<Self> {
+        let home_dir = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
+
+        let mut paths = Vec::new();
+
+        // Add home directory paths if HOME is set
+        if let Ok(home) = home_dir {
+            let home_path = std::path::Path::new(&home);
+            paths.push(home_path.join(".arni").join("config.yaml"));
+            paths.push(home_path.join(".arni").join("config.toml"));
+        }
+
+        // Add current directory paths
+        paths.push(std::path::PathBuf::from("./arni.yaml"));
+        paths.push(std::path::PathBuf::from("./arni.toml"));
+        paths.push(std::path::PathBuf::from("./.arni.yaml"));
+        paths.push(std::path::PathBuf::from("./.arni.toml"));
+
+        // Try each path in order
+        for path in &paths {
+            if path.exists() {
+                return Self::load_from_file(path);
+            }
+        }
+
+        // None found
+        Err(DataError::Config(
+            "No configuration file found in default locations. Tried: ~/.arni/config.{yaml,toml}, ./arni.{yaml,toml}, ./.arni.{yaml,toml}".to_string(),
+        ))
+    }
+
+    /// Parse configuration from YAML string
+    ///
+    /// # Arguments
+    ///
+    /// * `yaml` - YAML content as string
+    fn from_yaml(yaml: &str) -> Result<Self> {
+        serde_yaml::from_str(yaml)
+            .map_err(|e| DataError::Config(format!("Failed to parse YAML configuration: {}", e)))
+    }
+
+    /// Parse configuration from TOML string
+    ///
+    /// # Arguments
+    ///
+    /// * `toml_str` - TOML content as string
+    fn from_toml(toml_str: &str) -> Result<Self> {
+        toml::from_str(toml_str)
+            .map_err(|e| DataError::Config(format!("Failed to parse TOML configuration: {}", e)))
+    }
 }
 
 impl ConfigProfile {
@@ -687,5 +808,294 @@ mod tests {
 
         let result = validate_connection(&config);
         assert!(result.is_ok());
+    }
+
+    // ===== File Loading Tests =====
+
+    #[test]
+    fn test_from_yaml() {
+        let yaml = r#"
+default_profile: dev
+
+profiles:
+  dev:
+    connections:
+      - id: test-conn
+        name: Test Connection
+        db_type: postgres
+        host: localhost
+        port: 5432
+        database: testdb
+        username: testuser
+        use_ssl: false
+"#;
+
+        let config = ArniConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.default_profile, "dev");
+        assert!(config.profiles.contains_key("dev"));
+
+        let profile = config.get_profile("dev").unwrap();
+        assert_eq!(profile.connections.len(), 1);
+        assert_eq!(profile.connections[0].id, "test-conn");
+    }
+
+    #[test]
+    fn test_from_toml() {
+        let toml = r#"
+default_profile = "prod"
+
+[profiles.prod]
+connections = [
+    { id = "prod-db", name = "Production DB", db_type = "postgres", host = "db.example.com", port = 5432, database = "proddb", username = "admin", use_ssl = true }
+]
+"#;
+
+        let config = ArniConfig::from_toml(toml).unwrap();
+        assert_eq!(config.default_profile, "prod");
+        assert!(config.profiles.contains_key("prod"));
+
+        let profile = config.get_profile("prod").unwrap();
+        assert_eq!(profile.connections.len(), 1);
+        assert_eq!(profile.connections[0].id, "prod-db");
+    }
+
+    #[test]
+    fn test_from_yaml_invalid() {
+        let invalid_yaml = "invalid: yaml: structure:";
+        let result = ArniConfig::from_yaml(invalid_yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_toml_invalid() {
+        let invalid_toml = "invalid = toml = syntax";
+        let result = ArniConfig::from_toml(invalid_toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_from_file_yaml() {
+        use std::io::Write;
+
+        let yaml_content = r#"
+default_profile: test
+
+profiles:
+  test:
+    connections:
+      - id: file-test
+        name: File Test
+        db_type: sqlite
+        database: ":memory:"
+        use_ssl: false
+"#;
+
+        // Create temp file
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_config.yaml");
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        file.write_all(yaml_content.as_bytes()).unwrap();
+
+        // Load and verify
+        let config = ArniConfig::load_from_file(&temp_file).unwrap();
+        assert_eq!(config.default_profile, "test");
+        assert_eq!(config.profiles.len(), 1);
+
+        // Cleanup
+        std::fs::remove_file(&temp_file).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_file_toml() {
+        use std::io::Write;
+
+        let toml_content = r#"
+default_profile = "test"
+
+[profiles.test]
+connections = [
+    { id = "toml-test", name = "TOML Test", db_type = "duckdb", database = "test.db", use_ssl = false }
+]
+"#;
+
+        // Create temp file
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_config.toml");
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        // Load and verify
+        let config = ArniConfig::load_from_file(&temp_file).unwrap();
+        assert_eq!(config.default_profile, "test");
+        assert_eq!(config.profiles.len(), 1);
+
+        // Cleanup
+        std::fs::remove_file(&temp_file).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_file_unsupported_extension() {
+        use std::io::Write;
+
+        // Create temp file with unsupported extension
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_config.json");
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        file.write_all(b"{}").unwrap();
+
+        // Should fail
+        let result = ArniConfig::load_from_file(&temp_file);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported"));
+
+        // Cleanup
+        std::fs::remove_file(&temp_file).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_file_nonexistent() {
+        let result = ArniConfig::load_from_file("/nonexistent/path/config.yaml");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Failed to read"));
+    }
+
+    #[test]
+    fn test_load_from_file_with_env_vars() {
+        use std::io::Write;
+
+        env::set_var("TEST_DB_HOST", "envhost.example.com");
+        env::set_var("TEST_DB_USER", "envuser");
+
+        let yaml_content = r#"
+default_profile: test
+
+profiles:
+  test:
+    connections:
+      - id: env-test
+        name: Env Var Test
+        db_type: postgres
+        host: ${TEST_DB_HOST}
+        port: 5432
+        database: testdb
+        username: ${TEST_DB_USER}
+        use_ssl: false
+"#;
+
+        // Create temp file
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_config_env.yaml");
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        file.write_all(yaml_content.as_bytes()).unwrap();
+
+        // Load config (without substitution first)
+        let config = ArniConfig::load_from_file(&temp_file).unwrap();
+
+        // Verify env vars are NOT yet substituted
+        let profile = config.get_profile("test").unwrap();
+        assert!(profile.connections[0]
+            .host
+            .as_ref()
+            .unwrap()
+            .contains("TEST_DB_HOST"));
+
+        // Now substitute
+        let config = config.substitute_env_vars().unwrap();
+        let profile = config.get_profile("test").unwrap();
+
+        // Verify substitution worked
+        assert_eq!(
+            profile.connections[0].host,
+            Some("envhost.example.com".to_string())
+        );
+        assert_eq!(profile.connections[0].username, Some("envuser".to_string()));
+
+        // Cleanup
+        std::fs::remove_file(&temp_file).unwrap();
+        env::remove_var("TEST_DB_HOST");
+        env::remove_var("TEST_DB_USER");
+    }
+
+    #[test]
+    fn test_load_from_default_paths_no_files() {
+        // This test assumes no default config files exist
+        // Save current directory
+        let original_dir = std::env::current_dir().unwrap();
+
+        // Create a temporary empty directory
+        let temp_dir = std::env::temp_dir().join("arni_test_empty");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        // Change to temp directory
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        let result = ArniConfig::load_from_default_paths();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No configuration file found"));
+
+        // Restore directory
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_load_from_default_paths_finds_file() {
+        use std::io::Write;
+
+        let yaml_content = r#"
+default_profile: default
+
+profiles:
+  default:
+    connections:
+      - id: default-conn
+        name: Default
+        db_type: sqlite
+        database: ":memory:"
+        use_ssl: false
+"#;
+
+        // Save current directory
+        let original_dir = std::env::current_dir().unwrap();
+
+        // Create a temporary directory with config file
+        let temp_dir = std::env::temp_dir().join("arni_test_with_config");
+        std::fs::create_dir_all(&temp_dir).ok();
+
+        // Create config file in temp dir
+        let config_file = temp_dir.join("arni.yaml");
+        {
+            let mut file = std::fs::File::create(&config_file).unwrap();
+            file.write_all(yaml_content.as_bytes()).unwrap();
+            file.flush().unwrap();
+        } // File is closed here
+
+        // Verify file exists
+        assert!(config_file.exists(), "Config file should exist");
+
+        // Change to temp directory
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        // Verify file exists from new directory
+        let local_path = std::path::Path::new("arni.yaml");
+        assert!(
+            local_path.exists(),
+            "arni.yaml should exist in current directory"
+        );
+
+        // Should find the file
+        let config = ArniConfig::load_from_default_paths().unwrap();
+        assert_eq!(config.default_profile, "default");
+
+        // Restore directory
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).ok();
     }
 }

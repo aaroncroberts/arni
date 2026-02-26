@@ -35,6 +35,7 @@ pub struct ConnectionConfig {
     /// Whether to use SSL/TLS
     pub use_ssl: bool,
     /// Additional connection parameters
+    #[serde(default)]
     pub parameters: HashMap<String, String>,
 }
 
