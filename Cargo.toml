@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/arni",
     "crates/arni-cli",
+    "crates/arni-logging",
 ]
 
 [workspace.package]
@@ -44,6 +45,7 @@ clap = { version = "4.4", features = ["derive", "color", "cargo"] }
 
 # Logging
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Testing
