@@ -413,7 +413,6 @@ impl DbAdapter for PostgresAdapter {
         }
 
         // Insert data row by row
-        // Note: This is not efficient for large datasets, but it's simple and works
         let column_names: Vec<String> = df
             .get_column_names()
             .iter()
@@ -434,14 +433,44 @@ impl DbAdapter for PostgresAdapter {
             placeholders.join(", ")
         );
 
-        // Placeholder implementation - will be completed with proper type handling
-        // in the DataFrame conversion task (arni-37z.3.3)
-        let _ = (insert_sql, df.height());
+        let mut rows_inserted: u64 = 0;
 
-        Err(DataError::NotSupported(
-            "export_dataframe not yet implemented - will be completed in task arni-37z.3.3"
-                .to_string(),
-        ))
+        // Insert rows in batches for better performance
+        for row_idx in 0..df.height() {
+            // Extract values for this row from each column
+            let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
+
+            for col_name in &column_names {
+                let column = df.column(col_name).map_err(|e| {
+                    DataError::DataFrame(format!("Column '{}' not found: {}", col_name, e))
+                })?;
+
+                // Get the underlying Series from the Column
+                let series = column.as_materialized_series();
+
+                // Convert series value at row_idx to ToSql parameter
+                let param = self.series_value_to_sql(series, row_idx)?;
+                params.push(param);
+            }
+
+            // Convert params to references (cast to remove Send bound for tokio-postgres)
+            let params_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
+                .iter()
+                .map(|p| p.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+                .collect();
+
+            // Execute insert
+            client
+                .execute(&insert_sql, &params_refs[..])
+                .await
+                .map_err(|e| {
+                    DataError::Query(format!("Failed to insert row {}: {}", row_idx, e))
+                })?;
+
+            rows_inserted += 1;
+        }
+
+        Ok(rows_inserted)
     }
 
     // ===== Schema Discovery (stubs - will be implemented in arni-37z.3.4) =====
@@ -557,6 +586,154 @@ impl PostgresAdapter {
                         col_type, e
                     ))
                 }),
+        }
+    }
+
+    /// Convert a value from a Polars Series to a PostgreSQL ToSql parameter
+    ///
+    /// Extracts the value at `row_idx` from the `series` and converts it to a type
+    /// that implements `ToSql` for use in parameterized queries.
+    fn series_value_to_sql(
+        &self,
+        series: &Series,
+        row_idx: usize,
+    ) -> Result<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> {
+        // Check if value is null by getting the null mask and checking the index
+        let null_mask = series.is_null();
+        if null_mask.get(row_idx).unwrap_or(false) {
+            return Ok(Box::new(None::<i32>)); // NULL value
+        }
+
+        // Convert based on Series data type
+        match series.dtype() {
+            DataType::Boolean => {
+                let val = series
+                    .bool()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val))
+            }
+            DataType::Int8 | DataType::Int16 => {
+                let series_i32 = series
+                    .cast(&DataType::Int32)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = series_i32
+                    .i32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val))
+            }
+            DataType::Int32 => {
+                let val = series
+                    .i32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val))
+            }
+            DataType::Int64 => {
+                let val = series
+                    .i64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val))
+            }
+            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
+                // Convert unsigned to signed for PostgreSQL
+                let series_i32 = series
+                    .cast(&DataType::Int32)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = series_i32
+                    .i32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val))
+            }
+            DataType::UInt64 => {
+                // Convert unsigned to signed for PostgreSQL
+                let series_i64 = series
+                    .cast(&DataType::Int64)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = series_i64
+                    .i64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val))
+            }
+            DataType::Float32 => {
+                let val = series
+                    .f32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val))
+            }
+            DataType::Float64 => {
+                let val = series
+                    .f64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val))
+            }
+            DataType::String => {
+                let val = series
+                    .str()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val.to_string()))
+            }
+            DataType::Binary => {
+                let val = series
+                    .binary()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val.to_vec()))
+            }
+            dtype => {
+                // For unsupported types, try to convert to string
+                let series_str = series.cast(&DataType::String).map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Cannot convert {:?} to PostgreSQL type: {}",
+                        dtype, e
+                    ))
+                })?;
+                let val = series_str
+                    .str()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(Box::new(val.to_string()))
+            }
         }
     }
 
@@ -777,29 +954,145 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_export_dataframe_not_implemented() {
+    async fn test_export_dataframe_basic() {
         use crate::adapter::DbAdapter;
         use polars::prelude::*;
 
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        // Connect first so we get past the connection check
+        // Connect first
         DbAdapter::connect(&mut adapter, &config, None)
             .await
             .unwrap();
 
+        // Create test DataFrame with various types
         let df = DataFrame::new(vec![
-            Series::new("id".into(), &[1, 2, 3]).into(),
+            Series::new("id".into(), &[1i32, 2, 3]).into(),
             Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
+            Series::new("score".into(), &[95.5f64, 87.3, 92.1]).into(),
+            Series::new("active".into(), &[true, false, true]).into(),
         ])
         .unwrap();
 
+        // Export with replace=true
+        let result =
+            DbAdapter::export_dataframe(&adapter, &df, "test_export_basic", None, true).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 3); // 3 rows inserted
+
+        // Verify data was inserted by reading back
+        let read_result =
+            DbAdapter::execute_query(&adapter, "SELECT * FROM test_export_basic ORDER BY id").await;
+        assert!(read_result.is_ok());
+        let query_result = read_result.unwrap();
+        assert_eq!(query_result.rows.len(), 3);
+        assert_eq!(query_result.columns, vec!["id", "name", "score", "active"]);
+
+        // Clean up
+        DbAdapter::execute_query(&adapter, "DROP TABLE test_export_basic")
+            .await
+            .unwrap();
+        DbAdapter::disconnect(&mut adapter).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_export_dataframe_with_nulls() {
+        use crate::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let config = create_test_config();
+        let mut adapter = PostgresAdapter::new(config.clone());
+
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+
+        // Create DataFrame with NULL values
+        let id_series = Series::new("id".into(), &[Some(1i32), Some(2), Some(3)]).into();
+        let name_series =
+            Series::new("name".into(), &[Some("Alice"), None, Some("Charlie")]).into();
+        let score_series = Series::new("score".into(), &[Some(95.5f64), Some(87.3), None]).into();
+
+        let df = DataFrame::new(vec![id_series, name_series, score_series]).unwrap();
+
+        // Export with NULL values
+        let result =
+            DbAdapter::export_dataframe(&adapter, &df, "test_export_nulls", None, true).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 3);
+
+        // Verify NULLs were preserved
+        let read_result =
+            DbAdapter::execute_query(&adapter, "SELECT * FROM test_export_nulls ORDER BY id").await;
+        assert!(read_result.is_ok());
+        let query_result = read_result.unwrap();
+
+        // Check that NULL values are present
+        assert!(matches!(query_result.rows[1][1], QueryValue::Null)); // name is NULL for row 2
+        assert!(matches!(query_result.rows[2][2], QueryValue::Null)); // score is NULL for row 3
+
+        // Clean up
+        DbAdapter::execute_query(&adapter, "DROP TABLE test_export_nulls")
+            .await
+            .unwrap();
+        DbAdapter::disconnect(&mut adapter).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_export_dataframe_replace_table() {
+        use crate::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let config = create_test_config();
+        let mut adapter = PostgresAdapter::new(config.clone());
+
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+
+        // First export
+        let df1 = DataFrame::new(vec![Series::new("value".into(), &[1i32, 2, 3]).into()]).unwrap();
+
+        DbAdapter::export_dataframe(&adapter, &df1, "test_replace", None, true)
+            .await
+            .unwrap();
+
+        // Second export with replace=true (should drop and recreate)
+        let df2 = DataFrame::new(vec![Series::new("value".into(), &[10i32, 20]).into()]).unwrap();
+
+        let result = DbAdapter::export_dataframe(&adapter, &df2, "test_replace", None, true).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 2);
+
+        // Verify only new data exists
+        let read_result = DbAdapter::execute_query(&adapter, "SELECT * FROM test_replace")
+            .await
+            .unwrap();
+        assert_eq!(read_result.rows.len(), 2); // Only 2 rows from df2, not 3 from df1
+
+        // Clean up
+        DbAdapter::execute_query(&adapter, "DROP TABLE test_replace")
+            .await
+            .unwrap();
+        DbAdapter::disconnect(&mut adapter).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_export_dataframe_not_connected() {
+        use crate::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let config = create_test_config();
+        let adapter = PostgresAdapter::new(config);
+
+        let df = DataFrame::new(vec![Series::new("id".into(), &[1i32, 2, 3]).into()]).unwrap();
+
         let result = DbAdapter::export_dataframe(&adapter, &df, "test_table", None, false).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), DataError::NotSupported(_)));
-
-        DbAdapter::disconnect(&mut adapter).await.unwrap();
+        assert!(matches!(result.unwrap_err(), DataError::Connection(_)));
     }
 
     #[tokio::test]
