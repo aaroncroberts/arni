@@ -164,6 +164,75 @@ Run Clippy linter with deny warnings to catch code issues.
 - Use --fix to automatically apply suggested fixes
 - Some fixes may require manual intervention
 
+### test.sh
+
+Run unit tests, integration tests, or all tests with various options.
+
+**Usage:**
+```bash
+./scripts/test.sh [OPTIONS]
+```
+
+**Options:**
+- `-u, --unit` - Run unit tests only
+- `-i, --integration` - Run integration tests only
+- `-a, --all` - Run all tests (default)
+- `-v, --verbose` - Verbose output
+- `-q, --quiet` - Quiet output (only show failures)
+- `--nocapture` - Show all output (don't capture stdout/stderr)
+- `--release` - Run tests in release mode
+- `-h, --help` - Show help message
+
+**Examples:**
+```bash
+./scripts/test.sh               # Run all tests
+./scripts/test.sh --unit        # Run unit tests only
+./scripts/test.sh --integration # Run integration tests only
+./scripts/test.sh -v --nocapture # Verbose with all output
+./scripts/test.sh --release     # Test release build
+```
+
+**Notes:**
+- Unit tests are in each crate's src/ directory
+- Integration tests are in tests/ directory
+- CI environment is automatically detected
+- Use --nocapture to see println! output
+
+### coverage.sh
+
+Generate code coverage reports using cargo-tarpaulin.
+
+**Usage:**
+```bash
+./scripts/coverage.sh [OPTIONS]
+```
+
+**Options:**
+- `-o, --output FORMAT` - Output format: html, xml, lcov, json (default: html)
+- `-t, --threshold NUM` - Minimum coverage threshold percentage (0-100)
+- `-v, --verbose` - Verbose output
+- `--open` - Open HTML report in browser after generation
+- `-h, --help` - Show help message
+
+**Examples:**
+```bash
+./scripts/coverage.sh                  # Generate HTML report
+./scripts/coverage.sh --threshold 80   # Require 80% coverage
+./scripts/coverage.sh --output xml     # Generate XML report
+./scripts/coverage.sh --open           # Generate and open in browser
+./scripts/coverage.sh -o html -o xml   # Generate both formats
+```
+
+**Requirements:**
+- Requires `cargo-tarpaulin`: `cargo install cargo-tarpaulin`
+- On macOS, may require Docker or have limitations
+
+**Notes:**
+- Reports are generated in target/coverage/
+- Multiple output formats can be specified
+- Threshold option useful for CI/CD pipelines
+- Script exits with code 1 if coverage below threshold
+
 ## Platform Support
 
 All scripts are designed to work on:
@@ -198,6 +267,7 @@ Non-zero exit codes indicate failures.
 ./scripts/check.sh              # Fast compile check
 ./scripts/fmt.sh --check        # Check formatting
 ./scripts/clippy.sh             # Lint code
+./scripts/test.sh               # Run all tests
 ```
 
 ### Development cycle (manual)
@@ -205,7 +275,7 @@ Non-zero exit codes indicate failures.
 # Make changes...
 ./scripts/check.sh              # Fast compile check
 ./scripts/build.sh              # Full debug build
-cargo test                      # Run tests
+./scripts/test.sh               # Run tests
 ```
 
 ### Development cycle (watch mode)
@@ -213,12 +283,21 @@ cargo test                      # Run tests
 ./scripts/dev.sh --test         # Auto-run tests on changes
 ```
 
+### Testing workflows
+```bash
+./scripts/test.sh --unit        # Run unit tests only
+./scripts/test.sh --integration # Run integration tests only
+./scripts/test.sh -v --nocapture # Verbose with output
+./scripts/coverage.sh           # Generate coverage report
+./scripts/coverage.sh --open    # Generate and view coverage
+```
+
 ### Pre-commit checks
 ```bash
 ./scripts/fmt.sh                # Format code
 ./scripts/clippy.sh --fix       # Fix linting issues
 ./scripts/check.sh              # Verify compilation
-cargo test                      # Run tests
+./scripts/test.sh               # Run tests
 ```
 
 ### CI/CD validation
@@ -226,7 +305,8 @@ cargo test                      # Run tests
 ./scripts/fmt.sh --check        # Check formatting
 ./scripts/clippy.sh --all       # Lint all targets
 ./scripts/build.sh --release    # Build optimized
-cargo test                      # Run test suite
+./scripts/test.sh               # Run test suite
+./scripts/coverage.sh --threshold 80 --output xml  # Coverage with threshold
 ```
 
 ## Exit Codes
