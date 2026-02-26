@@ -43,10 +43,14 @@
 //! }
 //! ```
 
-use crate::adapter::{Connection, ConnectionConfig, QueryResult, QueryValue, Result};
+use crate::adapter::{
+    Connection, ConnectionConfig, DatabaseType, DbAdapter, QueryResult, QueryValue, Result,
+    TableInfo,
+};
 use crate::DataError;
+use polars::prelude::*;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::{Column, Executor, Row, TypeInfo};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -443,6 +447,392 @@ impl Connection for MySqlAdapter {
     }
 }
 
+#[async_trait::async_trait]
+impl DbAdapter for MySqlAdapter {
+    // ===== Connection Management =====
+
+    async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<()> {
+        // Store config
+        self.config = config.clone();
+
+        // Build connection string with password
+        let conn_str = self.build_connection_string(password)?;
+
+        // Create connection pool
+        let pool = MySqlPoolOptions::new()
+            .max_connections(5)
+            .connect(&conn_str)
+            .await
+            .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+
+        // Store the pool
+        *self.pool.write().await = Some(pool);
+        *self.connected.write().await = true;
+
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> Result<()> {
+        if let Some(pool) = self.pool.write().await.take() {
+            pool.close().await;
+        }
+        *self.connected.write().await = false;
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connected
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(false)
+    }
+
+    async fn test_connection(
+        &self,
+        config: &ConnectionConfig,
+        password: Option<&str>,
+    ) -> Result<bool> {
+        // Build connection string
+        let host = config
+            .host
+            .as_ref()
+            .ok_or_else(|| DataError::Config("Missing host".to_string()))?;
+        let port = config.port.unwrap_or(3306);
+        let username = config
+            .username
+            .as_ref()
+            .ok_or_else(|| DataError::Config("Missing username".to_string()))?;
+
+        let password = password.unwrap_or("");
+        let ssl_mode = if config.use_ssl {
+            "ssl-mode=REQUIRED"
+        } else {
+            "ssl-mode=DISABLED"
+        };
+
+        let conn_str = format!(
+            "mysql://{}:{}@{}:{}/{}?{}",
+            username, password, host, port, config.database, ssl_mode
+        );
+
+        // Try to connect briefly
+        match MySqlPool::connect(&conn_str).await {
+            Ok(pool) => {
+                pool.close().await;
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn database_type(&self) -> DatabaseType {
+        DatabaseType::MySQL
+    }
+
+    // ===== Query Operations =====
+
+    async fn execute_query(&self, query: &str) -> Result<QueryResult> {
+        self.execute_query(query).await
+    }
+
+    async fn export_dataframe(
+        &self,
+        df: &DataFrame,
+        table_name: &str,
+        _schema: Option<&str>,
+        replace: bool,
+    ) -> Result<u64> {
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        // Get pool
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+
+        // If replace, drop and recreate table
+        if replace {
+            let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
+            pool.execute(drop_sql.as_str())
+                .await
+                .map_err(|e| DataError::Query(format!("Failed to drop table: {}", e)))?;
+
+            // Create table based on DataFrame schema
+            let create_sql = self.generate_create_table_sql(df, table_name)?;
+            pool.execute(create_sql.as_str())
+                .await
+                .map_err(|e| DataError::Query(format!("Failed to create table: {}", e)))?;
+        }
+
+        // Insert data row by row
+        let column_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let placeholders: Vec<String> = (1..=column_names.len()).map(|_| "?".to_string()).collect();
+
+        let insert_sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            table_name,
+            column_names.join(", "),
+            placeholders.join(", ")
+        );
+
+        let mut rows_inserted: u64 = 0;
+
+        // Insert rows using sqlx
+        for row_idx in 0..df.height() {
+            let mut query = sqlx::query(&insert_sql);
+
+            // Bind values for this row
+            for col_name in &column_names {
+                let column = df.column(col_name).map_err(|e| {
+                    DataError::DataFrame(format!("Column '{}' not found: {}", col_name, e))
+                })?;
+
+                let series = column.as_materialized_series();
+                query = self.bind_series_value(query, series, row_idx)?;
+            }
+
+            // Execute insert
+            query
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    DataError::Query(format!("Failed to insert row {}: {}", row_idx, e))
+                })?;
+
+            rows_inserted += 1;
+        }
+
+        Ok(rows_inserted)
+    }
+
+    // ===== Schema Discovery =====
+    // These methods will be implemented in arni-8b0.1.4
+
+    async fn list_databases(&self) -> Result<Vec<String>> {
+        Err(DataError::Query(
+            "list_databases not yet implemented for MySQL".to_string(),
+        ))
+    }
+
+    async fn list_tables(&self, _schema: Option<&str>) -> Result<Vec<String>> {
+        Err(DataError::Query(
+            "list_tables not yet implemented for MySQL".to_string(),
+        ))
+    }
+
+    async fn describe_table(&self, _table_name: &str, _schema: Option<&str>) -> Result<TableInfo> {
+        Err(DataError::Query(
+            "describe_table not yet implemented for MySQL".to_string(),
+        ))
+    }
+}
+
+impl MySqlAdapter {
+    /// Generate CREATE TABLE SQL from DataFrame schema
+    fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
+        let mut column_defs = Vec::new();
+
+        for column in df.get_columns() {
+            let name = column.name();
+            let dtype = column.dtype();
+
+            let mysql_type = match dtype {
+                DataType::Boolean => "BOOLEAN",
+                DataType::Int8 => "TINYINT",
+                DataType::Int16 => "SMALLINT",
+                DataType::Int32 => "INT",
+                DataType::Int64 => "BIGINT",
+                DataType::UInt8 => "TINYINT UNSIGNED",
+                DataType::UInt16 => "SMALLINT UNSIGNED",
+                DataType::UInt32 => "INT UNSIGNED",
+                DataType::UInt64 => "BIGINT UNSIGNED",
+                DataType::Float32 => "FLOAT",
+                DataType::Float64 => "DOUBLE",
+                DataType::String => "TEXT",
+                DataType::Binary => "BLOB",
+                _ => "TEXT", // Fallback for unsupported types
+            };
+
+            column_defs.push(format!("{} {}", name, mysql_type));
+        }
+
+        Ok(format!(
+            "CREATE TABLE {} ({})",
+            table_name,
+            column_defs.join(", ")
+        ))
+    }
+
+    /// Bind a Series value at a specific row index to a sqlx query
+    fn bind_series_value<'q>(
+        &self,
+        query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
+        series: &Series,
+        row_idx: usize,
+    ) -> Result<sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>> {
+        // Check if value is null
+        let null_mask = series.is_null();
+        if null_mask.get(row_idx).unwrap_or(false) {
+            return Ok(query.bind(None::<String>));
+        }
+
+        // Convert based on Series data type and bind
+        let bound_query = match series.dtype() {
+            DataType::Boolean => {
+                let val = series
+                    .bool()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::Int8 => {
+                let series_i32 = series
+                    .cast(&DataType::Int32)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = series_i32
+                    .i32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::Int16 => {
+                let series_i32 = series
+                    .cast(&DataType::Int32)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = series_i32
+                    .i32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::Int32 => {
+                let val = series
+                    .i32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::Int64 => {
+                let val = series
+                    .i64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
+                let series_i64 = series
+                    .cast(&DataType::Int64)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = series_i64
+                    .i64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::UInt64 => {
+                let series_i64 = series
+                    .cast(&DataType::Int64)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = series_i64
+                    .i64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::Float32 => {
+                let val = series
+                    .f32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::Float64 => {
+                let val = series
+                    .f64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val)
+            }
+            DataType::String => {
+                let val = series
+                    .str()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val.to_string())
+            }
+            DataType::Binary => {
+                let val = series
+                    .binary()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val.to_vec())
+            }
+            dtype => {
+                // For unsupported types, try to convert to string
+                let series_str = series.cast(&DataType::String).map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Cannot convert {:?} to MySQL type: {}",
+                        dtype, e
+                    ))
+                })?;
+                let val = series_str
+                    .str()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                query.bind(val.to_string())
+            }
+        };
+
+        Ok(bound_query)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,7 +860,7 @@ mod tests {
         
         assert_eq!(adapter.config().id, "test-mysql");
         assert_eq!(adapter.config().db_type, DatabaseType::MySQL);
-        assert!(!adapter.is_connected());
+        assert!(!Connection::is_connected(&adapter));
     }
 
     #[test]
@@ -527,10 +917,10 @@ mod tests {
         let mut adapter = MySqlAdapter::new(config);
 
         Connection::connect(&mut adapter).await.expect("Failed to connect");
-        assert!(adapter.is_connected());
+        assert!(Connection::is_connected(&adapter));
 
         Connection::disconnect(&mut adapter).await.expect("Failed to disconnect");
-        assert!(!adapter.is_connected());
+        assert!(!Connection::is_connected(&adapter));
     }
 
     #[tokio::test]
@@ -648,5 +1038,131 @@ mod tests {
         assert!(result.is_ok());
 
         Connection::disconnect(&mut adapter).await.expect("Failed to disconnect");
+    }
+
+    #[test]
+    fn test_generate_create_table_sql() {
+        use polars::prelude::*;
+
+        let config = create_test_config();
+        let adapter = MySqlAdapter::new(config);
+
+        let df = DataFrame::new(vec![
+            Series::new("id".into(), &[1, 2, 3]).into(),
+            Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
+            Series::new("active".into(), &[true, false, true]).into(),
+        ])
+        .unwrap();
+
+        let sql = adapter
+            .generate_create_table_sql(&df, "test_table")
+            .unwrap();
+
+        assert!(sql.contains("CREATE TABLE test_table"));
+        assert!(sql.contains("id INT"));
+        assert!(sql.contains("name TEXT"));
+        assert!(sql.contains("active BOOLEAN"));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_export_dataframe_replace() {
+        use crate::adapter::DbAdapter;
+
+        let config = create_test_config();
+        let mut adapter = MySqlAdapter::new(config.clone());
+
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .expect("Failed to connect");
+
+        let df = DataFrame::new(vec![
+            Series::new("id".into(), &[1, 2, 3]).into(),
+            Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
+        ])
+        .unwrap();
+
+        // Export with replace=true
+        let result = DbAdapter::export_dataframe(&adapter, &df, "test_export", None, true).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 3);
+
+        // Verify data was inserted
+        let query_result = adapter
+            .execute_query("SELECT * FROM test_export ORDER BY id")
+            .await
+            .expect("Failed to select");
+        assert_eq!(query_result.rows.len(), 3);
+
+        // Clean up
+        adapter
+            .execute_query("DROP TABLE test_export")
+            .await
+            .expect("Failed to drop table");
+
+        DbAdapter::disconnect(&mut adapter)
+            .await
+            .expect("Failed to disconnect");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_read_table() {
+        use crate::adapter::DbAdapter;
+
+        let config = create_test_config();
+        let mut adapter = MySqlAdapter::new(config.clone());
+
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .expect("Failed to connect");
+
+        // Create and populate a test table
+        adapter
+            .execute_query("CREATE TEMPORARY TABLE test_read (id INT, name VARCHAR(100))")
+            .await
+            .expect("Failed to create table");
+
+        adapter
+            .execute_query("INSERT INTO test_read VALUES (1, 'Alice'), (2, 'Bob')")
+            .await
+            .expect("Failed to insert data");
+
+        // Read table as DataFrame
+        let result = DbAdapter::read_table(&adapter, "test_read", None).await;
+        assert!(result.is_ok());
+
+        let df = result.unwrap();
+        assert_eq!(df.height(), 2);
+        assert_eq!(df.width(), 2);
+
+        DbAdapter::disconnect(&mut adapter)
+            .await
+            .expect("Failed to disconnect");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_query_df() {
+        use crate::adapter::DbAdapter;
+
+        let config = create_test_config();
+        let mut adapter = MySqlAdapter::new(config.clone());
+
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .expect("Failed to connect");
+
+        // Query as DataFrame
+        let result = DbAdapter::query_df(&adapter, "SELECT 1 as num, 'test' as text").await;
+        assert!(result.is_ok());
+
+        let df = result.unwrap();
+        assert_eq!(df.height(), 1);
+        assert_eq!(df.width(), 2);
+
+        DbAdapter::disconnect(&mut adapter)
+            .await
+            .expect("Failed to disconnect");
     }
 }
