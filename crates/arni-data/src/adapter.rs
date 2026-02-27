@@ -418,11 +418,131 @@ pub trait Connection: Send + Sync {
     fn config(&self) -> &ConnectionConfig;
 }
 
+/// Accessor for database metadata operations
+///
+/// This struct provides organized access to all metadata-related operations
+/// on a database adapter. It groups methods for introspecting:
+/// - Server and database information
+/// - Table structure and constraints
+/// - Indexes and foreign keys
+/// - Views and stored procedures
+///
+/// # Design Pattern
+///
+/// This struct follows the adapter pattern for metadata organization,
+/// separating metadata operations from CRUD operations for better code organization.
+/// Inspired by the skidbladnir-data architecture.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Access metadata through the adapter
+/// let databases = adapter.metadata().list_databases().await?;
+/// let tables = adapter.metadata().list_tables(None).await?;
+/// let indexes = adapter.metadata().get_indexes("users", None).await?;
+/// ```
+pub struct AdapterMetadata<'a> {
+    adapter: &'a dyn DbAdapter,
+}
+
+impl<'a> AdapterMetadata<'a> {
+    /// Create a new metadata accessor wrapping an adapter reference
+    pub fn new(adapter: &'a dyn DbAdapter) -> Self {
+        Self { adapter }
+    }
+
+    /// List all databases on the server
+    pub async fn list_databases(&self) -> Result<Vec<String>> {
+        self.adapter.list_databases().await
+    }
+
+    /// List all tables in the current database or schema
+    pub async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
+        self.adapter.list_tables(schema).await
+    }
+
+    /// Get detailed information about a table
+    pub async fn describe_table(
+        &self,
+        table_name: &str,
+        schema: Option<&str>,
+    ) -> Result<TableInfo> {
+        self.adapter.describe_table(table_name, schema).await
+    }
+
+    /// Get server version and configuration information
+    pub async fn get_server_info(&self) -> Result<ServerInfo> {
+        self.adapter.get_server_info().await
+    }
+
+    /// Get metadata about a specific database
+    pub async fn get_database_metadata(&self, database_name: &str) -> Result<DatabaseMetadata> {
+        self.adapter.get_database_metadata(database_name).await
+    }
+
+    /// Get metadata about a specific table
+    pub async fn get_table_metadata(
+        &self,
+        table_name: &str,
+        schema: Option<&str>,
+    ) -> Result<TableMetadata> {
+        self.adapter.get_table_metadata(table_name, schema).await
+    }
+
+    /// Get all indexes for a table
+    pub async fn get_indexes(
+        &self,
+        table_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Vec<IndexInfo>> {
+        self.adapter.get_indexes(table_name, schema).await
+    }
+
+    /// Get all foreign keys for a table
+    pub async fn get_foreign_keys(
+        &self,
+        table_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Vec<ForeignKeyInfo>> {
+        self.adapter.get_foreign_keys(table_name, schema).await
+    }
+
+    /// List all views in a schema
+    pub async fn get_views(&self, schema: Option<&str>) -> Result<Vec<ViewInfo>> {
+        self.adapter.get_views(schema).await
+    }
+
+    /// Get view definition SQL
+    pub async fn get_view_definition(
+        &self,
+        view_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Option<String>> {
+        self.adapter.get_view_definition(view_name, schema).await
+    }
+
+    /// List all stored procedures/functions in a schema
+    pub async fn list_stored_procedures(
+        &self,
+        schema: Option<&str>,
+    ) -> Result<Vec<ProcedureInfo>> {
+        self.adapter.list_stored_procedures(schema).await
+    }
+}
+
 /// Main trait that all database adapters must implement
 ///
 /// This trait provides a unified interface for database access with two data formats:
 /// - **DataFrame-based**: Primary format using Polars DataFrames for efficient data manipulation
 /// - **Row-based**: Traditional QueryResult format for compatibility and bulk operations
+///
+/// # Metadata Access
+///
+/// Use the [`metadata()`](Self::metadata) method to access organized metadata operations:
+/// ```ignore
+/// let databases = adapter.metadata().list_databases().await?;
+/// let indexes = adapter.metadata().get_indexes("users", None).await?;
+/// ```
 ///
 /// # Examples
 ///
@@ -439,6 +559,9 @@ pub trait Connection: Send + Sync {
 ///     
 ///     // Export DataFrame to database
 ///     adapter.export_dataframe(&df, "users_backup", None, false).await?;
+///     
+///     // Access metadata
+///     let tables = adapter.metadata().list_tables(None).await?;
 ///     
 ///     adapter.disconnect().await?;
 ///     Ok(())
@@ -466,6 +589,25 @@ pub trait DbAdapter: Send + Sync {
 
     /// Get the database type this adapter handles
     fn database_type(&self) -> DatabaseType;
+
+    /// Access metadata operations
+    ///
+    /// Returns an [`AdapterMetadata`] accessor that provides organized access to
+    /// database introspection methods: server info, schemas, tables, indexes, views, etc.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // List all databases
+    /// let databases = adapter.metadata().list_databases().await?;
+    ///
+    /// // Get table structure
+    /// let table_info = adapter.metadata().describe_table("users", None).await?;
+    ///
+    /// // Inspect indexes
+    /// let indexes = adapter.metadata().get_indexes("users", None).await?;
+    /// ```
+    fn metadata(&self) -> AdapterMetadata<'_>;
 
     // ===== DataFrame Operations (Primary Interface) =====
 

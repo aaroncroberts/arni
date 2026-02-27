@@ -44,8 +44,8 @@
 //! ```
 
 use crate::adapter::{
-    ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter, QueryResult, QueryValue,
-    Result, TableInfo,
+    AdapterMetadata, ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter,
+    QueryResult, QueryValue, Result, TableInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -527,6 +527,10 @@ impl DbAdapter for MySqlAdapter {
 
     fn database_type(&self) -> DatabaseType {
         DatabaseType::MySQL
+    }
+
+    fn metadata(&self) -> AdapterMetadata<'_> {
+        AdapterMetadata::new(self)
     }
 
     // ===== Query Operations =====

@@ -44,7 +44,8 @@
 //! ```
 
 use crate::adapter::{
-    Connection, ConnectionConfig, DatabaseType, DbAdapter, QueryResult, QueryValue, Result,
+    AdapterMetadata, Connection, ConnectionConfig, DatabaseType, DbAdapter, QueryResult,
+    QueryValue, Result,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -317,6 +318,10 @@ impl DbAdapter for PostgresAdapter {
 
     fn database_type(&self) -> DatabaseType {
         DatabaseType::Postgres
+    }
+
+    fn metadata(&self) -> AdapterMetadata<'_> {
+        AdapterMetadata::new(self)
     }
 
     // ===== Query Operations =====
