@@ -53,6 +53,7 @@ use polars::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, instrument, warn};
 
 /// Oracle database adapter
 ///
@@ -190,8 +191,12 @@ impl OracleAdapter {
 
 #[async_trait::async_trait]
 impl ConnectionTrait for OracleAdapter {
+    #[instrument(skip(self), fields(adapter = "oracle", host = ?self.config.host, port = ?self.config.port, database = %self.config.database))]
     async fn connect(&mut self) -> Result<()> {
+        info!("Connecting to Oracle database");
+        
         if self.config.db_type != DatabaseType::Oracle {
+            error!("Invalid database type configuration");
             return Err(DataError::Config(format!(
                 "Invalid database type: expected Oracle, got {:?}",
                 self.config.db_type
@@ -205,7 +210,10 @@ impl ConnectionTrait for OracleAdapter {
 
         tokio::task::spawn_blocking(move || {
             let conn = oracle::Connection::connect(&username, &password, &connect_string)
-                .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+                .map_err(|e| {
+                    error!(error = %e, "Failed to establish Oracle connection");
+                    DataError::Connection(format!("Failed to connect: {}", e))
+                })?;
 
             let handle = tokio::runtime::Handle::current();
             let mut conn_guard = handle.block_on(connection.write());
@@ -214,19 +222,26 @@ impl ConnectionTrait for OracleAdapter {
             let mut connected_guard = handle.block_on(connected.write());
             *connected_guard = true;
 
+            info!("Successfully connected to Oracle");
             Ok(())
         })
         .await
-        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?
+        .map_err(|e| {
+            error!(error = %e, "Task join error during connection");
+            DataError::Connection(format!("Task join error: {}", e))
+        })?
     }
 
-    async fn disconnect(&mut self) -> Result<()> {
+    #[instrument(skip(self), fields(adapter = "oracle"))]
+    async fn disconnect(&mut self) ->Result<()> {
+        info!("Disconnecting from Oracle");
         let mut conn_guard = self.connection.write().await;
         *conn_guard = None;
 
         let mut connected_guard = self.connected.write().await;
         *connected_guard = false;
 
+        debug!("Oracle connection closed");
         Ok(())
     }
 
