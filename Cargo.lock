@@ -178,6 +178,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "native-tls",
+ "oracle",
  "polars",
  "postgres-native-tls",
  "serde",
