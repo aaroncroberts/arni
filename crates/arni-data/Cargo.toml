@@ -47,6 +47,7 @@ duckdb = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde_yaml = { workspace = true }
 
 [features]
 default = []

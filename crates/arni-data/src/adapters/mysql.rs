@@ -318,7 +318,7 @@ impl MySqlAdapter {
     #[instrument(skip(self, query), fields(adapter = "mysql", query_length = query.len()))]
     pub async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         debug!("Executing query");
-        
+
         // Check if connected
         if !*self.connected.read().await {
             error!("Query execution failed: not connected");
@@ -329,12 +329,10 @@ impl MySqlAdapter {
 
         // Get pool
         let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| {
-                error!("Pool not available");
-                DataError::Connection("Pool not available".to_string())
-            })?;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Pool not available");
+            DataError::Connection("Pool not available".to_string())
+        })?;
 
         // Execute query
         let start = std::time::Instant::now();
@@ -355,11 +353,15 @@ impl MySqlAdapter {
                 DataError::Query(format!("Query failed: {}", e))
             }
         })?;
-        
+
         let duration = start.elapsed();
         let row_count = rows.len();
-        
-        info!(rows = row_count, duration_ms = duration.as_millis(), "Query executed successfully");
+
+        info!(
+            rows = row_count,
+            duration_ms = duration.as_millis(),
+            "Query executed successfully"
+        );
 
         // Handle empty results (e.g., from INSERT/UPDATE/DELETE)
         if rows.is_empty() {
@@ -377,7 +379,7 @@ impl MySqlAdapter {
             .iter()
             .map(|col| col.name().to_string())
             .collect();
-        
+
         debug!(columns = columns.len(), "Extracted column metadata");
 
         // Convert rows to QueryValue vectors
@@ -467,12 +469,10 @@ impl Connection for MySqlAdapter {
 
         // Get pool
         let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| {
-                error!("Pool not available for health check");
-                DataError::Connection("Pool not available".to_string())
-            })?;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Pool not available for health check");
+            DataError::Connection("Pool not available".to_string())
+        })?;
 
         // Execute health check query
         match sqlx::query("SELECT 1").fetch_one(pool).await {

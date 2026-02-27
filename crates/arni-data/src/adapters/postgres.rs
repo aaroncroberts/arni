@@ -181,12 +181,13 @@ impl Connection for PostgresAdapter {
         })?;
 
         // Connect using NoTls for now (will add SSL support later)
-        let (client, connection) = tokio_postgres::connect(&conn_str, NoTls)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to establish connection");
-                DataError::Connection(format!("Failed to connect: {}", e))
-            })?;
+        let (client, connection) =
+            tokio_postgres::connect(&conn_str, NoTls)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "Failed to establish connection");
+                    DataError::Connection(format!("Failed to connect: {}", e))
+                })?;
 
         // Spawn the connection handler
         tokio::spawn(async move {
@@ -235,12 +236,10 @@ impl Connection for PostgresAdapter {
 
         // Get client
         let client_guard = self.client.read().await;
-        let client = client_guard
-            .as_ref()
-            .ok_or_else(|| {
-                error!("Client not available for health check");
-                DataError::Connection("Client not available".to_string())
-            })?;
+        let client = client_guard.as_ref().ok_or_else(|| {
+            error!("Client not available for health check");
+            DataError::Connection("Client not available".to_string())
+        })?;
 
         // Execute health check query
         match client.query_one("SELECT 1", &[]).await {
@@ -357,7 +356,7 @@ impl DbAdapter for PostgresAdapter {
     #[instrument(skip(self, query), fields(adapter = "postgres", query_length = query.len()))]
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         debug!("Executing query");
-        
+
         // Check connection
         if !*self.connected.read().await {
             error!("Query execution failed: not connected");
@@ -368,27 +367,26 @@ impl DbAdapter for PostgresAdapter {
 
         // Get client
         let client_guard = self.client.read().await;
-        let client = client_guard
-            .as_ref()
-            .ok_or_else(|| {
-                error!("Client not available");
-                DataError::Connection("Client not available".to_string())
-            })?;
+        let client = client_guard.as_ref().ok_or_else(|| {
+            error!("Client not available");
+            DataError::Connection("Client not available".to_string())
+        })?;
 
         // Execute query
         let start = std::time::Instant::now();
-        let rows = client
-            .query(query, &[])
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Query execution failed");
-                DataError::Query(format!("Query failed: {}", e))
-            })?;
-        
+        let rows = client.query(query, &[]).await.map_err(|e| {
+            error!(error = %e, "Query execution failed");
+            DataError::Query(format!("Query failed: {}", e))
+        })?;
+
         let duration = start.elapsed();
         let row_count = rows.len();
-        
-        info!(rows = row_count, duration_ms = duration.as_millis(), "Query executed successfully");
+
+        info!(
+            rows = row_count,
+            duration_ms = duration.as_millis(),
+            "Query executed successfully"
+        );
 
         // If no rows, check if it was a modification query
         if rows.is_empty() {
@@ -407,7 +405,7 @@ impl DbAdapter for PostgresAdapter {
             .iter()
             .map(|col| col.name().to_string())
             .collect();
-        
+
         debug!(columns = columns.len(), "Extracted column metadata");
 
         // Convert rows
@@ -437,7 +435,7 @@ impl DbAdapter for PostgresAdapter {
         replace: bool,
     ) -> Result<u64> {
         info!("Exporting DataFrame to table");
-        
+
         // Check connection
         if !*self.connected.read().await {
             error!("Export failed: not connected");
@@ -448,12 +446,10 @@ impl DbAdapter for PostgresAdapter {
 
         // Get client
         let client_guard = self.client.read().await;
-        let client = client_guard
-            .as_ref()
-            .ok_or_else(|| {
-                error!("Client not available");
-                DataError::Connection("Client not available".to_string())
-            })?;
+        let client = client_guard.as_ref().ok_or_else(|| {
+            error!("Client not available");
+            DataError::Connection("Client not available".to_string())
+        })?;
 
         // If replace, drop and recreate table
         if replace {
@@ -537,7 +533,7 @@ impl DbAdapter for PostgresAdapter {
     #[instrument(skip(self), fields(adapter = "postgres"))]
     async fn list_databases(&self) -> Result<Vec<String>> {
         debug!("Listing databases");
-        
+
         // Check connection
         if !*self.connected.read().await {
             error!("List databases failed: not connected");
@@ -548,25 +544,20 @@ impl DbAdapter for PostgresAdapter {
 
         // Get client
         let client_guard = self.client.read().await;
-        let client = client_guard
-            .as_ref()
-            .ok_or_else(|| {
-                error!("Client not available");
-                DataError::Connection("Client not available".to_string())
-            })?;
+        let client = client_guard.as_ref().ok_or_else(|| {
+            error!("Client not available");
+            DataError::Connection("Client not available".to_string())
+        })?;
 
         // Query pg_database catalog
         let query = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
-        let rows = client
-            .query(query, &[])
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to query databases");
-                DataError::Query(format!("Failed to list databases: {}", e))
-            })?;
+        let rows = client.query(query, &[]).await.map_err(|e| {
+            error!(error = %e, "Failed to query databases");
+            DataError::Query(format!("Failed to list databases: {}", e))
+        })?;
 
         let databases: Vec<String> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
-        
+
         info!(count = databases.len(), "Listed databases successfully");
         Ok(databases)
     }
@@ -574,7 +565,7 @@ impl DbAdapter for PostgresAdapter {
     #[instrument(skip(self), fields(adapter = "postgres", schema = ?schema))]
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
         debug!("Listing tables");
-        
+
         // Check connection
         if !*self.connected.read().await {
             error!("List tables failed: not connected");
@@ -585,12 +576,10 @@ impl DbAdapter for PostgresAdapter {
 
         // Get client
         let client_guard = self.client.read().await;
-        let client = client_guard
-            .as_ref()
-            .ok_or_else(|| {
-                error!("Client not available");
-                DataError::Connection("Client not available".to_string())
-            })?;
+        let client = client_guard.as_ref().ok_or_else(|| {
+            error!("Client not available");
+            DataError::Connection("Client not available".to_string())
+        })?;
 
         // Query information_schema.tables
         let query = if let Some(schema_name) = schema {
@@ -608,16 +597,13 @@ impl DbAdapter for PostgresAdapter {
                 .to_string()
         };
 
-        let rows = client
-            .query(&query, &[])
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Failed to query tables");
-                DataError::Query(format!("Failed to list tables: {}", e))
-            })?;
+        let rows = client.query(&query, &[]).await.map_err(|e| {
+            error!(error = %e, "Failed to query tables");
+            DataError::Query(format!("Failed to list tables: {}", e))
+        })?;
 
         let tables: Vec<String> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
-        
+
         info!(count = tables.len(), "Listed tables successfully");
         Ok(tables)
     }

@@ -182,6 +182,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arni",
+ "arni-data",
  "arni-logging",
  "clap",
  "colored",
@@ -189,6 +190,7 @@ dependencies = [
  "polars",
  "serde",
  "serde_yaml",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",

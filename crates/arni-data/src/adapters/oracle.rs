@@ -141,7 +141,7 @@ impl OracleAdapter {
     #[instrument(skip(self, query), fields(adapter = "oracle", query_length = query.len()))]
     async fn execute_query_blocking(&self, query: String) -> Result<QueryResult> {
         debug!("Executing query in blocking context");
-        
+
         // Get the connection outside of spawn_blocking to avoid lifetime issues
         let connection = self.connection.clone();
 
@@ -150,28 +150,21 @@ impl OracleAdapter {
             // Use tokio runtime handle to block on async operations within spawn_blocking
             let handle = tokio::runtime::Handle::current();
             let conn_guard = handle.block_on(connection.read());
-            let conn = conn_guard
-                .as_ref()
-                .ok_or_else(|| {
-                    error!("Connection not available");
-                    DataError::Connection("Not connected".to_string())
-                })?;
+            let conn = conn_guard.as_ref().ok_or_else(|| {
+                error!("Connection not available");
+                DataError::Connection("Not connected".to_string())
+            })?;
 
             // Prepare and execute the statement
-            let mut stmt = conn
-                .statement(&query)
-                .build()
-                .map_err(|e| {
-                    error!(error = %e, "Failed to prepare statement");
-                    DataError::Query(format!("Failed to prepare statement: {}", e))
-                })?;
+            let mut stmt = conn.statement(&query).build().map_err(|e| {
+                error!(error = %e, "Failed to prepare statement");
+                DataError::Query(format!("Failed to prepare statement: {}", e))
+            })?;
 
-            let result_set = stmt
-                .query(&[])
-                .map_err(|e| {
-                    error!(error = %e, "Query execution failed");
-                    DataError::Query(format!("Query execution failed: {}", e))
-                })?;
+            let result_set = stmt.query(&[]).map_err(|e| {
+                error!(error = %e, "Query execution failed");
+                DataError::Query(format!("Query execution failed: {}", e))
+            })?;
 
             // Get column information
             let column_info = result_set.column_info();
@@ -202,11 +195,15 @@ impl OracleAdapter {
             error!(error = %e, "Task join error");
             DataError::Connection(format!("Task join error: {}", e))
         })??;
-        
+
         let duration = start.elapsed();
         let row_count = result.rows.len();
-        info!(rows = row_count, duration_ms = duration.as_millis(), "Query executed successfully");
-        
+        info!(
+            rows = row_count,
+            duration_ms = duration.as_millis(),
+            "Query executed successfully"
+        );
+
         Ok(result)
     }
 }
@@ -216,7 +213,7 @@ impl ConnectionTrait for OracleAdapter {
     #[instrument(skip(self), fields(adapter = "oracle", host = ?self.config.host, port = ?self.config.port, database = %self.config.database))]
     async fn connect(&mut self) -> Result<()> {
         info!("Connecting to Oracle database");
-        
+
         if self.config.db_type != DatabaseType::Oracle {
             error!("Invalid database type configuration");
             return Err(DataError::Config(format!(
@@ -231,11 +228,12 @@ impl ConnectionTrait for OracleAdapter {
         let connected = self.connected.clone();
 
         tokio::task::spawn_blocking(move || {
-            let conn = oracle::Connection::connect(&username, &password, &connect_string)
-                .map_err(|e| {
+            let conn = oracle::Connection::connect(&username, &password, &connect_string).map_err(
+                |e| {
                     error!(error = %e, "Failed to establish Oracle connection");
                     DataError::Connection(format!("Failed to connect: {}", e))
-                })?;
+                },
+            )?;
 
             let handle = tokio::runtime::Handle::current();
             let mut conn_guard = handle.block_on(connection.write());
@@ -255,7 +253,7 @@ impl ConnectionTrait for OracleAdapter {
     }
 
     #[instrument(skip(self), fields(adapter = "oracle"))]
-    async fn disconnect(&mut self) ->Result<()> {
+    async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from Oracle");
         let mut conn_guard = self.connection.write().await;
         *conn_guard = None;
@@ -278,7 +276,7 @@ impl ConnectionTrait for OracleAdapter {
     #[instrument(skip(self), fields(adapter = "oracle"))]
     async fn health_check(&self) -> Result<bool> {
         debug!("Performing health check");
-        
+
         if !*self.connected.read().await {
             warn!("Health check failed: not connected");
             return Ok(false);
@@ -398,7 +396,7 @@ impl DbAdapter for OracleAdapter {
     #[instrument(skip(self), fields(adapter = "oracle", schema = ?schema))]
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
         debug!("Listing tables");
-        
+
         if !*self.connected.read().await {
             error!("List tables failed: not connected");
             return Err(DataError::Connection(
@@ -428,7 +426,7 @@ impl DbAdapter for OracleAdapter {
                 }
             })
             .collect::<Vec<_>>();
-        
+
         info!(count = tables.len(), owner = %owner, "Listed tables successfully");
         Ok(tables)
     }

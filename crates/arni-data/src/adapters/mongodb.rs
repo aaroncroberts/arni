@@ -289,13 +289,10 @@ impl ConnectionTrait for MongoDbAdapter {
     #[instrument(skip(self), fields(adapter = "mongodb"))]
     async fn health_check(&self) -> Result<bool, DataError> {
         debug!("Performing health check");
-        let client = self
-            .client
-            .as_ref()
-            .ok_or_else(|| {
-                warn!("Health check called but not connected");
-                DataError::Connection("Not connected".to_string())
-            })?;
+        let client = self.client.as_ref().ok_or_else(|| {
+            warn!("Health check called but not connected");
+            DataError::Connection("Not connected".to_string())
+        })?;
 
         let db_name = self
             .current_database
@@ -332,13 +329,10 @@ impl DbAdapter for MongoDbAdapter {
         debug!("Executing MongoDB query");
         let start = std::time::Instant::now();
 
-        let client = self
-            .client
-            .as_ref()
-            .ok_or_else(|| {
-                error!("Query attempted while not connected");
-                DataError::Connection("Not connected".to_string())
-            })?;
+        let client = self.client.as_ref().ok_or_else(|| {
+            error!("Query attempted while not connected");
+            DataError::Connection("Not connected".to_string())
+        })?;
 
         let db_name = self
             .current_database
@@ -418,7 +412,11 @@ impl DbAdapter for MongoDbAdapter {
         };
 
         let duration = start.elapsed();
-        info!(rows = results.len(), duration_ms = duration.as_millis(), "Query executed successfully");
+        info!(
+            rows = results.len(),
+            duration_ms = duration.as_millis(),
+            "Query executed successfully"
+        );
 
         Ok(QueryResult {
             columns,

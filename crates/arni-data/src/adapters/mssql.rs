@@ -284,13 +284,10 @@ impl DbAdapter for SqlServerAdapter {
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
-        let stream = client
-            .query(query, &[])
-            .await
-            .map_err(|e| {
-                error!(error = %e, "Query execution failed");
-                DataError::Query(format!("Query failed: {}", e))
-            })?;
+        let stream = client.query(query, &[]).await.map_err(|e| {
+            error!(error = %e, "Query execution failed");
+            DataError::Query(format!("Query failed: {}", e))
+        })?;
 
         let rows: Vec<tiberius::Row> = stream
             .into_results()
@@ -324,7 +321,11 @@ impl DbAdapter for SqlServerAdapter {
         }
 
         let duration = start.elapsed();
-        info!(rows = result_rows.len(), duration_ms = duration.as_millis(), "Query executed successfully");
+        info!(
+            rows = result_rows.len(),
+            duration_ms = duration.as_millis(),
+            "Query executed successfully"
+        );
 
         Ok(QueryResult {
             columns,

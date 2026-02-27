@@ -80,12 +80,10 @@ impl DuckDbAdapter {
                 .lock()
                 .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
 
-            let conn = conn_guard
-                .as_ref()
-                .ok_or_else(|| {
-                    error!("Query attempted while not connected");
-                    DataError::Connection("Not connected".to_string())
-                })?;
+            let conn = conn_guard.as_ref().ok_or_else(|| {
+                error!("Query attempted while not connected");
+                DataError::Connection("Not connected".to_string())
+            })?;
 
             let mut stmt = conn
                 .prepare(&query)
@@ -132,7 +130,11 @@ impl DuckDbAdapter {
         })??;
 
         let duration = start.elapsed();
-        info!(rows = result.rows.len(), duration_ms = duration.as_millis(), "Query executed successfully");
+        info!(
+            rows = result.rows.len(),
+            duration_ms = duration.as_millis(),
+            "Query executed successfully"
+        );
 
         Ok(result)
     }
