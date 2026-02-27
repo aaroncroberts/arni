@@ -54,6 +54,48 @@ EOF
     exit 0
 }
 
+# ── Read ~/.arni/config.yml and export ORACLE_LIB_DIR / DUCKDB_LIB_DIR ────────
+# Shell env always wins (force=false semantics matching AppConfig::apply_lib_paths).
+load_arni_config() {
+    local config_file="${HOME}/.arni/config.yml"
+    [[ -f "$config_file" ]] || return 0
+
+    # Extract a scalar value for a given top-level YAML key.
+    # Handles: key: value   and   key: ~/path (tilde not special in grep)
+    yaml_scalar() {
+        local key="$1"
+        grep -E "^${key}:" "$config_file" \
+            | head -1 \
+            | sed -E "s/^${key}:[[:space:]]*//" \
+            | sed 's/[[:space:]]*#.*$//' \
+            | sed "s/^['\"]//;s/['\"]$//" \
+            | xargs  # trim leading/trailing whitespace
+    }
+
+    # Expand a leading ~ to $HOME (POSIX-safe)
+    expand_tilde_val() {
+        local val="$1"
+        case "$val" in
+            "~"|"~/"|"~/"*)  echo "${HOME}${val#\~}" ;;
+            *)                echo "$val" ;;
+        esac
+    }
+
+    local oracle_dir
+    oracle_dir="$(yaml_scalar oracle_lib_dir)"
+    if [[ -n "$oracle_dir" && -z "${ORACLE_LIB_DIR:-}" ]]; then
+        oracle_dir="$(expand_tilde_val "$oracle_dir")"
+        export ORACLE_LIB_DIR="$oracle_dir"
+    fi
+
+    local duckdb_dir
+    duckdb_dir="$(yaml_scalar duckdb_lib_dir)"
+    if [[ -n "$duckdb_dir" && -z "${DUCKDB_LIB_DIR:-}" ]]; then
+        duckdb_dir="$(expand_tilde_val "$duckdb_dir")"
+        export DUCKDB_LIB_DIR="$duckdb_dir"
+    fi
+}
+
 # Check if cargo-watch is installed
 check_cargo_watch() {
     if ! command -v cargo-watch &> /dev/null; then
@@ -166,6 +208,9 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Load user config first so env vars are available for dependency checks
+load_arni_config
 
 # Check dependencies
 check_cargo_watch

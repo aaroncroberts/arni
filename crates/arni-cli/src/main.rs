@@ -1,3 +1,4 @@
+mod app_config;
 mod config;
 mod logging_config;
 
@@ -202,8 +203,13 @@ fn print_banner() {
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
-    // Initialize logging from ~/.arni/logging.yml (seed defaults on first run).
+    // Load application config (~/.arni/config.yml) and apply native library paths
+    // before anything else so adapters can find libclntsh / libduckdb at dlopen time.
     let arni_home = config::arni_home();
+    let app_cfg = app_config::load_app_config(&arni_home).unwrap_or_default();
+    app_cfg.apply_lib_paths();
+
+    // Initialize logging from ~/.arni/logging.yml (seed defaults on first run).
     if let Err(e) = logging_config::write_default_logging_config(&arni_home) {
         // Non-fatal — proceed without a config file.
         eprintln!("arni: warning: could not write default logging config: {e}");

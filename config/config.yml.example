@@ -1,0 +1,44 @@
+# ~/.arni/config.yml
+#
+# Arni application configuration.
+# Copy this file to ~/.arni/config.yml and adjust for your environment.
+#
+# All paths support ~ expansion (e.g. ~/Oracle/instantclient_23_3).
+# Values here are overridden by shell environment variables of the same name
+# (upper-cased with underscores), so you can always export ORACLE_LIB_DIR=...
+# without touching this file.
+
+# ── Native library paths ───────────────────────────────────────────────────────
+
+# Oracle Instant Client directory containing libclntsh.dylib (macOS) or
+# libclntsh.so (Linux). Required to use the Oracle adapter.
+#
+# Download from:
+#   macOS ARM64: https://www.oracle.com/database/technologies/instant-client/macos-arm64-downloads.html
+#   macOS x86:   https://www.oracle.com/database/technologies/instant-client/macos-intel-x86-downloads.html
+#   Linux x86:   https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html
+#
+# Extract the zip/rpm and set this to the resulting directory.
+oracle_lib_dir: ~/Oracle/instantclient_23_3
+
+# DuckDB shared library directory.
+# Only needed if DuckDB is installed somewhere non-standard.
+# Default on macOS (Homebrew ARM): /opt/homebrew/lib
+# Default on macOS (Homebrew x86): /usr/local/lib
+# duckdb_lib_dir: /opt/homebrew/lib
+
+# ── Connection defaults ────────────────────────────────────────────────────────
+
+# Name of the connection profile to use when none is specified on the CLI.
+# Must match a key in ~/.arni/connections.yml.
+# default_connection: pg-dev
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+
+# Override the default connections file location.
+# Default: ~/.arni/connections.yml
+# connections_file: ~/.arni/connections.yml
+
+# Override the default log output directory.
+# Default: ~/.arni/logs
+# log_dir: ~/.arni/logs
