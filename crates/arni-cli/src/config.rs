@@ -133,8 +133,7 @@ impl ConnectionEntry {
     /// Returns an error if the resolved host is absent for network-based
     /// databases.
     pub fn into_connection_config(self, name: &str) -> Result<ConnectionConfig> {
-        let requires_host =
-            !matches!(self.db_type, DatabaseType::SQLite | DatabaseType::DuckDB);
+        let requires_host = !matches!(self.db_type, DatabaseType::SQLite | DatabaseType::DuckDB);
         if requires_host && self.host.is_none() {
             bail!(
                 "Connection '{}' (type: {}) requires a 'host' field",
@@ -307,7 +306,10 @@ impl ConfigStore {
     pub fn save(&self) -> Result<()> {
         let tmp_path = self.file_path.with_extension("yml.tmp");
         self.file.save(&tmp_path).with_context(|| {
-            format!("Failed to write temporary connections file: {}", tmp_path.display())
+            format!(
+                "Failed to write temporary connections file: {}",
+                tmp_path.display()
+            )
         })?;
         std::fs::rename(&tmp_path, &self.file_path).with_context(|| {
             format!(
@@ -355,12 +357,9 @@ impl ConfigStore {
     ///
     /// Call [`save`][Self::save] afterwards to persist the change.
     pub fn remove(&mut self, name: &str) -> Result<ConnectionEntry> {
-        self.file.remove(name).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Connection '{}' not found — nothing removed.",
-                name
-            )
-        })
+        self.file
+            .remove(name)
+            .ok_or_else(|| anyhow::anyhow!("Connection '{}' not found — nothing removed.", name))
     }
 
     /// List all connections as sorted `(name, entry)` pairs.
@@ -645,9 +644,7 @@ alpha:
     fn test_config_store_atomic_save_leaves_no_tmp_file() {
         let tmp = tempfile::tempdir().unwrap();
         let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
-        store
-            .add("x".to_string(), sqlite_entry("x.db"))
-            .unwrap();
+        store.add("x".to_string(), sqlite_entry("x.db")).unwrap();
         store.save().unwrap();
 
         let tmp_path = tmp.path().join("connections.yml.tmp");
@@ -681,8 +678,12 @@ alpha:
     fn test_config_store_list_sorted() {
         let tmp = tempfile::tempdir().unwrap();
         let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
-        store.add("zebra".to_string(), sqlite_entry("z.db")).unwrap();
-        store.add("alpha".to_string(), sqlite_entry("a.db")).unwrap();
+        store
+            .add("zebra".to_string(), sqlite_entry("z.db"))
+            .unwrap();
+        store
+            .add("alpha".to_string(), sqlite_entry("a.db"))
+            .unwrap();
 
         let names: Vec<&str> = store.list().iter().map(|(n, _)| *n).collect();
         assert_eq!(names, vec!["alpha", "zebra"]);

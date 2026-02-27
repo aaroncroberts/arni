@@ -43,8 +43,8 @@ pub fn sample_orders_dataframe() -> DataFrame {
 /// Generate an empty dataframe for testing
 pub fn empty_dataframe() -> DataFrame {
     df! {
-        "id" => Series::new_empty("id", &DataType::Int32),
-        "name" => Series::new_empty("name", &DataType::String),
+        "id" => Series::new_empty("id".into(), &DataType::Int32),
+        "name" => Series::new_empty("name".into(), &DataType::String),
     }
     .expect("Failed to create empty dataframe")
 }

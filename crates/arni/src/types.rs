@@ -1,7 +1,5 @@
 //! Core types
 
-use polars::prelude::*;
-
 /// DataFrame wrapper around Polars DataFrame
 #[derive(Debug, Clone)]
 pub struct DataFrame(pub(crate) polars::frame::DataFrame);
@@ -38,7 +36,9 @@ impl std::fmt::Display for DataFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use polars::prelude::*;
+    // Import only the df! macro — avoid wildcard that pulls in polars::DataFrame
+    // and creates an ambiguity with the wrapper DataFrame defined in super.
+    use polars::prelude::df;
 
     #[test]
     fn test_dataframe_new() {

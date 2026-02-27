@@ -16,8 +16,8 @@ repository = "https://github.com/acroberts16/arni"
 rust-version = "1.75"
 
 [workspace.dependencies]
-# Core async runtime
-tokio = { version = "1.35", features = ["full"] }
+# Core async runtime — crates declare only what they need (no "full")
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros"] }
 async-trait = "0.1"
 
 # Data processing
@@ -54,13 +54,21 @@ tempfile = "3.10"
 
 [profile.dev]
 opt-level = 0
-debug = true
+debug = 1                    # Line tables only — faster link, still gives backtraces
+split-debuginfo = "unpacked" # macOS: skip dsymutil, leave debug info in .o files
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"              # Smaller binary, faster unwind-free builds
 
 [profile.test]
 opt-level = 1
+debug = 1                    # Consistent with dev: line tables for test backtraces
+split-debuginfo = "unpacked" # macOS: skip dsymutil on test binaries
+
+[profile.bench]
+inherits = "release"
+debug = 1                    # Retain symbols for profiling

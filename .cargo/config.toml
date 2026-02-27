@@ -1,0 +1,36 @@
+# Cargo build configuration
+# See: https://doc.rust-lang.org/cargo/reference/config.html
+
+[build]
+# Limits incremental compilation to the workspace crates only. Avoids re-running
+# build scripts for dependencies that haven't changed.
+incremental = true
+
+[net]
+retry = 2
+
+# ── macOS (Apple Silicon) ─────────────────────────────────────────────────────
+# split-debuginfo is set in Cargo.toml [profile.*], which is the canonical
+# location. The RUSTFLAGS below are a safety net for any tool that bypasses
+# the profile (e.g. cargo-watch, some IDEs).
+[target.aarch64-apple-darwin]
+# No alternate linker needed on Apple Silicon — the system ld is fast.
+# If mold or lld is installed in future, add:
+#   linker = "mold"
+#   rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.x86_64-apple-darwin]
+# Same as above for Intel Macs.
+
+# ── Linux (CI) ────────────────────────────────────────────────────────────────
+# Uncomment if mold is available in CI:
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# ── cargo-nextest (faster test execution) ─────────────────────────────────────
+# Install with: cargo install cargo-nextest
+# Run with:     cargo nextest run
+# Nextest compiles all test binaries first, then runs them in parallel.
+# Significantly faster than `cargo test` for multi-crate workspaces.
+# See: https://nexte.st

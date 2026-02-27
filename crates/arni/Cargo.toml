@@ -16,14 +16,9 @@ path = "src/lib.rs"
 
 [dependencies]
 # Workspace dependencies
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 async-trait = { workspace = true }
 polars = { workspace = true }
-tokio-postgres = { workspace = true }
-mongodb = { workspace = true }
-oracle = { workspace = true }
-# tiberius = { workspace = true }  # Temporarily disabled due to build issues
-# duckdb = { workspace = true }  # Temporarily disabled due to build issues
 serde = { workspace = true }
 serde_yaml = { workspace = true }
 toml = { workspace = true }
@@ -31,8 +26,22 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 
+# Database drivers (optional — enabled via features like arni-data)
+tokio-postgres = { workspace = true, optional = true }
+mongodb = { workspace = true, optional = true }
+oracle = { workspace = true, optional = true }
+# tiberius = { workspace = true, optional = true }  # Re-enable when build issues resolved
+# duckdb = { workspace = true, optional = true }    # Re-enable when build issues resolved
+
 [dev-dependencies]
 mockall = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros"] }
 tracing-subscriber = { workspace = true }
+
+[features]
+default = []
+postgres = ["dep:tokio-postgres"]
+mongodb = ["dep:mongodb"]
+oracle = ["dep:oracle"]
+all-databases = ["postgres", "mongodb", "oracle"]

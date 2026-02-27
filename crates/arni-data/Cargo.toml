@@ -22,7 +22,7 @@ tracing = "0.1"
 
 # Async
 async-trait.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 futures-util = "0.3"
 
 # Serialization
@@ -47,7 +47,7 @@ duckdb = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-serde_yaml = { workspace = true }
+# serde_yaml is already a regular dependency — no need to repeat it here
 
 [features]
 default = []

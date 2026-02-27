@@ -6,7 +6,7 @@ use crate::{Connection, DataFrame, DbAdapter, Error, Result};
 
 /// PostgreSQL adapter
 pub struct PostgresAdapter {
-    connection_string: String,
+    _connection_string: String,
     connected: bool,
 }
 
@@ -14,7 +14,7 @@ impl PostgresAdapter {
     /// Create a new PostgreSQL adapter
     pub fn new(connection_string: impl Into<String>) -> Self {
         Self {
-            connection_string: connection_string.into(),
+            _connection_string: connection_string.into(),
             connected: false,
         }
     }

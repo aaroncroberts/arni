@@ -1,10 +1,11 @@
 mod config;
+#[allow(dead_code)] // TODO(arni-nb5): wire logging_config to CLI startup
 mod logging_config;
 
 use arni_data::adapter::{ConnectionConfig, DatabaseType};
 use clap::{Parser, Subcommand};
 use colored::*;
-use config::{ConnectionEntry, ConfigStore};
+use config::{ConfigStore, ConnectionEntry};
 use figlet_rs::FIGfont;
 use std::collections::HashMap;
 use std::error::Error;
@@ -325,12 +326,9 @@ async fn handle_config_command(action: ConfigAction) -> Result<(), Box<dyn Error
             })?;
 
             // Network databases need a host.
-            if !matches!(parsed_type, DatabaseType::SQLite | DatabaseType::DuckDB)
-                && host.is_none()
+            if !matches!(parsed_type, DatabaseType::SQLite | DatabaseType::DuckDB) && host.is_none()
             {
-                return Err(
-                    format!("--host is required for {} connections", parsed_type).into(),
-                );
+                return Err(format!("--host is required for {} connections", parsed_type).into());
             }
 
             // Parse KEY=VALUE parameters.
@@ -457,13 +455,15 @@ fn test_connection(cfg: &ConnectionConfig) -> Result<String, Box<dyn Error>> {
         _ => {
             use std::net::ToSocketAddrs;
             let host = cfg.host.as_deref().unwrap_or("localhost");
-            let port = cfg.port.unwrap_or_else(|| cfg.db_type.default_port().unwrap_or(5432));
+            let port = cfg
+                .port
+                .unwrap_or_else(|| cfg.db_type.default_port().unwrap_or(5432));
             let addr_str = format!("{}:{}", host, port);
 
-            let addrs: Vec<_> = addr_str.to_socket_addrs().map_err(|e| {
-                format!("Cannot resolve '{}': {}", host, e)
-            })?
-            .collect();
+            let addrs: Vec<_> = addr_str
+                .to_socket_addrs()
+                .map_err(|e| format!("Cannot resolve '{}': {}", host, e))?
+                .collect();
 
             if addrs.is_empty() {
                 return Err(format!("No addresses found for '{}'", host).into());
@@ -530,12 +530,13 @@ fn print_config_table(profiles: &[(&str, &ConnectionEntry)]) {
         let host_s = &host_str[..host_str.len().min(W_HOST)];
         let port_s = &port_str[..port_str.len().min(W_PORT)];
 
+        // Pad before colorizing so ANSI codes don't inflate column width.
+        let name_col = format!("{:<W_NAME$}", name_s).bright_cyan();
+        let type_col = format!("{:<W_TYPE$}", type_s).yellow();
+        let host_col = format!("{:<W_HOST$}", host_s);
+        let port_col = format!("{:<W_PORT$}", port_s);
         println!(
-            "{}  {}  {}  {}  {}  {}",
-            format!("{:<W_NAME$}", name_s).bright_cyan(),
-            format!("{:<W_TYPE$}", type_s).yellow(),
-            format!("{:<W_HOST$}", host_s),
-            format!("{:<W_PORT$}", port_s),
+            "{name_col}  {type_col}  {host_col}  {port_col}  {}  {}",
             entry.database.as_str(),
             ssl_str,
         );

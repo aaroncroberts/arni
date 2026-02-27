@@ -224,7 +224,6 @@ pub fn create_test_dataframe() -> DataFrame {
 
 /// Create an empty DataFrame for testing
 pub fn create_empty_dataframe() -> DataFrame {
-    use polars::prelude::*;
     let polars_df = polars::frame::DataFrame::default();
     crate::DataFrame::from(polars_df)
 }
