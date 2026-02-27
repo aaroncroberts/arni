@@ -37,3 +37,6 @@ pub mod sqlite;
 
 #[cfg(feature = "mssql")]
 pub mod mssql;
+
+#[cfg(feature = "duckdb")]
+pub mod duckdb;

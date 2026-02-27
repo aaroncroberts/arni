@@ -39,6 +39,7 @@ oracle = { workspace = true, optional = true }
 mongodb = { workspace = true, optional = true }
 tiberius = { workspace = true, optional = true }
 tokio-util = { version = "0.7", features = ["compat"], optional = true }
+duckdb = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
@@ -53,7 +54,7 @@ sqlite = ["dep:sqlx", "sqlx?/sqlite"]
 mongodb = ["dep:mongodb"]
 mssql = ["dep:tiberius", "dep:tokio-util"]
 oracle = ["dep:oracle"]
-duckdb = []
+duckdb = ["dep:duckdb"]
 
 # Convenience feature to enable all databases
 all-databases = ["postgres", "mysql", "sqlite", "mongodb", "mssql", "oracle", "duckdb"]
