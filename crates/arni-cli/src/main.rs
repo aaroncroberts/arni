@@ -1,5 +1,4 @@
 mod config;
-#[allow(dead_code)] // TODO(arni-nb5): wire logging_config to CLI startup
 mod logging_config;
 
 use arni_data::adapter::{ConnectionConfig, DatabaseType};
@@ -203,9 +202,40 @@ fn print_banner() {
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
-    // Initialize arni-logging
-    let log_level = if cli.verbose { "debug" } else { "info" };
-    arni_logging::init_default_with_filter(log_level)?;
+    // Initialize logging from ~/.arni/logging.yml (seed defaults on first run).
+    let arni_home = config::arni_home();
+    if let Err(e) = logging_config::write_default_logging_config(&arni_home) {
+        // Non-fatal — proceed without a config file.
+        eprintln!("arni: warning: could not write default logging config: {e}");
+    }
+    let log_cfg = logging_config::load_logging_config(&arni_home).unwrap_or_default();
+
+    // --verbose overrides the level from the config file.
+    let effective_level = if cli.verbose {
+        "debug".to_string()
+    } else {
+        log_cfg.level.clone()
+    };
+
+    let rotation = match log_cfg.rolling.strategy {
+        logging_config::RollingStrategy::Daily => arni_logging::RotationPolicy::Daily,
+        logging_config::RollingStrategy::Hourly => arni_logging::RotationPolicy::Hourly,
+        logging_config::RollingStrategy::Never => arni_logging::RotationPolicy::Never,
+    };
+
+    let log_dir = log_cfg.resolved_log_dir();
+
+    // _log_guard MUST be held until process exit to flush the async file writer.
+    let _log_guard = match arni_logging::init_arni_logging(&log_dir, &effective_level, rotation) {
+        Ok(guard) => Some(guard),
+        Err(e) => {
+            eprintln!("arni: warning: file logging unavailable: {e}");
+            let _ = arni_logging::init_default_with_filter(&effective_level);
+            None
+        }
+    };
+
+    tracing::info!("arni v{VERSION} started");
 
     // Show banner unless suppressed
     if !cli.no_banner {
