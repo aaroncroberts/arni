@@ -5,10 +5,25 @@
 # Limits incremental compilation to the workspace crates only. Avoids re-running
 # build scripts for dependencies that haven't changed.
 incremental = true
-# NOTE: Build artifacts grow large (100+ GB) because of DuckDB's bundled C++
-# library and Oracle/MongoDB native libs. Run `cargo clean` periodically, or
-# install cargo-sweep and run `cargo sweep --time 7` to remove old artifacts.
-# Install: cargo install cargo-sweep
+
+# ── DuckDB system library (replaces the old "bundled" compile-from-source) ────
+# DuckDB no longer uses features = ["bundled"]. Instead, it links against the
+# system-installed libduckdb.dylib / libduckdb.so.
+#
+# Dev setup (run once):
+#   macOS:  brew install duckdb
+#   Linux:  see https://duckdb.org/docs/installation
+#
+# If you have DuckDB installed somewhere non-standard, override these:
+#   export DUCKDB_LIB_DIR=/path/to/your/lib
+#   export DUCKDB_INCLUDE_DIR=/path/to/your/include
+#
+# force = false means any explicit env var wins over this default.
+[env]
+DUCKDB_LIB_DIR     = { value = "/opt/homebrew/lib",     force = false }
+DUCKDB_INCLUDE_DIR = { value = "/opt/homebrew/include", force = false }
+# Intel Mac / Linux override example:
+#   DUCKDB_LIB_DIR = { value = "/usr/local/lib", force = false }
 
 [net]
 retry = 2

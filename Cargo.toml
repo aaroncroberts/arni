@@ -28,7 +28,7 @@ tokio-postgres = "0.7"
 mongodb = "2.8"
 oracle = "0.5"
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls"] }
-duckdb = { version = "1.1", features = ["bundled"] }
+duckdb = { version = "1.4" }  # links system libduckdb; run `brew install duckdb`
 
 # Configuration
 serde = { version = "1.0", features = ["derive"] }

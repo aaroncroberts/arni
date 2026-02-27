@@ -63,6 +63,38 @@ check_cargo_watch() {
     fi
 }
 
+# Check that system libduckdb is available (required — we no longer use bundled)
+check_duckdb() {
+    # Honour explicit override first
+    local lib_dir="${DUCKDB_LIB_DIR:-}"
+    if [[ -n "$lib_dir" ]]; then
+        if [[ -f "$lib_dir/libduckdb.dylib" || -f "$lib_dir/libduckdb.so" ]]; then
+            return 0
+        fi
+        print_msg "$RED" "Error: DUCKDB_LIB_DIR='$lib_dir' but no libduckdb found there"
+        exit 1
+    fi
+
+    # Apple Silicon Homebrew default
+    if [[ -f "/opt/homebrew/lib/libduckdb.dylib" ]]; then
+        return 0
+    fi
+    # Intel Mac / Linux Homebrew / system default
+    if [[ -f "/usr/local/lib/libduckdb.dylib" || -f "/usr/local/lib/libduckdb.so" ]]; then
+        return 0
+    fi
+
+    print_msg "$RED" "Error: system libduckdb not found."
+    print_msg "$YELLOW" "Install it first:"
+    if [[ "$PLATFORM" == "macOS" ]]; then
+        print_msg "$YELLOW" "  brew install duckdb"
+    else
+        print_msg "$YELLOW" "  See https://duckdb.org/docs/installation (choose 'C/C++ API')"
+    fi
+    print_msg "$YELLOW" "Or set DUCKDB_LIB_DIR=/path/to/your/lib before running."
+    exit 1
+}
+
 # Default options
 WATCH_MODE="build"
 VERBOSE=false
@@ -99,6 +131,7 @@ done
 
 # Check dependencies
 check_cargo_watch
+check_duckdb
 
 # Print platform info
 print_msg "$GREEN" "Platform: $PLATFORM"
