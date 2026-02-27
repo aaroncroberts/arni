@@ -387,6 +387,13 @@ impl OracleAdapter {
 
         Ok(result)
     }
+
+    /// Returns `true` when the SQL starts with a keyword that produces a result
+    /// set (SELECT, WITH …). Everything else is treated as DDL/DML.
+    fn is_select_query(sql: &str) -> bool {
+        let first = sql.trim_start().split_whitespace().next().unwrap_or("");
+        matches!(first.to_uppercase().as_str(), "SELECT" | "WITH")
+    }
 }
 
 #[async_trait::async_trait]
@@ -553,8 +560,21 @@ impl DbAdapter for OracleAdapter {
             ));
         }
 
-        self.execute_query_blocking(query.to_string()).await
+        // Oracle's `stmt.query()` only accepts SELECT-like statements.
+        // Route DDL/DML through the execute path and wrap the affected-row count
+        // in a QueryResult so callers get a uniform return type.
+        if Self::is_select_query(query) {
+            self.execute_query_blocking(query.to_string()).await
+        } else {
+            let rows_affected = self.execute_statement_blocking(query.to_string()).await?;
+            Ok(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                rows_affected: Some(rows_affected),
+            })
+        }
     }
+
 
     async fn export_dataframe(
         &self,

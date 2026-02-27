@@ -25,6 +25,27 @@ DUCKDB_INCLUDE_DIR = { value = "/opt/homebrew/include", force = false }
 # Intel Mac / Linux override example:
 #   DUCKDB_LIB_DIR = { value = "/usr/local/lib", force = false }
 
+# ── Oracle Instant Client ──────────────────────────────────────────────────────
+# The oracle crate uses ODPI-C, which dlopen()s libclntsh.dylib at runtime.
+# DYLD_LIBRARY_PATH (macOS) / LD_LIBRARY_PATH (Linux) must include the Instant
+# Client directory so `cargo test --features oracle` can find the library.
+#
+# Dev setup (run once):
+#   1. Download Oracle Instant Client:
+#        macOS ARM64: https://www.oracle.com/database/technologies/instant-client/macos-arm64-downloads.html
+#        macOS x86:   https://www.oracle.com/database/technologies/instant-client/macos-intel-x86-downloads.html
+#        Linux:       https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html
+#   2. Extract to a directory of your choice (e.g. ~/Oracle/instantclient_23_3)
+#   3. Set in your shell profile (~/.zshrc or ~/.bashrc):
+#        export ORACLE_LIB_DIR=~/Oracle/instantclient_23_3
+#        export DYLD_LIBRARY_PATH=$ORACLE_LIB_DIR   # macOS
+#      OR for Linux:
+#        export LD_LIBRARY_PATH=$ORACLE_LIB_DIR
+#
+# Note: DYLD_LIBRARY_PATH cannot be set here because .cargo/config.toml values
+# are literals and cannot reference other environment variables. Set it in your
+# shell profile instead. scripts/dev.sh validates ORACLE_LIB_DIR at startup.
+
 [net]
 retry = 2
 

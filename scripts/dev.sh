@@ -95,6 +95,44 @@ check_duckdb() {
     exit 1
 }
 
+# Check that Oracle Instant Client is available (needed by oracle crate at runtime).
+# Uses ORACLE_LIB_DIR (set in your shell profile) as the canonical location.
+# Exports DYLD_LIBRARY_PATH (macOS) / LD_LIBRARY_PATH (Linux) so that
+# cargo test processes can dlopen libclntsh.dylib at runtime.
+check_oracle_client() {
+    local lib_dir="${ORACLE_LIB_DIR:-}"
+
+    # Fall back to already-set DYLD_LIBRARY_PATH / LD_LIBRARY_PATH
+    if [[ -z "$lib_dir" ]]; then
+        lib_dir="${DYLD_LIBRARY_PATH:-${LD_LIBRARY_PATH:-}}"
+    fi
+
+    if [[ -n "$lib_dir" ]]; then
+        if [[ -f "$lib_dir/libclntsh.dylib" || -f "$lib_dir/libclntsh.so" ]]; then
+            # Ensure cargo-spawned test processes can find the library
+            export DYLD_LIBRARY_PATH="$lib_dir"
+            export LD_LIBRARY_PATH="$lib_dir"
+            return 0
+        fi
+        print_msg "$YELLOW" "Warning: ORACLE_LIB_DIR='$lib_dir' set but no libclntsh found there."
+        print_msg "$YELLOW" "Oracle adapter tests will be skipped."
+        return 0
+    fi
+
+    print_msg "$YELLOW" "Warning: ORACLE_LIB_DIR is not set — Oracle adapter tests will be skipped."
+    print_msg "$YELLOW" "To enable Oracle tests, add to your shell profile (~/.zshrc or ~/.bashrc):"
+    if [[ "$PLATFORM" == "macOS" ]]; then
+        print_msg "$YELLOW" "  export ORACLE_LIB_DIR=~/Oracle/instantclient_23_3"
+        print_msg "$YELLOW" "  export DYLD_LIBRARY_PATH=\$ORACLE_LIB_DIR"
+        print_msg "$YELLOW" "Download: https://www.oracle.com/database/technologies/instant-client/macos-arm64-downloads.html"
+    else
+        print_msg "$YELLOW" "  export ORACLE_LIB_DIR=/opt/oracle/instantclient"
+        print_msg "$YELLOW" "  export LD_LIBRARY_PATH=\$ORACLE_LIB_DIR"
+        print_msg "$YELLOW" "Download: https://www.oracle.com/database/technologies/instant-client/linux-x86-64-downloads.html"
+    fi
+    # Not fatal — non-Oracle adapters still work without Instant Client
+}
+
 # Default options
 WATCH_MODE="build"
 VERBOSE=false
@@ -132,6 +170,7 @@ done
 # Check dependencies
 check_cargo_watch
 check_duckdb
+check_oracle_client
 
 # Print platform info
 print_msg "$GREEN" "Platform: $PLATFORM"
