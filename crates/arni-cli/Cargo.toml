@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # Local dependencies
 arni = { path = "../arni" }
+arni-data = { path = "../arni-data" }
 arni-logging = { path = "../arni-logging" }
 
 # Workspace dependencies

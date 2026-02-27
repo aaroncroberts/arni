@@ -1,3 +1,6 @@
+mod config;
+mod logging_config;
+
 use clap::{Parser, Subcommand};
 use colored::*;
 use figlet_rs::FIGfont;
