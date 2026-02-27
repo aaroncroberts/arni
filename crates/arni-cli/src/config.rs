@@ -229,6 +229,158 @@ impl ConnectionsFile {
     }
 }
 
+// ─── ConfigStore ──────────────────────────────────────────────────────────────
+
+/// High-level config store that manages the lifecycle of `connections.yml`.
+///
+/// `ConfigStore` owns the resolved config directory and the in-memory
+/// [`ConnectionsFile`]. It provides atomic persistence and typed access to
+/// individual connections.
+///
+/// # Usage
+///
+/// ```no_run
+/// use crate::config::ConfigStore;
+///
+/// // Load from default ~/.arni/ directory
+/// let store = ConfigStore::load(None).unwrap();
+///
+/// // Load from a custom directory (e.g. via --config flag)
+/// let store = ConfigStore::load(Some(std::path::Path::new("/workspace/arni-dev"))).unwrap();
+///
+/// // Retrieve a connection by name
+/// let cfg = store.get("dev-postgres").unwrap();
+/// ```
+pub struct ConfigStore {
+    /// The resolved config directory (either `~/.arni/` or the `--config` override).
+    config_dir: std::path::PathBuf,
+    /// The path to `connections.yml` within `config_dir`.
+    file_path: std::path::PathBuf,
+    /// The in-memory representation of `connections.yml`.
+    file: ConnectionsFile,
+}
+
+impl ConfigStore {
+    /// Load the config store from a directory.
+    ///
+    /// - `config_dir = None` → uses `~/.arni/` (the default)
+    /// - `config_dir = Some(path)` → uses the given path (for `--config` override)
+    ///
+    /// The directory is created automatically if it does not exist.
+    /// If `connections.yml` is absent an empty store is returned — the file is
+    /// not written until [`save`][Self::save] is called.
+    pub fn load(config_dir: Option<&Path>) -> Result<Self> {
+        let config_dir = config_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(arni_home);
+
+        // Ensure the directory exists so callers don't have to think about it.
+        std::fs::create_dir_all(&config_dir).with_context(|| {
+            format!(
+                "Failed to create arni config directory: {}",
+                config_dir.display()
+            )
+        })?;
+
+        let file_path = default_connections_path(&config_dir);
+        let file = ConnectionsFile::load_or_default(&config_dir).map_err(|e| {
+            // Wrap with a hint so YAML parse errors are human-readable.
+            anyhow::anyhow!(
+                "{}\n\nHint: check {} for syntax errors (invalid YAML, wrong field name, etc.)",
+                e,
+                file_path.display()
+            )
+        })?;
+
+        Ok(Self {
+            config_dir,
+            file_path,
+            file,
+        })
+    }
+
+    /// Write the current in-memory state back to `connections.yml` atomically.
+    ///
+    /// The file is written to a `.tmp` sibling first, then renamed into place.
+    /// On Unix, `rename(2)` is atomic within the same filesystem, so a crash
+    /// mid-write will never leave a corrupt or empty `connections.yml`.
+    pub fn save(&self) -> Result<()> {
+        let tmp_path = self.file_path.with_extension("yml.tmp");
+        self.file.save(&tmp_path).with_context(|| {
+            format!("Failed to write temporary connections file: {}", tmp_path.display())
+        })?;
+        std::fs::rename(&tmp_path, &self.file_path).with_context(|| {
+            format!(
+                "Failed to atomically replace connections file: {}",
+                self.file_path.display()
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Retrieve a connection by name and convert it to a [`ConnectionConfig`].
+    ///
+    /// Returns a clear error if the name is unknown, listing available names.
+    pub fn get(&self, name: &str) -> Result<ConnectionConfig> {
+        let entry = self.file.get(name).ok_or_else(|| {
+            let available = self.file.names();
+            if available.is_empty() {
+                anyhow::anyhow!(
+                    "Connection '{}' not found. No connections are configured yet.\n\
+                     Run `arni config add` to add one.",
+                    name
+                )
+            } else {
+                anyhow::anyhow!(
+                    "Connection '{}' not found. Available connections: {}",
+                    name,
+                    available.join(", ")
+                )
+            }
+        })?;
+        entry.clone().into_connection_config(name)
+    }
+
+    /// Add or replace a named connection entry.
+    ///
+    /// Call [`save`][Self::save] afterwards to persist the change.
+    pub fn add(&mut self, name: String, entry: ConnectionEntry) -> Result<()> {
+        self.file.upsert(name, entry)
+    }
+
+    /// Remove a named connection entry, returning it if it existed.
+    ///
+    /// Returns an error (rather than `None`) so callers get a consistent
+    /// error message instead of silently doing nothing.
+    ///
+    /// Call [`save`][Self::save] afterwards to persist the change.
+    pub fn remove(&mut self, name: &str) -> Result<ConnectionEntry> {
+        self.file.remove(name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Connection '{}' not found — nothing removed.",
+                name
+            )
+        })
+    }
+
+    /// List all connections as sorted `(name, entry)` pairs.
+    pub fn list(&self) -> Vec<(&str, &ConnectionEntry)> {
+        let mut pairs: Vec<_> = self
+            .file
+            .connections
+            .iter()
+            .map(|(k, v)| (k.as_str(), v))
+            .collect();
+        pairs.sort_by_key(|(k, _)| *k);
+        pairs
+    }
+
+    /// The resolved config directory this store is backed by.
+    pub fn config_dir(&self) -> &Path {
+        &self.config_dir
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -397,5 +549,149 @@ alpha:
             parameters: HashMap::new(),
         };
         assert!(file.upsert("bad name".to_string(), entry).is_err());
+    }
+
+    // ── ConfigStore tests ────────────────────────────────────────────────────
+
+    fn sqlite_entry(path: &str) -> ConnectionEntry {
+        ConnectionEntry {
+            db_type: DatabaseType::SQLite,
+            host: None,
+            port: None,
+            database: path.to_string(),
+            username: None,
+            password: None,
+            ssl: false,
+            parameters: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_config_store_load_creates_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join("arni-test");
+        assert!(!config_dir.exists());
+
+        let store = ConfigStore::load(Some(&config_dir)).unwrap();
+        assert!(config_dir.exists(), "config dir should have been created");
+        assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn test_config_store_add_and_get() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
+
+        store
+            .add("local-db".to_string(), sqlite_entry("/tmp/local.db"))
+            .unwrap();
+
+        let cfg = store.get("local-db").unwrap();
+        assert_eq!(cfg.id, "local-db");
+        assert_eq!(cfg.database, "/tmp/local.db");
+        assert_eq!(cfg.db_type, DatabaseType::SQLite);
+    }
+
+    #[test]
+    fn test_config_store_get_unknown_name_lists_available() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
+        store
+            .add("alpha".to_string(), sqlite_entry("a.db"))
+            .unwrap();
+
+        let err = store.get("nonexistent").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nonexistent"),
+            "error should mention the requested name"
+        );
+        assert!(
+            msg.contains("alpha"),
+            "error should list available connections"
+        );
+    }
+
+    #[test]
+    fn test_config_store_get_empty_store_message() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ConfigStore::load(Some(tmp.path())).unwrap();
+        let err = store.get("anything").unwrap_err();
+        assert!(
+            err.to_string().contains("No connections are configured"),
+            "empty store should give helpful message"
+        );
+    }
+
+    #[test]
+    fn test_config_store_save_and_reload() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        {
+            let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
+            store
+                .add("my-db".to_string(), sqlite_entry("/data/my.db"))
+                .unwrap();
+            store.save().unwrap();
+        }
+
+        // Reload from the same directory — entry must survive the round-trip.
+        let store = ConfigStore::load(Some(tmp.path())).unwrap();
+        let cfg = store.get("my-db").unwrap();
+        assert_eq!(cfg.database, "/data/my.db");
+    }
+
+    #[test]
+    fn test_config_store_atomic_save_leaves_no_tmp_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
+        store
+            .add("x".to_string(), sqlite_entry("x.db"))
+            .unwrap();
+        store.save().unwrap();
+
+        let tmp_path = tmp.path().join("connections.yml.tmp");
+        assert!(
+            !tmp_path.exists(),
+            "tmp file should be renamed away after atomic save"
+        );
+    }
+
+    #[test]
+    fn test_config_store_remove_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
+        store
+            .add("to-remove".to_string(), sqlite_entry("r.db"))
+            .unwrap();
+
+        let removed = store.remove("to-remove").unwrap();
+        assert_eq!(removed.database, "r.db");
+        assert!(store.get("to-remove").is_err());
+    }
+
+    #[test]
+    fn test_config_store_remove_nonexistent_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
+        assert!(store.remove("ghost").is_err());
+    }
+
+    #[test]
+    fn test_config_store_list_sorted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = ConfigStore::load(Some(tmp.path())).unwrap();
+        store.add("zebra".to_string(), sqlite_entry("z.db")).unwrap();
+        store.add("alpha".to_string(), sqlite_entry("a.db")).unwrap();
+
+        let names: Vec<&str> = store.list().iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, vec!["alpha", "zebra"]);
+    }
+
+    #[test]
+    fn test_config_store_config_dir_accessor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ConfigStore::load(Some(tmp.path())).unwrap();
+        assert_eq!(store.config_dir(), tmp.path());
     }
 }

@@ -32,3 +32,6 @@ polars = { workspace = true }
 # CLI-specific dependencies
 figlet-rs = "0.1"
 colored = "3.1"
+
+[dev-dependencies]
+tempfile = { workspace = true }
