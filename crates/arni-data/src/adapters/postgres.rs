@@ -44,11 +44,12 @@
 //! ```
 
 use crate::adapter::{
-    AdapterMetadata, Connection, ConnectionConfig, DatabaseType, DbAdapter, QueryResult,
-    QueryValue, Result,
+    AdapterMetadata, Connection, ConnectionConfig, DatabaseType, DbAdapter, ForeignKeyInfo,
+    IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_postgres::{types::Type, Client, NoTls};
@@ -629,6 +630,455 @@ impl DbAdapter for PostgresAdapter {
             schema: Some(schema_name.to_string()),
             columns,
         })
+    }
+
+    // ===== Metadata Methods =====
+
+    async fn get_indexes(
+        &self,
+        table_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Vec<IndexInfo>> {
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let schema_name = schema.unwrap_or("public");
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        let query = "
+            SELECT
+                i.relname as index_name,
+                t.relname as table_name,
+                n.nspname as schema_name,
+                ix.indisunique as is_unique,
+                ix.indisprimary as is_primary,
+                am.amname as index_type,
+                array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns
+            FROM pg_index ix
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            JOIN pg_class t ON t.oid = ix.indrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_am am ON am.oid = i.relam
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+            WHERE t.relname = $1 AND n.nspname = $2
+            GROUP BY i.relname, t.relname, n.nspname, ix.indisunique, ix.indisprimary, am.amname
+        ";
+
+        let rows = client
+            .query(query, &[&table_name, &schema_name])
+            .await
+            .map_err(|e| {
+                DataError::Query(format!(
+                    "Failed to get indexes for '{}.{}': {}",
+                    schema_name, table_name, e
+                ))
+            })?;
+
+        let indexes = rows
+            .iter()
+            .map(|row| IndexInfo {
+                name: row.get("index_name"),
+                table_name: row.get("table_name"),
+                schema: Some(row.get::<_, String>("schema_name")),
+                columns: row.get("columns"),
+                is_unique: row.get("is_unique"),
+                is_primary: row.get("is_primary"),
+                index_type: row.get("index_type"),
+            })
+            .collect();
+
+        Ok(indexes)
+    }
+
+    async fn get_foreign_keys(
+        &self,
+        table_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Vec<ForeignKeyInfo>> {
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let schema_name = schema.unwrap_or("public");
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        let query = "
+            SELECT
+                tc.constraint_name,
+                tc.table_name,
+                tc.table_schema,
+                kcu.column_name,
+                ccu.table_name AS foreign_table_name,
+                ccu.table_schema AS foreign_table_schema,
+                ccu.column_name AS foreign_column_name,
+                rc.update_rule,
+                rc.delete_rule
+            FROM information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage AS ccu
+                ON ccu.constraint_name = tc.constraint_name
+                AND ccu.table_schema = tc.table_schema
+            JOIN information_schema.referential_constraints AS rc
+                ON rc.constraint_name = tc.constraint_name
+                AND rc.constraint_schema = tc.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+                AND tc.table_name = $1
+                AND tc.table_schema = $2
+            ORDER BY tc.constraint_name, kcu.ordinal_position
+        ";
+
+        let rows = client
+            .query(query, &[&table_name, &schema_name])
+            .await
+            .map_err(|e| {
+                DataError::Query(format!(
+                    "Failed to get foreign keys for '{}.{}': {}",
+                    schema_name, table_name, e
+                ))
+            })?;
+
+        // Group by constraint name since one FK can span multiple columns
+        let mut fk_map: HashMap<String, ForeignKeyInfo> = HashMap::new();
+
+        for row in rows {
+            let fk_name: String = row.get("constraint_name");
+            let column: String = row.get("column_name");
+            let ref_column: String = row.get("foreign_column_name");
+
+            fk_map
+                .entry(fk_name.clone())
+                .or_insert_with(|| ForeignKeyInfo {
+                    name: fk_name.clone(),
+                    table_name: row.get("table_name"),
+                    schema: Some(row.get::<_, String>("table_schema")),
+                    columns: Vec::new(),
+                    referenced_table: row.get("foreign_table_name"),
+                    referenced_schema: Some(row.get::<_, String>("foreign_table_schema")),
+                    referenced_columns: Vec::new(),
+                    on_delete: Some(row.get::<_, String>("delete_rule")),
+                    on_update: Some(row.get::<_, String>("update_rule")),
+                })
+                .columns
+                .push(column);
+
+            if let Some(fk) = fk_map.get_mut(&fk_name) {
+                fk.referenced_columns.push(ref_column);
+            }
+        }
+
+        Ok(fk_map.into_values().collect())
+    }
+
+    async fn get_views(&self, schema: Option<&str>) -> Result<Vec<ViewInfo>> {
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let schema_name = schema.unwrap_or("public");
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        let query = "
+            SELECT
+                table_name,
+                table_schema
+            FROM information_schema.views
+            WHERE table_schema = $1
+            ORDER BY table_name
+        ";
+
+        let rows = client
+            .query(query, &[&schema_name])
+            .await
+            .map_err(|e| {
+                DataError::Query(format!("Failed to get views for schema '{}': {}", schema_name, e))
+            })?;
+
+        let views = rows
+            .iter()
+            .map(|row| ViewInfo {
+                name: row.get("table_name"),
+                schema: Some(row.get::<_, String>("table_schema")),
+                definition: None, // Definition retrieved separately via get_view_definition
+            })
+            .collect();
+
+        Ok(views)
+    }
+
+    async fn get_view_definition(
+        &self,
+        view_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Option<String>> {
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let schema_name = schema.unwrap_or("public");
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        let query = "
+            SELECT view_definition
+            FROM information_schema.views
+            WHERE table_name = $1 AND table_schema = $2
+        ";
+
+        let rows = client
+            .query(query, &[&view_name, &schema_name])
+            .await
+            .map_err(|e| {
+                DataError::Query(format!(
+                    "Failed to get view definition for '{}.{}': {}",
+                    schema_name, view_name, e
+                ))
+            })?;
+
+        Ok(rows.first().map(|row| row.get("view_definition")))
+    }
+
+    async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let schema_name = schema.unwrap_or("public");
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        let query = "
+            SELECT
+                p.proname as name,
+                n.nspname as schema,
+                pg_get_function_result(p.oid) as return_type,
+                l.lanname as language
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            JOIN pg_language l ON l.oid = p.prolang
+            WHERE n.nspname = $1
+            ORDER BY p.proname
+        ";
+
+        let rows = client
+            .query(query, &[&schema_name])
+            .await
+            .map_err(|e| {
+                DataError::Query(format!(
+                    "Failed to get stored procedures for schema '{}': {}",
+                    schema_name, e
+                ))
+            })?;
+
+        let procedures = rows
+            .iter()
+            .map(|row| ProcedureInfo {
+                name: row.get("name"),
+                schema: Some(row.get::<_, String>("schema")),
+                return_type: Some(row.get::<_, String>("return_type")),
+                language: Some(row.get::<_, String>("language")),
+            })
+            .collect();
+
+        Ok(procedures)
+    }
+
+    // ===== Bulk Operations =====
+
+    async fn bulk_insert(
+        &self,
+        _table_name: &str,
+        columns: &[String],
+        rows: &[Vec<QueryValue>],
+        schema: Option<&str>,
+    ) -> Result<u64> {
+        if columns.is_empty() {
+            return Err(DataError::Config("Column list cannot be empty".to_string()));
+        }
+
+        if rows.is_empty() {
+            return Ok(0);
+        }
+
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let _schema_name = schema.unwrap_or("public");
+
+        // Validate all rows have the same column count
+        for (idx, row) in rows.iter().enumerate() {
+            if row.len() != columns.len() {
+                return Err(DataError::Config(format!(
+                    "Row {} has {} values but expected {} columns",
+                    idx,
+                    row.len(),
+                    columns.len()
+                )));
+            }
+        }
+
+        // Note: tokio-postgres doesn't support easy dynamic parameter binding
+        // For a production system, consider using prepared statements in transactions
+        // For now, return NotSupported to indicate this needs special handling
+        return Err(DataError::NotSupported(
+            "bulk_insert requires parameterized statement support - use transactions with individual inserts".to_string()
+        ));
+    }
+
+    async fn bulk_update(
+        &self,
+        table_name: &str,
+        updates: &[(HashMap<String, QueryValue>, String)],
+        schema: Option<&str>,
+    ) -> Result<u64> {
+        if updates.is_empty() {
+            return Ok(0);
+        }
+
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let schema_name = schema.unwrap_or("public");
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        let mut total_affected = 0u64;
+
+        // Execute each update
+        for (set_clauses, where_clause) in updates {
+            if set_clauses.is_empty() {
+                continue;
+            }
+
+            // Build SET clause
+            let mut set_parts = Vec::new();
+            for (column, _) in set_clauses.iter() {
+                set_parts.push(format!("{} = $1", column));
+            }
+
+            let query = format!(
+                "UPDATE {}.{} SET {} WHERE {}",
+                schema_name,
+                table_name,
+                set_parts.join(", "),
+                where_clause
+            );
+
+            // Note: Simplified implementation - proper implementation would need dynamic parameter binding
+            let result = client.execute(&query, &[]).await.map_err(|e| {
+                DataError::Query(format!(
+                    "Failed to bulk update {}.{}: {}",
+                    schema_name, table_name, e
+                ))
+            })?;
+
+            total_affected += result;
+        }
+
+        Ok(total_affected)
+    }
+
+    async fn bulk_delete(
+        &self,
+        table_name: &str,
+        where_clauses: &[String],
+        schema: Option<&str>,
+    ) -> Result<u64> {
+        if where_clauses.is_empty() {
+            return Ok(0);
+        }
+
+        // Check connection
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let schema_name = schema.unwrap_or("public");
+
+        // Get client
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+
+        let mut total_affected = 0u64;
+
+        // Execute each delete
+        for where_clause in where_clauses {
+            if where_clause.trim().is_empty() {
+                continue;
+            }
+
+            let query = format!(
+                "DELETE FROM {}.{} WHERE {}",
+                schema_name, table_name, where_clause
+            );
+
+            let result = client.execute(&query, &[]).await.map_err(|e| {
+                DataError::Query(format!(
+                    "Failed to bulk delete from {}.{}: {}",
+                    schema_name, table_name, e
+                ))
+            })?;
+
+            total_affected += result;
+        }
+
+        Ok(total_affected)
     }
 }
 

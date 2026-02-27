@@ -1,37 +1,37 @@
-//! MySQL database adapter implementation
+//! Oracle database adapter implementation
 //!
-//! This module provides the [`MySqlAdapter`] which implements both the [`Connection`]
-//! and [`DbAdapter`] traits for MySQL databases using the sqlx driver.
+//! This module provides the [`OracleAdapter`] which implements both the [`Connection`]
+//! and [`DbAdapter`] traits for Oracle databases using the sqlx driver.
 //!
 //! # Features
 //!
-//! This module is only available when the `mysql` feature is enabled:
+//! This module is only available when the `oracle` feature is enabled:
 //!
 //! ```toml
-//! arni-data = { version = "0.1", features = ["mysql"] }
+//! arni-data = { version = "0.1", features = ["oracle"] }
 //! ```
 //!
 //! # Examples
 //!
 //! ```ignore
-//! use arni_data::adapters::mysql::MySqlAdapter;
+//! use arni_data::adapters::oracle::OracleAdapter;
 //! use arni_data::adapter::{Connection, ConnectionConfig, DatabaseType};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let config = ConnectionConfig {
-//!         id: "my-mysql".to_string(),
-//!         name: "My MySQL DB".to_string(),
-//!         db_type: DatabaseType::MySQL,
+//!         id: "my-oracle".to_string(),
+//!         name: "My Oracle DB".to_string(),
+//!         db_type: DatabaseType::Oracle,
 //!         host: Some("localhost".to_string()),
-//!         port: Some(3306),
-//!         database: "mydb".to_string(),
+//!         port: Some(1521),
+//!         database: "FREE".to_string(),
 //!         username: Some("user".to_string()),
 //!         use_ssl: false,
 //!         parameters: Default::default(),
 //!     };
 //!
-//!     let mut adapter = MySqlAdapter::new(config);
+//!     let mut adapter = OracleAdapter::new(config);
 //!     adapter.connect().await?;
 //!
 //!     if adapter.health_check().await? {
@@ -44,21 +44,19 @@
 //! ```
 
 use crate::adapter::{
-    AdapterMetadata, ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter,
-    ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, TableInfo,
-    ViewInfo,
+    ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter, QueryResult, QueryValue,
+    Result, TableInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
-use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Executor, Row, TypeInfo};
-use std::collections::HashMap;
+use oracle::{OracleConnection, OracleConnectionOptions, OracleRow};
+use oracle::{Column, Executor, Row, TypeInfo};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// MySQL database adapter
+/// Oracle database adapter
 ///
-/// This adapter uses the sqlx MySQL driver to connect to MySQL databases.
+/// This adapter uses the sqlx Oracle driver to connect to Oracle databases.
 /// It implements both [`Connection`] and [`DbAdapter`] traits.
 ///
 /// # Connection Management
@@ -76,18 +74,18 @@ use tokio::sync::RwLock;
 /// # Thread Safety
 ///
 /// The adapter uses internal locking to ensure thread-safe access to the underlying
-/// MySQL connection pool.
-pub struct MySqlAdapter {
+/// Oracle connection pool.
+pub struct OracleAdapter {
     /// Connection configuration
     config: ConnectionConfig,
-    /// MySQL connection pool wrapped in Arc<RwLock> for thread-safe access
-    pool: Arc<RwLock<Option<MySqlPool>>>,
+    /// Oracle connection pool wrapped in Arc<RwLock> for thread-safe access
+    pool: Arc<RwLock<Option<OracleConnection>>>,
     /// Connection state flag
     connected: Arc<RwLock<bool>>,
 }
 
-impl MySqlAdapter {
-    /// Create a new MySQL adapter with the given configuration
+impl OracleAdapter {
+    /// Create a new Oracle adapter with the given configuration
     ///
     /// This does not establish a connection immediately. Call [`connect`](Connection::connect)
     /// to establish the connection.
@@ -98,16 +96,16 @@ impl MySqlAdapter {
     /// let config = ConnectionConfig {
     ///     id: "prod-db".to_string(),
     ///     name: "Production DB".to_string(),
-    ///     db_type: DatabaseType::MySQL,
+    ///     db_type: DatabaseType::Oracle,
     ///     host: Some("db.example.com".to_string()),
-    ///     port: Some(3306),
+    ///     port: Some(1521),
     ///     database: "app_db".to_string(),
     ///     username: Some("app_user".to_string()),
     ///     use_ssl: true,
     ///     parameters: Default::default(),
     /// };
     ///
-    /// let adapter = MySqlAdapter::new(config);
+    /// let adapter = OracleAdapter::new(config);
     /// ```
     pub fn new(config: ConnectionConfig) -> Self {
         Self {
@@ -133,16 +131,16 @@ impl MySqlAdapter {
         Ok(())
     }
 
-    /// Build a MySQL connection string from the configuration
+    /// Build a Oracle connection string from the configuration
     ///
     /// The connection string format is:
     /// ```text
-    /// mysql://username:password@host:port/database?ssl-mode=REQUIRED
+    /// oracle://username:password@host:port/database?ssl-mode=REQUIRED
     /// ```
     ///
     /// # Returns
     ///
-    /// A connection string suitable for sqlx MySQL, or an error if required
+    /// A connection string suitable for sqlx Oracle, or an error if required
     /// fields are missing.
     fn build_connection_string(&self, password: Option<&str>) -> Result<String> {
         Self::validate_database_name(&self.config.database)?;
@@ -153,7 +151,7 @@ impl MySqlAdapter {
             .as_ref()
             .ok_or_else(|| DataError::Config("Missing host".to_string()))?;
 
-        let port = self.config.port.unwrap_or(3306);
+        let port = self.config.port.unwrap_or(1521);
 
         let username = self
             .config
@@ -170,16 +168,16 @@ impl MySqlAdapter {
         };
 
         Ok(format!(
-            "mysql://{}:{}@{}:{}/{}?{}",
+            "oracle://{}:{}@{}:{}/{}?{}",
             username, password, host, port, self.config.database, ssl_mode
         ))
     }
 
-    /// Convert a MySQL row to a vector of QueryValue
+    /// Convert a Oracle row to a vector of QueryValue
     ///
-    /// This helper method extracts values from a MySQL row and converts them
-    /// to the QueryValue enum, handling type conversions for common MySQL types.
-    fn row_to_values(row: &MySqlRow) -> Result<Vec<QueryValue>> {
+    /// This helper method extracts values from a Oracle row and converts them
+    /// to the QueryValue enum, handling type conversions for common Oracle types.
+    fn row_to_values(row: &OracleRow) -> Result<Vec<QueryValue>> {
         let mut values = Vec::new();
 
         for (i, column) in row.columns().iter().enumerate() {
@@ -229,7 +227,7 @@ impl MySqlAdapter {
                 }
                 // Timestamp (stored as UTC DateTime)
                 "TIMESTAMP" => {
-                    use sqlx::types::chrono::{DateTime, Utc};
+                    use oracle::types::chrono::{DateTime, Utc};
                     let val: Option<DateTime<Utc>> = row.try_get(i).map_err(|e| {
                         DataError::Query(format!("Failed to get timestamp value: {}", e))
                     })?;
@@ -240,7 +238,7 @@ impl MySqlAdapter {
                 }
                 // Datetime (timezone-naive)
                 "DATETIME" => {
-                    use sqlx::types::chrono::NaiveDateTime;
+                    use oracle::types::chrono::NaiveDateTime;
                     let val: Option<NaiveDateTime> = row.try_get(i).map_err(|e| {
                         DataError::Query(format!("Failed to get datetime value: {}", e))
                     })?;
@@ -251,7 +249,7 @@ impl MySqlAdapter {
                 }
                 // Date
                 "DATE" => {
-                    use sqlx::types::chrono::NaiveDate;
+                    use oracle::types::chrono::NaiveDate;
                     let val: Option<NaiveDate> = row.try_get(i).map_err(|e| {
                         DataError::Query(format!("Failed to get date value: {}", e))
                     })?;
@@ -381,7 +379,7 @@ impl MySqlAdapter {
 }
 
 #[async_trait::async_trait]
-impl Connection for MySqlAdapter {
+impl Connection for OracleAdapter {
     async fn connect(&mut self) -> Result<()> {
         // Check if already connected
         if *self.connected.read().await {
@@ -392,7 +390,7 @@ impl Connection for MySqlAdapter {
         let conn_str = self.build_connection_string(None)?;
 
         // Create connection pool with sqlx
-        let pool = MySqlPoolOptions::new()
+        let pool = OracleConnectionOptions::new()
             .max_connections(5)
             .connect(&conn_str)
             .await
@@ -450,7 +448,7 @@ impl Connection for MySqlAdapter {
 }
 
 #[async_trait::async_trait]
-impl DbAdapter for MySqlAdapter {
+impl DbAdapter for OracleAdapter {
     // ===== Connection Management =====
 
     async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<()> {
@@ -461,7 +459,7 @@ impl DbAdapter for MySqlAdapter {
         let conn_str = self.build_connection_string(password)?;
 
         // Create connection pool
-        let pool = MySqlPoolOptions::new()
+        let pool = OracleConnectionOptions::new()
             .max_connections(5)
             .connect(&conn_str)
             .await
@@ -499,7 +497,7 @@ impl DbAdapter for MySqlAdapter {
             .host
             .as_ref()
             .ok_or_else(|| DataError::Config("Missing host".to_string()))?;
-        let port = config.port.unwrap_or(3306);
+        let port = config.port.unwrap_or(1521);
         let username = config
             .username
             .as_ref()
@@ -513,12 +511,12 @@ impl DbAdapter for MySqlAdapter {
         };
 
         let conn_str = format!(
-            "mysql://{}:{}@{}:{}/{}?{}",
+            "oracle://{}:{}@{}:{}/{}?{}",
             username, password, host, port, config.database, ssl_mode
         );
 
         // Try to connect briefly
-        match MySqlPool::connect(&conn_str).await {
+        match OracleConnection::connect(&conn_str).await {
             Ok(pool) => {
                 pool.close().await;
                 Ok(true)
@@ -528,11 +526,7 @@ impl DbAdapter for MySqlAdapter {
     }
 
     fn database_type(&self) -> DatabaseType {
-        DatabaseType::MySQL
-    }
-
-    fn metadata(&self) -> AdapterMetadata<'_> {
-        AdapterMetadata::new(self)
+        DatabaseType::Oracle
     }
 
     // ===== Query Operations =====
@@ -772,474 +766,9 @@ impl DbAdapter for MySqlAdapter {
             columns,
         })
     }
-
-    // ===== Metadata Methods =====
-
-    async fn get_indexes(&self, table_name: &str, _schema: Option<&str>) -> Result<Vec<IndexInfo>> {
-        // Check connection
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        let query = "
-            SELECT
-                INDEX_NAME,
-                TABLE_NAME,
-                TABLE_SCHEMA,
-                NON_UNIQUE,
-                INDEX_TYPE,
-                GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) as columns
-            FROM INFORMATION_SCHEMA.STATISTICS
-            WHERE TABLE_NAME = ?
-                AND TABLE_SCHEMA = DATABASE()
-            GROUP BY INDEX_NAME, TABLE_NAME, TABLE_SCHEMA, NON_UNIQUE, INDEX_TYPE
-        ";
-
-        let results = sqlx::query(query)
-            .bind(table_name)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                DataError::Query(format!("Failed to get indexes for '{}': {}", table_name, e))
-            })?;
-
-        let indexes = results
-            .iter()
-            .map(|row| {
-                let index_name: String = row.try_get("INDEX_NAME").unwrap_or_default();
-                let columns_str: String = row.try_get("columns").unwrap_or_default();
-                let columns: Vec<String> = columns_str.split(',').map(|s| s.to_string()).collect();
-
-                IndexInfo {
-                    name: index_name.clone(),
-                    table_name: row
-                        .try_get("TABLE_NAME")
-                        .unwrap_or_else(|_| table_name.to_string()),
-                    schema: row.try_get("TABLE_SCHEMA").ok(),
-                    columns,
-                    is_unique: row.try_get::<i32, _>("NON_UNIQUE").unwrap_or(1) == 0,
-                    is_primary: index_name == "PRIMARY",
-                    index_type: row.try_get("INDEX_TYPE").ok(),
-                }
-            })
-            .collect();
-
-        Ok(indexes)
-    }
-
-    async fn get_foreign_keys(
-        &self,
-        table_name: &str,
-        _schema: Option<&str>,
-    ) -> Result<Vec<ForeignKeyInfo>> {
-        // Check connection
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        let query = "
-            SELECT
-                CONSTRAINT_NAME,
-                TABLE_NAME,
-                TABLE_SCHEMA,
-                COLUMN_NAME,
-                REFERENCED_TABLE_NAME,
-                REFERENCED_TABLE_SCHEMA,
-                REFERENCED_COLUMN_NAME
-            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-            WHERE TABLE_NAME = ?
-                AND TABLE_SCHEMA = DATABASE()
-                AND REFERENCED_TABLE_NAME IS NOT NULL
-            ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION
-        ";
-
-        let results = sqlx::query(query)
-            .bind(table_name)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                DataError::Query(format!(
-                    "Failed to get foreign keys for '{}': {}",
-                    table_name, e
-                ))
-            })?;
-
-        let mut fk_map: HashMap<String, ForeignKeyInfo> = HashMap::new();
-
-        for row in results {
-            let fk_name: String = row.try_get("CONSTRAINT_NAME").unwrap_or_default();
-            let column: String = row.try_get("COLUMN_NAME").unwrap_or_default();
-            let ref_column: String = row.try_get("REFERENCED_COLUMN_NAME").unwrap_or_default();
-
-            fk_map
-                .entry(fk_name.clone())
-                .or_insert_with(|| ForeignKeyInfo {
-                    name: fk_name.clone(),
-                    table_name: row
-                        .try_get("TABLE_NAME")
-                        .unwrap_or_else(|_| table_name.to_string()),
-                    schema: row.try_get("TABLE_SCHEMA").ok(),
-                    columns: Vec::new(),
-                    referenced_table: row.try_get("REFERENCED_TABLE_NAME").unwrap_or_default(),
-                    referenced_schema: row.try_get("REFERENCED_TABLE_SCHEMA").ok(),
-                    referenced_columns: Vec::new(),
-                    on_delete: None,
-                    on_update: None,
-                })
-                .columns
-                .push(column);
-
-            if let Some(fk) = fk_map.get_mut(&fk_name) {
-                fk.referenced_columns.push(ref_column);
-            }
-        }
-
-        Ok(fk_map.into_values().collect())
-    }
-
-    async fn get_views(&self, _schema: Option<&str>) -> Result<Vec<ViewInfo>> {
-        // Check connection
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        let query = "
-            SELECT TABLE_NAME, TABLE_SCHEMA
-            FROM INFORMATION_SCHEMA.VIEWS
-            WHERE TABLE_SCHEMA = DATABASE()
-            ORDER BY TABLE_NAME
-        ";
-
-        let results = sqlx::query(query)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DataError::Query(format!("Failed to get views: {}", e)))?;
-
-        let views = results
-            .iter()
-            .map(|row| ViewInfo {
-                name: row.try_get("TABLE_NAME").unwrap_or_default(),
-                schema: row.try_get("TABLE_SCHEMA").ok(),
-                definition: None,
-            })
-            .collect();
-
-        Ok(views)
-    }
-
-    async fn get_view_definition(
-        &self,
-        view_name: &str,
-        _schema: Option<&str>,
-    ) -> Result<Option<String>> {
-        // Check connection
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        let query = "
-            SELECT VIEW_DEFINITION
-            FROM INFORMATION_SCHEMA.VIEWS
-            WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE()
-        ";
-
-        let result = sqlx::query(query)
-            .bind(view_name)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                DataError::Query(format!(
-                    "Failed to get view definition for '{}': {}",
-                    view_name, e
-                ))
-            })?;
-
-        Ok(result.and_then(|row| row.try_get("VIEW_DEFINITION").ok()))
-    }
-
-    async fn list_stored_procedures(&self, _schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
-        // Check connection
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        let query = "
-            SELECT
-                ROUTINE_NAME as name,
-                ROUTINE_SCHEMA as schema_name,
-                DTD_IDENTIFIER as return_type
-            FROM INFORMATION_SCHEMA.ROUTINES
-            WHERE ROUTINE_SCHEMA = DATABASE()
-            ORDER BY ROUTINE_NAME
-        ";
-
-        let results = sqlx::query(query)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DataError::Query(format!("Failed to get stored procedures: {}", e)))?;
-
-        let procedures = results
-            .iter()
-            .map(|row| ProcedureInfo {
-                name: row.try_get("name").unwrap_or_default(),
-                schema: row.try_get("schema_name").ok(),
-                return_type: row.try_get("return_type").ok(),
-                language: Some("SQL".to_string()), // MySQL uses SQL
-            })
-            .collect();
-
-        Ok(procedures)
-    }
-
-    // ===== Bulk Operations =====
-
-    async fn bulk_insert(
-        &self,
-        table_name: &str,
-        columns: &[String],
-        rows: &[Vec<QueryValue>],
-        schema: Option<&str>,
-    ) -> Result<u64> {
-        if columns.is_empty() {
-            return Err(DataError::Config("Column list cannot be empty".to_string()));
-        }
-
-        if rows.is_empty() {
-            return Ok(0);
-        }
-
-        // Check connection
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Validate all rows have the same column count
-        for (idx, row) in rows.iter().enumerate() {
-            if row.len() != columns.len() {
-                return Err(DataError::Config(format!(
-                    "Row {} has {} values but expected {} columns",
-                    idx,
-                    row.len(),
-                    columns.len()
-                )));
-            }
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        let schema_prefix = schema.map(|s| format!("{}.", s)).unwrap_or_default();
-
-        // Build column list
-        let column_list = columns.join(", ");
-
-        // Build value placeholders - MySQL uses ?
-        let row_placeholder = format!("({})", vec!["?"; columns.len()].join(", "));
-        let placeholders = vec![row_placeholder; rows.len()].join(", ");
-
-        // Build the full INSERT query
-        let query = format!(
-            "INSERT INTO {}{} ({}) VALUES {}",
-            schema_prefix, table_name, column_list, placeholders
-        );
-
-        // Build and bind all parameters
-        let mut query_builder = sqlx::query(&query);
-
-        for row in rows {
-            for value in row {
-                query_builder = match value {
-                    QueryValue::Null => query_builder.bind(None::<String>),
-                    QueryValue::Int(v) => query_builder.bind(*v),
-                    QueryValue::Float(v) => query_builder.bind(*v),
-                    QueryValue::Text(v) => query_builder.bind(v),
-                    QueryValue::Bool(v) => query_builder.bind(*v),
-                    QueryValue::Bytes(v) => query_builder.bind(v),
-                };
-            }
-        }
-
-        // Execute the query
-        let result = query_builder.execute(pool).await.map_err(|e| {
-            DataError::Query(format!(
-                "Failed to bulk insert into {}{}: {}",
-                schema_prefix, table_name, e
-            ))
-        })?;
-
-        Ok(result.rows_affected())
-    }
-
-    async fn bulk_update(
-        &self,
-        table_name: &str,
-        updates: &[(HashMap<String, QueryValue>, String)],
-        schema: Option<&str>,
-    ) -> Result<u64> {
-        if updates.is_empty() {
-            return Ok(0);
-        }
-
-        // Check connection
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        let schema_prefix = schema.map(|s| format!("{}.", s)).unwrap_or_default();
-        let mut total_affected = 0u64;
-
-        // Execute each update in a batch
-        for (set_clauses, where_clause) in updates {
-            if set_clauses.is_empty() {
-                continue;
-            }
-
-            // Build SET clause with placeholders
-            let set_parts: Vec<String> = set_clauses
-                .keys()
-                .map(|column| format!("{} = ?", column))
-                .collect();
-
-            let query = format!(
-                "UPDATE {}{} SET {} WHERE {}",
-                schema_prefix,
-                table_name,
-                set_parts.join(", "),
-                where_clause
-            );
-
-            // Bind parameters
-            let mut query_builder = sqlx::query(&query);
-
-            for value in set_clauses.values() {
-                query_builder = match value {
-                    QueryValue::Null => query_builder.bind(None::<String>),
-                    QueryValue::Int(v) => query_builder.bind(*v),
-                    QueryValue::Float(v) => query_builder.bind(*v),
-                    QueryValue::Text(v) => query_builder.bind(v),
-                    QueryValue::Bool(v) => query_builder.bind(*v),
-                    QueryValue::Bytes(v) => query_builder.bind(v),
-                };
-            }
-
-            let result = query_builder.execute(pool).await.map_err(|e| {
-                DataError::Query(format!(
-                    "Failed to bulk update {}{}: {}",
-                    schema_prefix, table_name, e
-                ))
-            })?;
-
-            total_affected += result.rows_affected();
-        }
-
-        Ok(total_affected)
-    }
-
-    async fn bulk_delete(
-        &self,
-        table_name: &str,
-        where_clauses: &[String],
-        schema: Option<&str>,
-    ) -> Result<u64> {
-        if where_clauses.is_empty() {
-            return Ok(0);
-        }
-
-        // Check connection
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        let schema_prefix = schema.map(|s| format!("{}.", s)).unwrap_or_default();
-        let mut total_affected = 0u64;
-
-        // Execute each delete
-        for where_clause in where_clauses {
-            if where_clause.trim().is_empty() {
-                continue;
-            }
-
-            let query = format!(
-                "DELETE FROM {}{} WHERE {}",
-                schema_prefix, table_name, where_clause
-            );
-
-            let result = sqlx::query(&query).execute(pool).await.map_err(|e| {
-                DataError::Query(format!(
-                    "Failed to bulk delete from {}{}: {}",
-                    schema_prefix, table_name, e
-                ))
-            })?;
-
-            total_affected += result.rows_affected();
-        }
-
-        Ok(total_affected)
-    }
 }
 
-impl MySqlAdapter {
+impl OracleAdapter {
     /// Generate CREATE TABLE SQL from DataFrame schema
     fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
         let mut column_defs = Vec::new();
@@ -1248,7 +777,7 @@ impl MySqlAdapter {
             let name = column.name();
             let dtype = column.dtype();
 
-            let mysql_type = match dtype {
+            let oracle_type = match dtype {
                 DataType::Boolean => "BOOLEAN",
                 DataType::Int8 => "TINYINT",
                 DataType::Int16 => "SMALLINT",
@@ -1265,7 +794,7 @@ impl MySqlAdapter {
                 _ => "TEXT", // Fallback for unsupported types
             };
 
-            column_defs.push(format!("{} {}", name, mysql_type));
+            column_defs.push(format!("{} {}", name, oracle_type));
         }
 
         Ok(format!(
@@ -1278,10 +807,10 @@ impl MySqlAdapter {
     /// Bind a Series value at a specific row index to a sqlx query
     fn bind_series_value<'q>(
         &self,
-        query: sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>,
+        query: sqlx::query::Query<'q, sqlx::MySql, oracle::MySqlArguments>,
         series: &Series,
         row_idx: usize,
-    ) -> Result<sqlx::query::Query<'q, sqlx::MySql, sqlx::mysql::MySqlArguments>> {
+    ) -> Result<sqlx::query::Query<'q, sqlx::MySql, oracle::MySqlArguments>> {
         // Check if value is null
         let null_mask = series.is_null();
         if null_mask.get(row_idx).unwrap_or(false) {
@@ -1416,7 +945,7 @@ impl MySqlAdapter {
                 // For unsupported types, try to convert to string
                 let series_str = series.cast(&DataType::String).map_err(|e| {
                     DataError::TypeConversion(format!(
-                        "Cannot convert {:?} to MySQL type: {}",
+                        "Cannot convert {:?} to Oracle type: {}",
                         dtype, e
                     ))
                 })?;
@@ -1443,11 +972,11 @@ mod tests {
 
     fn create_test_config() -> ConnectionConfig {
         ConnectionConfig {
-            id: "test-mysql".to_string(),
-            name: "Test MySQL".to_string(),
-            db_type: DatabaseType::MySQL,
+            id: "test-oracle".to_string(),
+            name: "Test Oracle".to_string(),
+            db_type: DatabaseType::Oracle,
             host: Some("localhost".to_string()),
-            port: Some(3306),
+            port: Some(1521),
             database: "test_db".to_string(),
             username: Some("test_user".to_string()),
             use_ssl: false,
@@ -1456,35 +985,35 @@ mod tests {
     }
 
     #[test]
-    fn test_new_mysql_adapter() {
+    fn test_new_oracle_adapter() {
         let config = create_test_config();
-        let adapter = MySqlAdapter::new(config.clone());
+        let adapter = OracleAdapter::new(config.clone());
 
-        assert_eq!(adapter.config().id, "test-mysql");
-        assert_eq!(adapter.config().db_type, DatabaseType::MySQL);
+        assert_eq!(adapter.config().id, "test-oracle");
+        assert_eq!(adapter.config().db_type, DatabaseType::Oracle);
         assert!(!Connection::is_connected(&adapter));
     }
 
     #[test]
     fn test_validate_database_name() {
-        assert!(MySqlAdapter::validate_database_name("valid_db").is_ok());
-        assert!(MySqlAdapter::validate_database_name("").is_err());
-        assert!(MySqlAdapter::validate_database_name(&"a".repeat(65)).is_err());
+        assert!(OracleAdapter::validate_database_name("valid_db").is_ok());
+        assert!(OracleAdapter::validate_database_name("").is_err());
+        assert!(OracleAdapter::validate_database_name(&"a".repeat(65)).is_err());
     }
 
     #[test]
     fn test_build_connection_string() {
         let config = create_test_config();
-        let adapter = MySqlAdapter::new(config);
+        let adapter = OracleAdapter::new(config);
 
         let conn_str = adapter
             .build_connection_string(Some("password123"))
             .unwrap();
-        assert!(conn_str.contains("mysql://"));
+        assert!(conn_str.contains("oracle://"));
         assert!(conn_str.contains("test_user"));
         assert!(conn_str.contains("password123"));
         assert!(conn_str.contains("localhost"));
-        assert!(conn_str.contains("3306"));
+        assert!(conn_str.contains("1521"));
         assert!(conn_str.contains("test_db"));
         assert!(conn_str.contains("ssl-mode=DISABLED"));
     }
@@ -1493,7 +1022,7 @@ mod tests {
     fn test_build_connection_string_with_ssl() {
         let mut config = create_test_config();
         config.use_ssl = true;
-        let adapter = MySqlAdapter::new(config);
+        let adapter = OracleAdapter::new(config);
 
         let conn_str = adapter
             .build_connection_string(Some("password123"))
@@ -1504,7 +1033,7 @@ mod tests {
     #[tokio::test]
     async fn test_connect_not_connected() {
         let config = create_test_config();
-        let adapter = MySqlAdapter::new(config);
+        let adapter = OracleAdapter::new(config);
 
         let result = adapter.health_check().await;
         assert!(result.is_err());
@@ -1520,7 +1049,7 @@ mod tests {
     #[ignore]
     async fn test_connect() {
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config);
+        let mut adapter = OracleAdapter::new(config);
 
         Connection::connect(&mut adapter)
             .await
@@ -1537,7 +1066,7 @@ mod tests {
     #[ignore]
     async fn test_health_check() {
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config);
+        let mut adapter = OracleAdapter::new(config);
 
         Connection::connect(&mut adapter)
             .await
@@ -1555,7 +1084,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_query_not_connected() {
         let config = create_test_config();
-        let adapter = MySqlAdapter::new(config);
+        let adapter = OracleAdapter::new(config);
 
         let result = adapter.execute_query("SELECT 1").await;
         assert!(result.is_err());
@@ -1571,7 +1100,7 @@ mod tests {
     #[ignore]
     async fn test_execute_query_select() {
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config);
+        let mut adapter = OracleAdapter::new(config);
 
         Connection::connect(&mut adapter)
             .await
@@ -1597,7 +1126,7 @@ mod tests {
     #[ignore]
     async fn test_execute_query_empty_result() {
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config);
+        let mut adapter = OracleAdapter::new(config);
 
         Connection::connect(&mut adapter)
             .await
@@ -1626,7 +1155,7 @@ mod tests {
     #[ignore]
     async fn test_execute_query_insert_update_delete() {
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config);
+        let mut adapter = OracleAdapter::new(config);
 
         Connection::connect(&mut adapter)
             .await
@@ -1673,7 +1202,7 @@ mod tests {
         use polars::prelude::*;
 
         let config = create_test_config();
-        let adapter = MySqlAdapter::new(config);
+        let adapter = OracleAdapter::new(config);
 
         let df = DataFrame::new(vec![
             Series::new("id".into(), &[1, 2, 3]).into(),
@@ -1698,7 +1227,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config.clone());
+        let mut adapter = OracleAdapter::new(config.clone());
 
         DbAdapter::connect(&mut adapter, &config, None)
             .await
@@ -1739,7 +1268,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config.clone());
+        let mut adapter = OracleAdapter::new(config.clone());
 
         DbAdapter::connect(&mut adapter, &config, None)
             .await
@@ -1775,7 +1304,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config.clone());
+        let mut adapter = OracleAdapter::new(config.clone());
 
         DbAdapter::connect(&mut adapter, &config, None)
             .await
@@ -1800,7 +1329,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config.clone());
+        let mut adapter = OracleAdapter::new(config.clone());
 
         DbAdapter::connect(&mut adapter, &config, None)
             .await
@@ -1826,7 +1355,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config.clone());
+        let mut adapter = OracleAdapter::new(config.clone());
 
         DbAdapter::connect(&mut adapter, &config, None)
             .await
@@ -1858,7 +1387,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config.clone());
+        let mut adapter = OracleAdapter::new(config.clone());
 
         DbAdapter::connect(&mut adapter, &config, None)
             .await
@@ -1879,7 +1408,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let mut adapter = MySqlAdapter::new(config.clone());
+        let mut adapter = OracleAdapter::new(config.clone());
 
         DbAdapter::connect(&mut adapter, &config, None)
             .await
@@ -1927,7 +1456,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let adapter = MySqlAdapter::new(config);
+        let adapter = OracleAdapter::new(config);
 
         let result = DbAdapter::list_databases(&adapter).await;
         assert!(result.is_err());
@@ -1944,7 +1473,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let adapter = MySqlAdapter::new(config);
+        let adapter = OracleAdapter::new(config);
 
         let result = DbAdapter::list_tables(&adapter, None).await;
         assert!(result.is_err());
@@ -1961,7 +1490,7 @@ mod tests {
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
-        let adapter = MySqlAdapter::new(config);
+        let adapter = OracleAdapter::new(config);
 
         let result = DbAdapter::describe_table(&adapter, "test_table", None).await;
         assert!(result.is_err());

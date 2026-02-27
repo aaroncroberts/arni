@@ -522,10 +522,7 @@ impl<'a> AdapterMetadata<'a> {
     }
 
     /// List all stored procedures/functions in a schema
-    pub async fn list_stored_procedures(
-        &self,
-        schema: Option<&str>,
-    ) -> Result<Vec<ProcedureInfo>> {
+    pub async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         self.adapter.list_stored_procedures(schema).await
     }
 }
