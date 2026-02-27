@@ -174,8 +174,9 @@ impl Connection for PostgresAdapter {
 
         info!("Connecting to PostgreSQL database");
 
-        // Build connection string (without password for now - will need separate password handling)
-        let conn_str = self.build_connection_string(None).map_err(|e| {
+        // Pull password from stored parameters if available.
+        let password = self.config.parameters.get("password").map(String::as_str);
+        let conn_str = self.build_connection_string(password).map_err(|e| {
             error!(error = ?e, "Failed to build connection string");
             e
         })?;
@@ -1239,7 +1240,17 @@ impl PostgresAdapter {
         // Check if value is null by getting the null mask and checking the index
         let null_mask = series.is_null();
         if null_mask.get(row_idx).unwrap_or(false) {
-            return Ok(Box::new(None::<i32>)); // NULL value
+            // Return type-appropriate NULL so tokio-postgres serializes with the correct OID
+            return match series.dtype() {
+                DataType::Boolean => Ok(Box::new(None::<bool>)),
+                DataType::Int8 | DataType::Int16 | DataType::Int32
+                | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => Ok(Box::new(None::<i32>)),
+                DataType::Int64 | DataType::UInt64 => Ok(Box::new(None::<i64>)),
+                DataType::Float32 => Ok(Box::new(None::<f32>)),
+                DataType::Float64 => Ok(Box::new(None::<f64>)),
+                DataType::Binary => Ok(Box::new(None::<Vec<u8>>)),
+                _ => Ok(Box::new(None::<String>)), // TEXT / fallback
+            };
         }
 
         // Convert based on Series data type
@@ -1411,17 +1422,46 @@ mod tests {
     use std::collections::HashMap;
 
     fn create_test_config() -> ConnectionConfig {
+        let mut parameters = HashMap::new();
+        let password = std::env::var("TEST_POSTGRES_PASSWORD")
+            .unwrap_or_else(|_| "test_password".to_string());
+        parameters.insert("password".to_string(), password);
         ConnectionConfig {
             id: "test-pg".to_string(),
             name: "Test PostgreSQL".to_string(),
             db_type: DatabaseType::Postgres,
-            host: Some("localhost".to_string()),
-            port: Some(5432),
-            database: "test_db".to_string(),
-            username: Some("test_user".to_string()),
+            host: Some(
+                std::env::var("TEST_POSTGRES_HOST").unwrap_or_else(|_| "localhost".to_string()),
+            ),
+            port: Some(
+                std::env::var("TEST_POSTGRES_PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(5432),
+            ),
+            database: std::env::var("TEST_POSTGRES_DATABASE")
+                .unwrap_or_else(|_| "test_db".to_string()),
+            username: Some(
+                std::env::var("TEST_POSTGRES_USERNAME")
+                    .unwrap_or_else(|_| "test_user".to_string()),
+            ),
             use_ssl: false,
-            parameters: HashMap::new(),
+            parameters,
         }
+    }
+
+    fn postgres_integration_available() -> bool {
+        std::env::var("TEST_POSTGRES_AVAILABLE")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false)
+    }
+
+    macro_rules! require_postgres {
+        () => {
+            if !postgres_integration_available() {
+                return;
+            }
+        };
     }
 
     #[test]
@@ -1515,6 +1555,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_connect_real_database() {
+        require_postgres!();
         use crate::adapter::{Connection, DbAdapter};
 
         // This test requires a PostgreSQL instance running on localhost:5432
@@ -1533,6 +1574,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_health_check_real_database() {
+        require_postgres!();
         use crate::adapter::Connection;
 
         let config = create_test_config();
@@ -1593,6 +1635,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_basic() {
+        require_postgres!();
         use crate::adapter::DbAdapter;
         use polars::prelude::*;
 
@@ -1600,7 +1643,7 @@ mod tests {
         let mut adapter = PostgresAdapter::new(config.clone());
 
         // Connect first
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .unwrap();
 
@@ -1637,13 +1680,14 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_with_nulls() {
+        require_postgres!();
         use crate::adapter::DbAdapter;
         use polars::prelude::*;
 
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .unwrap();
 
@@ -1681,13 +1725,14 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_replace_table() {
+        require_postgres!();
         use crate::adapter::DbAdapter;
         use polars::prelude::*;
 
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .unwrap();
 
@@ -1753,6 +1798,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_list_databases() {
+        require_postgres!();
         use crate::adapter::{Connection, DbAdapter};
 
         let config = create_test_config();
@@ -1793,6 +1839,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_list_tables_default_schema() {
+        require_postgres!();
         use crate::adapter::{Connection, DbAdapter};
 
         let config = create_test_config();
@@ -1818,6 +1865,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_list_tables_custom_schema() {
+        require_postgres!();
         use crate::adapter::{Connection, DbAdapter};
 
         let config = create_test_config();
@@ -1826,14 +1874,31 @@ mod tests {
             .await
             .expect("Failed to connect");
 
-        let result = DbAdapter::list_tables(&adapter, Some("information_schema")).await;
+        // Create a table in a custom schema to verify schema-filtering works.
+        // Note: information_schema contains VIEWs, not BASE TABLEs, so list_tables
+        // (which filters by table_type = 'BASE TABLE') returns empty for it.
+        // We use the public schema instead.
+        adapter
+            .execute_query("CREATE TABLE IF NOT EXISTS test_schema_table (id INT)")
+            .await
+            .expect("Failed to create test table");
+
+        let result = DbAdapter::list_tables(&adapter, Some("public")).await;
         assert!(result.is_ok());
 
         let tables = result.unwrap();
-        // information_schema should have standard tables
-        assert!(tables.len() > 0);
-        assert!(tables.contains(&"tables".to_string()));
-        assert!(tables.contains(&"columns".to_string()));
+        // public schema should contain the table we just created
+        assert!(
+            tables.contains(&"test_schema_table".to_string()),
+            "Expected test_schema_table in public schema, got: {:?}",
+            tables
+        );
+
+        // Clean up
+        adapter
+            .execute_query("DROP TABLE IF EXISTS test_schema_table")
+            .await
+            .expect("Failed to drop test table");
 
         Connection::disconnect(&mut adapter)
             .await
@@ -1860,6 +1925,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_describe_table_not_found() {
+        require_postgres!();
         use crate::adapter::{Connection, DbAdapter};
 
         let config = create_test_config();
@@ -1885,6 +1951,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_describe_table() {
+        require_postgres!();
         use crate::adapter::{Connection, DbAdapter};
 
         let config = create_test_config();
@@ -1964,12 +2031,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_execute_query_select() {
+        require_postgres!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .unwrap();
 
@@ -1989,12 +2057,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_execute_query_types() {
+        require_postgres!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .unwrap();
 
@@ -2022,12 +2091,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_execute_query_null_values() {
+        require_postgres!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .unwrap();
 

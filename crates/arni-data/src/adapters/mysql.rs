@@ -448,8 +448,9 @@ impl Connection for MySqlAdapter {
 
         info!("Connecting to MySQL database");
 
-        // Build connection string (without password for now - will need separate password handling)
-        let conn_str = self.build_connection_string(None).map_err(|e| {
+        // Pull password from stored parameters if available.
+        let password = self.config.parameters.get("password").map(String::as_str);
+        let conn_str = self.build_connection_string(password).map_err(|e| {
             error!(error = ?e, "Failed to build connection string");
             e
         })?;
@@ -1524,17 +1525,49 @@ mod tests {
     use std::collections::HashMap;
 
     fn create_test_config() -> ConnectionConfig {
+        let mut parameters = HashMap::new();
+        // Allow override via env; fall back to the default dev password.
+        let password = std::env::var("TEST_MYSQL_PASSWORD")
+            .unwrap_or_else(|_| "test_password".to_string());
+        parameters.insert("password".to_string(), password);
         ConnectionConfig {
             id: "test-mysql".to_string(),
             name: "Test MySQL".to_string(),
             db_type: DatabaseType::MySQL,
-            host: Some("localhost".to_string()),
-            port: Some(3306),
-            database: "test_db".to_string(),
-            username: Some("test_user".to_string()),
+            host: Some(
+                std::env::var("TEST_MYSQL_HOST").unwrap_or_else(|_| "localhost".to_string()),
+            ),
+            port: Some(
+                std::env::var("TEST_MYSQL_PORT")
+                    .ok()
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(3306),
+            ),
+            database: std::env::var("TEST_MYSQL_DATABASE")
+                .unwrap_or_else(|_| "test_db".to_string()),
+            username: Some(
+                std::env::var("TEST_MYSQL_USERNAME")
+                    .unwrap_or_else(|_| "test_user".to_string()),
+            ),
             use_ssl: false,
-            parameters: HashMap::new(),
+            parameters,
         }
+    }
+
+    /// Skip helper for in-module integration tests.
+    fn mysql_integration_available() -> bool {
+        std::env::var("TEST_MYSQL_AVAILABLE")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Early-exit guard for in-module tests that need a real MySQL connection.
+    macro_rules! require_mysql {
+        () => {
+            if !mysql_integration_available() {
+                return;
+            }
+        };
     }
 
     #[test]
@@ -1601,6 +1634,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_connect() {
+        require_mysql!();
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config);
 
@@ -1618,6 +1652,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_health_check() {
+        require_mysql!();
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config);
 
@@ -1652,6 +1687,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_execute_query_select() {
+        require_mysql!();
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config);
 
@@ -1678,6 +1714,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_execute_query_empty_result() {
+        require_mysql!();
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config);
 
@@ -1685,19 +1722,32 @@ mod tests {
             .await
             .expect("Failed to connect");
 
-        // Create a test table
+        // Use a regular table (not TEMPORARY) so all pool connections can see it
         adapter
-            .execute_query("CREATE TEMPORARY TABLE test_empty (id INT)")
+            .execute_query("DROP TABLE IF EXISTS test_empty_result")
+            .await
+            .expect("Failed to drop table");
+
+        adapter
+            .execute_query("CREATE TABLE test_empty_result (id INT)")
             .await
             .expect("Failed to create table");
 
         // Query empty table
-        let result = adapter.execute_query("SELECT * FROM test_empty").await;
+        let result = adapter
+            .execute_query("SELECT * FROM test_empty_result")
+            .await;
         assert!(result.is_ok());
 
         let query_result = result.unwrap();
         assert_eq!(query_result.columns.len(), 0);
         assert_eq!(query_result.rows.len(), 0);
+
+        // Clean up
+        adapter
+            .execute_query("DROP TABLE IF EXISTS test_empty_result")
+            .await
+            .expect("Failed to drop table");
 
         Connection::disconnect(&mut adapter)
             .await
@@ -1707,6 +1757,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_execute_query_insert_update_delete() {
+        require_mysql!();
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config);
 
@@ -1714,36 +1765,47 @@ mod tests {
             .await
             .expect("Failed to connect");
 
-        // Create a test table
+        // Use a regular table (not TEMPORARY) so all pool connections can see it
         adapter
-            .execute_query("CREATE TEMPORARY TABLE test_crud (id INT, name VARCHAR(100))")
+            .execute_query("DROP TABLE IF EXISTS test_crud_ops")
+            .await
+            .expect("Failed to drop table");
+
+        adapter
+            .execute_query("CREATE TABLE test_crud_ops (id INT, name VARCHAR(100))")
             .await
             .expect("Failed to create table");
 
         // Insert
         let result = adapter
-            .execute_query("INSERT INTO test_crud (id, name) VALUES (1, 'Alice')")
+            .execute_query("INSERT INTO test_crud_ops (id, name) VALUES (1, 'Alice')")
             .await;
         assert!(result.is_ok());
 
         // Update
         let result = adapter
-            .execute_query("UPDATE test_crud SET name = 'Bob' WHERE id = 1")
+            .execute_query("UPDATE test_crud_ops SET name = 'Bob' WHERE id = 1")
             .await;
         assert!(result.is_ok());
 
         // Verify update
         let result = adapter
-            .execute_query("SELECT * FROM test_crud WHERE id = 1")
+            .execute_query("SELECT * FROM test_crud_ops WHERE id = 1")
             .await
             .expect("Failed to select");
         assert_eq!(result.rows.len(), 1);
 
         // Delete
         let result = adapter
-            .execute_query("DELETE FROM test_crud WHERE id = 1")
+            .execute_query("DELETE FROM test_crud_ops WHERE id = 1")
             .await;
         assert!(result.is_ok());
+
+        // Clean up
+        adapter
+            .execute_query("DROP TABLE IF EXISTS test_crud_ops")
+            .await
+            .expect("Failed to drop table");
 
         Connection::disconnect(&mut adapter)
             .await
@@ -1777,12 +1839,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_replace() {
+        require_mysql!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .expect("Failed to connect");
 
@@ -1818,33 +1881,45 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_read_table() {
+        require_mysql!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .expect("Failed to connect");
 
-        // Create and populate a test table
+        // Use a regular table (not TEMPORARY) so all pool connections can see it
         adapter
-            .execute_query("CREATE TEMPORARY TABLE test_read (id INT, name VARCHAR(100))")
+            .execute_query("DROP TABLE IF EXISTS test_read_table")
+            .await
+            .expect("Failed to drop table");
+
+        adapter
+            .execute_query("CREATE TABLE test_read_table (id INT, name VARCHAR(100))")
             .await
             .expect("Failed to create table");
 
         adapter
-            .execute_query("INSERT INTO test_read VALUES (1, 'Alice'), (2, 'Bob')")
+            .execute_query("INSERT INTO test_read_table VALUES (1, 'Alice'), (2, 'Bob')")
             .await
             .expect("Failed to insert data");
 
         // Read table as DataFrame
-        let result = DbAdapter::read_table(&adapter, "test_read", None).await;
+        let result = DbAdapter::read_table(&adapter, "test_read_table", None).await;
         assert!(result.is_ok());
 
         let df = result.unwrap();
         assert_eq!(df.height(), 2);
         assert_eq!(df.width(), 2);
+
+        // Clean up
+        adapter
+            .execute_query("DROP TABLE IF EXISTS test_read_table")
+            .await
+            .expect("Failed to drop table");
 
         DbAdapter::disconnect(&mut adapter)
             .await
@@ -1854,12 +1929,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_query_df() {
+        require_mysql!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .expect("Failed to connect");
 
@@ -1879,12 +1955,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_list_databases() {
+        require_mysql!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .expect("Failed to connect");
 
@@ -1905,12 +1982,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_list_tables() {
+        require_mysql!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .expect("Failed to connect");
 
@@ -1937,12 +2015,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_list_tables_with_schema() {
+        require_mysql!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .expect("Failed to connect");
 
@@ -1958,12 +2037,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_describe_table() {
+        require_mysql!();
         use crate::adapter::DbAdapter;
 
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, None)
+        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
             .await
             .expect("Failed to connect");
 
