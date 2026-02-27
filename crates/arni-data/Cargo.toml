@@ -19,6 +19,7 @@ anyhow.workspace = true
 # Async
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }
+futures-util = "0.3"
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }
@@ -36,6 +37,8 @@ native-tls = { version = "0.2", optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "chrono"], optional = true }
 oracle = { workspace = true, optional = true }
 mongodb = { workspace = true, optional = true }
+tiberius = { workspace = true, optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
@@ -48,7 +51,7 @@ postgres = ["dep:tokio-postgres", "dep:postgres-native-tls", "dep:native-tls"]
 mysql = ["dep:sqlx", "sqlx?/mysql"]
 sqlite = ["dep:sqlx", "sqlx?/sqlite"]
 mongodb = ["dep:mongodb"]
-mssql = []
+mssql = ["dep:tiberius", "dep:tokio-util"]
 oracle = ["dep:oracle"]
 duckdb = []
 

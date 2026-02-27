@@ -31,3 +31,6 @@ pub mod oracle;
 
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+
+#[cfg(feature = "mssql")]
+pub mod mssql;
