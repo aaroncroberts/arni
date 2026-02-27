@@ -207,13 +207,28 @@ impl MySqlAdapter {
                         None => QueryValue::Null,
                     }
                 }
-                // Floating point types
-                "FLOAT" | "DOUBLE" | "DECIMAL" => {
+                // Floating point types (direct wire conversion)
+                "FLOAT" | "DOUBLE" => {
                     let val: Option<f64> = row.try_get(i).map_err(|e| {
                         DataError::Query(format!("Failed to get float value: {}", e))
                     })?;
                     match val {
                         Some(v) => QueryValue::Float(v),
+                        None => QueryValue::Null,
+                    }
+                }
+                // DECIMAL/NUMERIC: sqlx requires rust_decimal feature — decode as
+                // Decimal then convert to f64 via its Display/FromStr round-trip.
+                "DECIMAL" | "NUMERIC" => {
+                    let val: Option<sqlx::types::Decimal> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get decimal value: {}", e))
+                    })?;
+                    match val {
+                        Some(d) => d
+                            .to_string()
+                            .parse::<f64>()
+                            .map(QueryValue::Float)
+                            .unwrap_or_else(|_| QueryValue::Text(d.to_string())),
                         None => QueryValue::Null,
                     }
                 }
@@ -291,6 +306,18 @@ impl MySqlAdapter {
         Ok(values)
     }
 
+    /// Return true when `sql` is a DML statement (INSERT/UPDATE/DELETE/REPLACE/TRUNCATE)
+    /// that does not return rows but does report `rows_affected`.
+    /// These must be run with `execute()` rather than `fetch_all()`.
+    fn is_dml(sql: &str) -> bool {
+        let upper = sql.trim_start().to_uppercase();
+        upper.starts_with("INSERT")
+            || upper.starts_with("UPDATE")
+            || upper.starts_with("DELETE")
+            || upper.starts_with("REPLACE")
+            || upper.starts_with("TRUNCATE")
+    }
+
     /// Execute a SQL query and return results
     ///
     /// This method executes any SQL statement (SELECT, INSERT, UPDATE, DELETE, etc.)
@@ -334,13 +361,9 @@ impl MySqlAdapter {
             DataError::Connection("Pool not available".to_string())
         })?;
 
-        // Execute query
-        let start = std::time::Instant::now();
-        let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
+        let map_err = |e: sqlx::Error| {
             error!(error = %e, "Query execution failed");
             let error_msg = e.to_string();
-
-            // Categorize errors for better error messages
             if error_msg.contains("syntax") {
                 DataError::Query(format!("SQL syntax error: {}", e))
             } else if error_msg.contains("Access denied") || error_msg.contains("permission") {
@@ -352,7 +375,24 @@ impl MySqlAdapter {
             } else {
                 DataError::Query(format!("Query failed: {}", e))
             }
-        })?;
+        };
+
+        // DML statements (INSERT/UPDATE/DELETE) don't return rows; use execute()
+        // so that the engine's rows_affected count is captured accurately.
+        let start = std::time::Instant::now();
+        if Self::is_dml(query) {
+            let result = sqlx::query(query).execute(pool).await.map_err(map_err)?;
+            let affected = result.rows_affected();
+            let duration = start.elapsed();
+            info!(rows_affected = affected, duration_ms = duration.as_millis(), "DML executed");
+            return Ok(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                rows_affected: Some(affected),
+            });
+        }
+
+        let rows = sqlx::query(query).fetch_all(pool).await.map_err(map_err)?;
 
         let duration = start.elapsed();
         let row_count = rows.len();
@@ -363,7 +403,6 @@ impl MySqlAdapter {
             "Query executed successfully"
         );
 
-        // Handle empty results (e.g., from INSERT/UPDATE/DELETE)
         if rows.is_empty() {
             debug!("Query returned no rows");
             return Ok(QueryResult {
@@ -389,12 +428,10 @@ impl MySqlAdapter {
             result_rows.push(values);
         }
 
-        let rows_affected = result_rows.len() as u64;
-
         Ok(QueryResult {
             columns,
             rows: result_rows,
-            rows_affected: Some(rows_affected),
+            rows_affected: None,
         })
     }
 }
@@ -773,12 +810,14 @@ impl DbAdapter for MySqlAdapter {
             })?
         };
 
-        // Query information_schema.COLUMNS for column details
+        // MySQL 8 returns COLUMN_TYPE/IS_NULLABLE/COLUMN_KEY as MEDIUMTEXT (BLOB on the
+        // wire).  CAST to CHAR forces VARCHAR so sqlx can decode them as String.
         let column_query =
-            "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY \
-                           FROM information_schema.COLUMNS \
-                           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
-                           ORDER BY ORDINAL_POSITION";
+            "SELECT CAST(COLUMN_NAME AS CHAR), CAST(COLUMN_TYPE AS CHAR), \
+                    CAST(IS_NULLABLE AS CHAR), COLUMN_DEFAULT, CAST(COLUMN_KEY AS CHAR) \
+                    FROM information_schema.COLUMNS \
+                    WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+                    ORDER BY ORDINAL_POSITION";
 
         let rows: Vec<(String, String, String, Option<String>, String)> =
             sqlx::query_as(column_query)

@@ -14,7 +14,7 @@ mod common;
 #[cfg(feature = "postgres")]
 mod postgres_tests {
     use super::common;
-    use arni_data::adapter::{Connection as ConnectionTrait, DbAdapter};
+    use arni_data::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
 
     /// Load the test config for PostgreSQL, or skip the test if unavailable.
     macro_rules! pg_config {
@@ -32,7 +32,24 @@ mod postgres_tests {
         }};
     }
 
-    // ── Connection lifecycle ─────────────────────────────────────────────────
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /// Build a connected adapter from the given config.
+    async fn connected_adapter(
+        cfg: &arni_data::adapter::ConnectionConfig,
+    ) -> arni_data::adapters::postgres::PostgresAdapter {
+        use arni_data::adapters::postgres::PostgresAdapter;
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = PostgresAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, cfg, password.as_deref())
+            .await
+            .expect("postgres connect should succeed");
+        adapter
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 1. CONNECTION LIFECYCLE
+    // ═══════════════════════════════════════════════════════════════════════
 
     #[tokio::test]
     async fn test_postgres_connect_and_disconnect() {
@@ -52,6 +69,45 @@ mod postgres_tests {
     }
 
     #[tokio::test]
+    async fn test_postgres_double_connect_is_idempotent() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = PostgresAdapter::new(cfg.clone());
+
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .expect("first connect should succeed");
+
+        // A second connect should not panic or return a hard error; the adapter
+        // may reconnect or be a no-op, but it must not leave the adapter broken.
+        let _ = DbAdapter::connect(&mut adapter, &cfg, password.as_deref()).await;
+
+        // Must still be functional after the second connect attempt.
+        let result = DbAdapter::execute_query(&adapter, "SELECT 1 AS ping")
+            .await
+            .expect("query should succeed after double-connect");
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_postgres_disconnect_when_not_connected_is_no_op() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let mut adapter = PostgresAdapter::new(cfg.clone());
+
+        // Disconnect without ever connecting should be a no-op (or at worst a
+        // benign error). We just verify it does not panic.
+        let _ = DbAdapter::disconnect(&mut adapter).await;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 2. HEALTH CHECK
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
     async fn test_postgres_health_check_after_connect() {
         use arni_data::adapters::postgres::PostgresAdapter;
 
@@ -69,7 +125,102 @@ mod postgres_tests {
         assert!(healthy, "postgres should be healthy after connect");
     }
 
-    // ── Query execution ──────────────────────────────────────────────────────
+    #[tokio::test]
+    async fn test_postgres_health_check_before_connect_is_false_or_error() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let adapter = PostgresAdapter::new(cfg.clone());
+
+        // Before connecting, health_check should either return Ok(false) or Err.
+        match ConnectionTrait::health_check(&adapter).await {
+            Ok(healthy) => assert!(
+                !healthy,
+                "health_check before connect should return false"
+            ),
+            Err(_) => {
+                // An error is also acceptable when not connected.
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_postgres_health_check_after_disconnect_is_false_or_error() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = PostgresAdapter::new(cfg.clone());
+
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+        DbAdapter::disconnect(&mut adapter).await.unwrap();
+
+        match ConnectionTrait::health_check(&adapter).await {
+            Ok(healthy) => assert!(
+                !healthy,
+                "health_check after disconnect should return false"
+            ),
+            Err(_) => {
+                // An error is also acceptable after disconnect.
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 3. IS_CONNECTED STATE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_is_connected_lifecycle() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = PostgresAdapter::new(cfg.clone());
+
+        assert!(
+            !ConnectionTrait::is_connected(&adapter),
+            "should not be connected before connect()"
+        );
+
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+        assert!(
+            ConnectionTrait::is_connected(&adapter),
+            "should be connected after connect()"
+        );
+
+        DbAdapter::disconnect(&mut adapter).await.unwrap();
+        assert!(
+            !ConnectionTrait::is_connected(&adapter),
+            "should not be connected after disconnect()"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 4. DATABASE TYPE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_database_type() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let adapter = PostgresAdapter::new(cfg.clone());
+
+        assert_eq!(
+            DbAdapter::database_type(&adapter),
+            DatabaseType::Postgres,
+            "database_type() must return DatabaseType::Postgres"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 5. QUERY EXECUTION
+    // ═══════════════════════════════════════════════════════════════════════
 
     #[tokio::test]
     async fn test_postgres_execute_select_1() {
@@ -90,6 +241,83 @@ mod postgres_tests {
     }
 
     #[tokio::test]
+    async fn test_postgres_execute_select_multiple_columns() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result = DbAdapter::execute_query(
+            &adapter,
+            "SELECT 42 AS num, 'hello' AS greeting, TRUE AS flag",
+        )
+        .await
+        .expect("multi-column SELECT should succeed");
+
+        assert_eq!(result.columns.len(), 3, "expected 3 columns");
+        assert_eq!(result.rows.len(), 1, "expected 1 row");
+
+        let row = &result.rows[0];
+        assert_eq!(row.len(), 3, "row should have 3 values");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_execute_select_empty_result_set() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        // pg_class is always present; filter guarantees zero rows.
+        let result = DbAdapter::execute_query(
+            &adapter,
+            "SELECT relname FROM pg_class WHERE FALSE",
+        )
+        .await
+        .expect("empty-result SELECT should succeed");
+
+        assert_eq!(result.rows.len(), 0, "result set should be empty");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_execute_select_null_values() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT NULL::TEXT AS nullable_col")
+            .await
+            .expect("NULL SELECT should succeed");
+
+        assert_eq!(result.columns.len(), 1);
+        assert_eq!(result.rows.len(), 1);
+
+        // The single value should be represented as QueryValue::Null.
+        use arni_data::adapter::QueryValue;
+        let val = &result.rows[0][0];
+        assert_eq!(
+            val,
+            &QueryValue::Null,
+            "NULL column value must be QueryValue::Null"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_postgres_execute_select_multi_row() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result = DbAdapter::execute_query(
+            &adapter,
+            "SELECT generate_series AS n FROM generate_series(1, 5)",
+        )
+        .await
+        .expect("generate_series SELECT should succeed");
+
+        assert_eq!(result.rows.len(), 5, "expected 5 rows from generate_series");
+        assert_eq!(result.columns.len(), 1);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 6. CRUD LIFECYCLE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
     async fn test_postgres_create_table_insert_select_drop() {
         use arni_data::adapters::postgres::PostgresAdapter;
 
@@ -100,42 +328,178 @@ mod postgres_tests {
             .await
             .unwrap();
 
-        // Use a unique table name to avoid conflicts
-        let table = "arni_test_pg_basic";
+        let table = "arni_pg_test_basic";
         let _ = DbAdapter::execute_query(
             &adapter,
-            &format!("DROP TABLE IF EXISTS {}", table),
+            &format!("DROP TABLE IF EXISTS {table}"),
         )
         .await;
 
         DbAdapter::execute_query(
             &adapter,
-            &format!("CREATE TABLE {} (id SERIAL PRIMARY KEY, label TEXT)", table),
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY, label TEXT)"),
         )
         .await
         .expect("CREATE TABLE should succeed");
 
         DbAdapter::execute_query(
             &adapter,
-            &format!("INSERT INTO {} (label) VALUES ('hello'), ('world')", table),
+            &format!("INSERT INTO {table} (label) VALUES ('hello'), ('world')"),
         )
         .await
         .expect("INSERT should succeed");
 
         let result = DbAdapter::execute_query(
             &adapter,
-            &format!("SELECT id, label FROM {} ORDER BY id", table),
+            &format!("SELECT id, label FROM {table} ORDER BY id"),
         )
         .await
         .expect("SELECT should succeed");
-        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows.len(), 2, "expected 2 rows after insert");
+        assert_eq!(result.columns.len(), 2);
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {}", table))
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
             .await
             .expect("DROP TABLE should succeed");
     }
 
-    // ── Schema introspection ─────────────────────────────────────────────────
+    #[tokio::test]
+    async fn test_postgres_update_and_verify() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_update";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY, val INTEGER)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(&adapter, &format!("INSERT INTO {table} (val) VALUES (10)"))
+            .await
+            .expect("INSERT should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("UPDATE {table} SET val = 99 WHERE val = 10"),
+        )
+        .await
+        .expect("UPDATE should succeed");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT val FROM {table}"))
+                .await
+                .expect("SELECT after UPDATE should succeed");
+
+        assert_eq!(result.rows.len(), 1);
+        use arni_data::adapter::QueryValue;
+        assert_eq!(
+            result.rows[0][0],
+            QueryValue::Int(99),
+            "updated value should be 99"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_delete_and_verify() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_delete";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY, val TEXT)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("INSERT INTO {table} (val) VALUES ('keep'), ('remove')"),
+        )
+        .await
+        .expect("INSERT should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("DELETE FROM {table} WHERE val = 'remove'"),
+        )
+        .await
+        .expect("DELETE should succeed");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT val FROM {table}"))
+                .await
+                .expect("SELECT after DELETE should succeed");
+
+        assert_eq!(result.rows.len(), 1, "one row should remain after DELETE");
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 7. ERROR HANDLING
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_invalid_sql_returns_error() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = PostgresAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT FROM WHERE").await;
+        assert!(result.is_err(), "malformed SQL should return an error");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_query_nonexistent_table_returns_error() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result = DbAdapter::execute_query(
+            &adapter,
+            "SELECT * FROM arni_pg_table_that_does_not_exist_xyz",
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "querying a non-existent table should return an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_postgres_syntax_error_in_dml_returns_error() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result =
+            DbAdapter::execute_query(&adapter, "INSERT INTO (col1) VALUES ()").await;
+        assert!(
+            result.is_err(),
+            "syntactically invalid DML should return an error"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 8. METADATA - LIST TABLES
+    // ═══════════════════════════════════════════════════════════════════════
 
     #[tokio::test]
     async fn test_postgres_list_tables() {
@@ -152,22 +516,674 @@ mod postgres_tests {
             .await
             .expect("list_tables should succeed");
         // The test DB may have tables from init SQL; just verify it doesn't error.
-        // list_tables returns a Vec; the test DB may or may not have tables
         let _ = tables;
     }
 
     #[tokio::test]
-    async fn test_postgres_invalid_sql_returns_error() {
+    async fn test_postgres_list_tables_contains_created_table() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_listtables";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        let tables = DbAdapter::list_tables(&adapter, None)
+            .await
+            .expect("list_tables should succeed");
+
+        assert!(
+            tables.iter().any(|t| t.eq_ignore_ascii_case(table)),
+            "newly created table '{table}' must appear in list_tables result; got: {tables:?}"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_list_tables_with_public_schema() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_schema_filter";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        let tables = DbAdapter::list_tables(&adapter, Some("public"))
+            .await
+            .expect("list_tables with schema should succeed");
+
+        assert!(
+            tables.iter().any(|t| t.eq_ignore_ascii_case(table)),
+            "table '{table}' must appear when filtering by 'public' schema; got: {tables:?}"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_list_tables_dropped_table_absent() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_dropped";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+
+        let tables = DbAdapter::list_tables(&adapter, None)
+            .await
+            .expect("list_tables should succeed");
+
+        assert!(
+            !tables.iter().any(|t| t.eq_ignore_ascii_case(table)),
+            "dropped table '{table}' must not appear in list_tables; got: {tables:?}"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 9. METADATA - DESCRIBE TABLE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_describe_table_column_names() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_describe";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {table} (id SERIAL PRIMARY KEY, name TEXT NOT NULL, score FLOAT8)"
+            ),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        let info = DbAdapter::describe_table(&adapter, table, None)
+            .await
+            .expect("describe_table should succeed");
+
+        let col_names: Vec<&str> = info.columns.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            col_names.contains(&"id"),
+            "column 'id' must be present; got: {col_names:?}"
+        );
+        assert!(
+            col_names.contains(&"name"),
+            "column 'name' must be present; got: {col_names:?}"
+        );
+        assert!(
+            col_names.contains(&"score"),
+            "column 'score' must be present; got: {col_names:?}"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_describe_table_nullable_flag() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_nullable";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {table} (required TEXT NOT NULL, optional TEXT)"
+            ),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        let info = DbAdapter::describe_table(&adapter, table, None)
+            .await
+            .expect("describe_table should succeed");
+
+        let required_col = info
+            .columns
+            .iter()
+            .find(|c| c.name == "required")
+            .expect("'required' column must exist");
+        let optional_col = info
+            .columns
+            .iter()
+            .find(|c| c.name == "optional")
+            .expect("'optional' column must exist");
+
+        assert!(
+            !required_col.nullable,
+            "'required' column should not be nullable"
+        );
+        assert!(
+            optional_col.nullable,
+            "'optional' column should be nullable"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_describe_table_with_schema() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_describe_schema";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        let info = DbAdapter::describe_table(&adapter, table, Some("public"))
+            .await
+            .expect("describe_table with explicit schema should succeed");
+
+        assert!(!info.columns.is_empty(), "table must have at least one column");
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 10. METADATA - VIEWS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_get_views_contains_created_view() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let base_table = "arni_pg_test_view_base";
+        let view_name = "arni_pg_test_view";
+
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP VIEW IF EXISTS {view_name}")).await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {base_table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {base_table} (id SERIAL PRIMARY KEY, label TEXT)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE VIEW {view_name} AS SELECT id, label FROM {base_table}"),
+        )
+        .await
+        .expect("CREATE VIEW should succeed");
+
+        let views = DbAdapter::get_views(&adapter, None)
+            .await
+            .expect("get_views should succeed");
+
+        assert!(
+            views.iter().any(|v| v.name.eq_ignore_ascii_case(view_name)),
+            "created view '{view_name}' must appear in get_views; got: {:?}",
+            views.iter().map(|v| &v.name).collect::<Vec<_>>()
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP VIEW {view_name}"))
+            .await
+            .expect("DROP VIEW should succeed");
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {base_table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_get_views_with_public_schema() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        // list_views for 'public' schema must succeed even when empty.
+        let views = DbAdapter::get_views(&adapter, Some("public"))
+            .await
+            .expect("get_views with explicit schema should succeed");
+        let _ = views;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 11. METADATA - INDEXES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_get_indexes_contains_created_index() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_indexes";
+        let index = "arni_pg_test_idx_label";
+
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY, label TEXT)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE INDEX {index} ON {table} (label)"),
+        )
+        .await
+        .expect("CREATE INDEX should succeed");
+
+        let indexes = DbAdapter::get_indexes(&adapter, table, None)
+            .await
+            .expect("get_indexes should succeed");
+
+        assert!(
+            indexes.iter().any(|i| i.name.eq_ignore_ascii_case(index)),
+            "created index '{index}' must appear in get_indexes; got: {:?}",
+            indexes.iter().map(|i| &i.name).collect::<Vec<_>>()
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_get_indexes_primary_key_present() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_pk_index";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY, val TEXT)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        let indexes = DbAdapter::get_indexes(&adapter, table, None)
+            .await
+            .expect("get_indexes should succeed");
+
+        // There must be at least the implicit primary-key index.
+        assert!(
+            !indexes.is_empty(),
+            "a table with PRIMARY KEY must have at least one index"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 12. METADATA - FOREIGN KEYS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_get_foreign_keys_contains_created_fk() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let parent = "arni_pg_test_fk_parent";
+        let child = "arni_pg_test_fk_child";
+
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {child}")).await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {parent}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {parent} (id SERIAL PRIMARY KEY, name TEXT)"),
+        )
+        .await
+        .expect("CREATE parent TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {child} (
+                    id SERIAL PRIMARY KEY,
+                    parent_id INTEGER NOT NULL,
+                    CONSTRAINT arni_pg_fk_parent FOREIGN KEY (parent_id) REFERENCES {parent}(id)
+                )"
+            ),
+        )
+        .await
+        .expect("CREATE child TABLE with FK should succeed");
+
+        let fks = DbAdapter::get_foreign_keys(&adapter, child, None)
+            .await
+            .expect("get_foreign_keys should succeed");
+
+        assert!(
+            !fks.is_empty(),
+            "child table must have at least one foreign key"
+        );
+        assert!(
+            fks.iter().any(|fk| fk.referenced_table.eq_ignore_ascii_case(parent)),
+            "FK must reference the parent table '{parent}'; got: {:?}",
+            fks.iter().map(|fk| &fk.referenced_table).collect::<Vec<_>>()
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {child}"))
+            .await
+            .expect("DROP child TABLE should succeed");
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {parent}"))
+            .await
+            .expect("DROP parent TABLE should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_get_foreign_keys_empty_for_standalone_table() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_test_no_fk";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id SERIAL PRIMARY KEY, val TEXT)"),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        let fks = DbAdapter::get_foreign_keys(&adapter, table, None)
+            .await
+            .expect("get_foreign_keys should succeed for table without FKs");
+
+        assert!(
+            fks.is_empty(),
+            "table with no foreign keys must return an empty vec"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .expect("DROP TABLE should succeed");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 13. METADATA - LIST DATABASES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_list_databases_returns_non_empty_vec() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let dbs = DbAdapter::list_databases(&adapter)
+            .await
+            .expect("list_databases should succeed");
+
+        assert!(
+            !dbs.is_empty(),
+            "list_databases must return at least one database"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_postgres_list_databases_contains_current_db() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let current_db = cfg.database.clone();
+        let dbs = DbAdapter::list_databases(&adapter)
+            .await
+            .expect("list_databases should succeed");
+
+        assert!(
+            dbs.iter().any(|d| d.eq_ignore_ascii_case(&current_db)),
+            "list_databases must include the current database '{current_db}'; got: {dbs:?}"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 14. METADATA - LIST STORED PROCEDURES
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_list_stored_procedures_succeeds() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let procs = DbAdapter::list_stored_procedures(&adapter, None)
+            .await
+            .expect("list_stored_procedures should succeed");
+        // May return empty — that is fine. We only assert success.
+        let _ = procs;
+    }
+
+    #[tokio::test]
+    async fn test_postgres_list_stored_procedures_with_schema_succeeds() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let procs = DbAdapter::list_stored_procedures(&adapter, Some("public"))
+            .await
+            .expect("list_stored_procedures with explicit schema should succeed");
+        let _ = procs;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 15. DATAFRAME OPERATIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_query_df_returns_valid_dataframe() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let df = DbAdapter::query_df(
+            &adapter,
+            "SELECT generate_series AS n FROM generate_series(1, 3)",
+        )
+        .await
+        .expect("query_df should succeed");
+
+        assert_eq!(df.height(), 3, "DataFrame should have 3 rows");
+        assert_eq!(df.width(), 1, "DataFrame should have 1 column");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_query_df_correct_column_names() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let df = DbAdapter::query_df(
+            &adapter,
+            "SELECT 1 AS alpha, 2 AS beta, 3 AS gamma",
+        )
+        .await
+        .expect("query_df should succeed");
+
+        let col_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        assert!(
+            col_names.iter().any(|n| n == "alpha"),
+            "column 'alpha' must be present; got: {col_names:?}"
+        );
+        assert!(
+            col_names.iter().any(|n| n == "beta"),
+            "column 'beta' must be present; got: {col_names:?}"
+        );
+        assert!(
+            col_names.iter().any(|n| n == "gamma"),
+            "column 'gamma' must be present; got: {col_names:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_postgres_query_df_empty_result() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let df = DbAdapter::query_df(&adapter, "SELECT relname FROM pg_class WHERE FALSE")
+            .await
+            .expect("query_df with empty result should succeed");
+
+        assert_eq!(df.height(), 0, "DataFrame from empty query must have 0 rows");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 16. NUMERIC / TYPE HANDLING
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_integer_values_in_result() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT 42::BIGINT AS n")
+                .await
+                .expect("integer SELECT should succeed");
+
+        use arni_data::adapter::QueryValue;
+        assert_eq!(result.rows[0][0], QueryValue::Int(42));
+    }
+
+    #[tokio::test]
+    async fn test_postgres_float_values_in_result() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT 3.14::FLOAT8 AS f")
+                .await
+                .expect("float SELECT should succeed");
+
+        use arni_data::adapter::QueryValue;
+        match &result.rows[0][0] {
+            QueryValue::Float(f) => {
+                assert!(
+                    (f - 3.14_f64).abs() < 1e-6,
+                    "float value should be approximately 3.14, got {f}"
+                );
+            }
+            other => panic!("expected QueryValue::Float, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_postgres_text_values_in_result() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT 'hello world'::TEXT AS txt")
+            .await
+            .expect("text SELECT should succeed");
+
+        use arni_data::adapter::QueryValue;
+        assert_eq!(
+            result.rows[0][0],
+            QueryValue::Text("hello world".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_postgres_boolean_values_in_result() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT TRUE AS t, FALSE AS f")
+                .await
+                .expect("boolean SELECT should succeed");
+
+        use arni_data::adapter::QueryValue;
+        assert_eq!(result.rows[0][0], QueryValue::Bool(true), "TRUE should map to QueryValue::Bool(true)");
+        assert_eq!(result.rows[0][1], QueryValue::Bool(false), "FALSE should map to QueryValue::Bool(false)");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_mixed_types_in_single_row() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result = DbAdapter::execute_query(
+            &adapter,
+            "SELECT 1::BIGINT AS i, 2.5::FLOAT8 AS f, 'text'::TEXT AS t, TRUE AS b, NULL::TEXT AS n",
+        )
+        .await
+        .expect("mixed-type SELECT should succeed");
+
+        use arni_data::adapter::QueryValue;
+        assert_eq!(result.columns.len(), 5);
+        assert_eq!(result.rows.len(), 1);
+
+        let row = &result.rows[0];
+        assert_eq!(row[0], QueryValue::Int(1));
+        assert!(matches!(row[1], QueryValue::Float(_)));
+        assert_eq!(row[2], QueryValue::Text("text".to_string()));
+        assert_eq!(row[3], QueryValue::Bool(true));
+        assert_eq!(row[4], QueryValue::Null);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 17. CONFIG ACCESSOR
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_config_returns_original_config() {
         use arni_data::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
-        let password = cfg.parameters.get("password").cloned();
-        let mut adapter = PostgresAdapter::new(cfg.clone());
-        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
-            .await
-            .unwrap();
+        let adapter = PostgresAdapter::new(cfg.clone());
 
-        let result = DbAdapter::execute_query(&adapter, "SELECT FROM WHERE").await;
-        assert!(result.is_err(), "malformed SQL should return an error");
+        let returned = ConnectionTrait::config(&adapter);
+        assert_eq!(returned.id, cfg.id, "config() must return the original id");
+        assert_eq!(
+            returned.database, cfg.database,
+            "config() must return the original database"
+        );
+        assert_eq!(
+            returned.db_type,
+            arni_data::adapter::DatabaseType::Postgres,
+            "config() db_type must be Postgres"
+        );
     }
 }

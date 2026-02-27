@@ -38,7 +38,7 @@ polars = { workspace = true, features = ["lazy", "dtype-full", "serde"] }
 tokio-postgres = { version = "0.7", optional = true }
 postgres-native-tls = { version = "0.5", optional = true }
 native-tls = { version = "0.2", optional = true }
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "chrono"], optional = true }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "chrono", "rust_decimal"], optional = true }
 oracle = { workspace = true, optional = true }
 mongodb = { workspace = true, optional = true }
 tiberius = { workspace = true, optional = true }

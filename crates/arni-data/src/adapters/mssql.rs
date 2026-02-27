@@ -118,6 +118,27 @@ impl SqlServerAdapter {
         }
     }
 
+    /// Return true when `sql` is a DDL statement that must run as a standalone
+    /// batch (i.e. cannot be wrapped in `sp_executesql`).
+    ///
+    /// tiberius 0.12.3 sends *every* query through `sp_executesql`, but SQL
+    /// Server requires CREATE VIEW / PROCEDURE / FUNCTION / TRIGGER to be the
+    /// only statement in the batch.  Wrapping them with `EXEC(N'...')` creates
+    /// a nested batch that satisfies this constraint.
+    fn needs_exec_wrapper(sql: &str) -> bool {
+        let upper = sql.trim_start().to_uppercase();
+        upper.starts_with("CREATE VIEW")
+            || upper.starts_with("ALTER VIEW")
+            || upper.starts_with("CREATE PROCEDURE")
+            || upper.starts_with("ALTER PROCEDURE")
+            || upper.starts_with("CREATE PROC ")
+            || upper.starts_with("ALTER PROC ")
+            || upper.starts_with("CREATE FUNCTION")
+            || upper.starts_with("ALTER FUNCTION")
+            || upper.starts_with("CREATE TRIGGER")
+            || upper.starts_with("ALTER TRIGGER")
+    }
+
     /// Map a Polars [`DataType`] to a SQL Server type string
     fn polars_dtype_to_mssql_type(dtype: &DataType) -> &'static str {
         match dtype {
@@ -454,7 +475,20 @@ impl DbAdapter for SqlServerAdapter {
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
-        let stream = client.query(query, &[]).await.map_err(|e| {
+        // tiberius wraps every call in sp_executesql.  DDL like CREATE VIEW
+        // must be the sole statement in its batch, so we wrap it with EXEC(N'...')
+        // which provides a nested batch scope that satisfies SQL Server's parser.
+        let owned;
+        let effective_query = if Self::needs_exec_wrapper(query) {
+            let escaped = query.replace('\'', "''");
+            owned = format!("EXEC(N'{}')", escaped);
+            debug!("Wrapping DDL in EXEC() for standalone-batch requirement");
+            owned.as_str()
+        } else {
+            query
+        };
+
+        let stream = client.query(effective_query, &[]).await.map_err(|e| {
             error!(error = %e, "Query execution failed");
             DataError::Query(format!("Query failed: {}", e))
         })?;
