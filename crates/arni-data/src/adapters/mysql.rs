@@ -45,8 +45,7 @@
 
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter,
-    ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, TableInfo,
-    ViewInfo,
+    ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, TableInfo, ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;

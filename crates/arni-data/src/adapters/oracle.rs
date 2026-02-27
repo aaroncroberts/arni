@@ -1,7 +1,7 @@
 //! Oracle database adapter implementation
 //!
 //! This module provides the [`OracleAdapter`] which implements both the [`Connection`]
-//! and [`DbAdapter`] traits for Oracle databases using the sqlx driver.
+//! and [`DbAdapter`] traits for Oracle databases using the oracle driver.
 //!
 //! # Features
 //!
@@ -44,42 +44,38 @@
 //! ```
 
 use crate::adapter::{
-    ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter, QueryResult, QueryValue,
-    Result, TableInfo,
+    AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
+    DbAdapter, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result,
+    TableInfo, ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
-use oracle::{OracleConnection, OracleConnectionOptions, OracleRow};
-use oracle::{Column, Executor, Row, TypeInfo};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Oracle database adapter
 ///
-/// This adapter uses the sqlx Oracle driver to connect to Oracle databases.
-/// It implements both [`Connection`] and [`DbAdapter`] traits.
+/// This adapter uses the oracle driver to connect to Oracle databases.
+/// The oracle crate is synchronous, so we use tokio::task::spawn_blocking
+/// for async operations.
 ///
 /// # Connection Management
 ///
-/// The adapter maintains an internal connection pool that can be checked with
-/// [`is_connected`](Connection::is_connected). Connections are established lazily
-/// on first use or explicitly via [`connect`](Connection::connect).
-///
-/// # SSL/TLS Support
-///
-/// SSL is supported via the `use_ssl` configuration option:
-/// - `use_ssl: false` - Plain text connection (default)
-/// - `use_ssl: true` - Encrypted connection
+/// The adapter maintains an internal connection wrapped in Arc<RwLock> for thread-safe access.
+/// Connections are established when `connect()` is called.
 ///
 /// # Thread Safety
 ///
 /// The adapter uses internal locking to ensure thread-safe access to the underlying
-/// Oracle connection pool.
+/// Oracle connection.
 pub struct OracleAdapter {
     /// Connection configuration
     config: ConnectionConfig,
-    /// Oracle connection pool wrapped in Arc<RwLock> for thread-safe access
-    pool: Arc<RwLock<Option<OracleConnection>>>,
+    /// Oracle connection wrapped in Arc<RwLock> for thread-safe access
+    /// Note: oracle::Connection is not Send, so we'll use Option<String> for connection string
+    /// and reconnect as needed
+    connection: Arc<RwLock<Option<oracle::Connection>>>,
     /// Connection state flag
     connected: Arc<RwLock<bool>>,
 }
@@ -87,200 +83,48 @@ pub struct OracleAdapter {
 impl OracleAdapter {
     /// Create a new Oracle adapter with the given configuration
     ///
-    /// This does not establish a connection immediately. Call [`connect`](Connection::connect)
+    /// This does not establish a connection immediately. Call [`connect`](ConnectionTrait::connect)
     /// to establish the connection.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let config = ConnectionConfig {
-    ///     id: "prod-db".to_string(),
-    ///     name: "Production DB".to_string(),
-    ///     db_type: DatabaseType::Oracle,
-    ///     host: Some("db.example.com".to_string()),
-    ///     port: Some(1521),
-    ///     database: "app_db".to_string(),
-    ///     username: Some("app_user".to_string()),
-    ///     use_ssl: true,
-    ///     parameters: Default::default(),
-    /// };
-    ///
-    /// let adapter = OracleAdapter::new(config);
-    /// ```
     pub fn new(config: ConnectionConfig) -> Self {
         Self {
             config,
-            pool: Arc::new(RwLock::new(None)),
+            connection: Arc::new(RwLock::new(None)),
             connected: Arc::new(RwLock::new(false)),
         }
     }
 
-    /// Validate database name
-    fn validate_database_name(name: &str) -> Result<()> {
-        if name.is_empty() {
-            return Err(DataError::Config(
-                "Database name cannot be empty".to_string(),
-            ));
-        }
-        if name.len() > 64 {
-            return Err(DataError::Config(format!(
-                "Database name too long (max 64 chars): {}",
-                name.len()
-            )));
-        }
-        Ok(())
+    /// Build a connection string from the configuration
+    /// Returns (username, password, connect_string) tuple
+    fn build_connection_params(config: &ConnectionConfig, password: Option<&str>) -> (String, String, String) {
+        let host = config.host.as_deref().unwrap_or("localhost");
+        let port = config.port.unwrap_or(1521);
+        let database = &config.database; // Service name or SID
+        let username = config.username.as_deref().unwrap_or("system").to_string();
+        let password = password.unwrap_or("").to_string();
+        let connect_string = format!("{}:{}/{}", host, port, database);
+
+        (username, password, connect_string)
     }
 
-    /// Build a Oracle connection string from the configuration
-    ///
-    /// The connection string format is:
-    /// ```text
-    /// oracle://username:password@host:port/database?ssl-mode=REQUIRED
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A connection string suitable for sqlx Oracle, or an error if required
-    /// fields are missing.
-    fn build_connection_string(&self, password: Option<&str>) -> Result<String> {
-        Self::validate_database_name(&self.config.database)?;
-
-        let host = self
-            .config
-            .host
-            .as_ref()
-            .ok_or_else(|| DataError::Config("Missing host".to_string()))?;
-
-        let port = self.config.port.unwrap_or(1521);
-
-        let username = self
-            .config
-            .username
-            .as_ref()
-            .ok_or_else(|| DataError::Config("Missing username".to_string()))?;
-
-        let password = password.unwrap_or("");
-
-        let ssl_mode = if self.config.use_ssl {
-            "ssl-mode=REQUIRED"
-        } else {
-            "ssl-mode=DISABLED"
-        };
-
-        Ok(format!(
-            "oracle://{}:{}@{}:{}/{}?{}",
-            username, password, host, port, self.config.database, ssl_mode
-        ))
-    }
-
-    /// Convert a Oracle row to a vector of QueryValue
-    ///
-    /// This helper method extracts values from a Oracle row and converts them
-    /// to the QueryValue enum, handling type conversions for common Oracle types.
-    fn row_to_values(row: &OracleRow) -> Result<Vec<QueryValue>> {
+    /// Convert an Oracle row to a vector of QueryValues
+    fn row_to_values(row: &oracle::Row, column_count: usize) -> Result<Vec<QueryValue>> {
         let mut values = Vec::new();
 
-        for (i, column) in row.columns().iter().enumerate() {
-            let type_info = column.type_info();
-            let type_name = type_info.name();
-
-            let value = match type_name {
-                // Boolean (TINYINT(1))
-                "TINYINT(1)" | "BOOLEAN" => {
-                    let val: Option<bool> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bool value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bool(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Integer types
-                "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => {
-                    let val: Option<i64> = row
-                        .try_get(i)
-                        .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?;
-                    match val {
-                        Some(v) => QueryValue::Int(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Floating point types
-                "FLOAT" | "DOUBLE" | "DECIMAL" => {
-                    let val: Option<f64> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get float value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Float(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Text types
-                "CHAR" | "VARCHAR" | "TEXT" | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT" => {
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get text value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Timestamp (stored as UTC DateTime)
-                "TIMESTAMP" => {
-                    use oracle::types::chrono::{DateTime, Utc};
-                    let val: Option<DateTime<Utc>> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get timestamp value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Datetime (timezone-naive)
-                "DATETIME" => {
-                    use oracle::types::chrono::NaiveDateTime;
-                    let val: Option<NaiveDateTime> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get datetime value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Date
-                "DATE" => {
-                    use oracle::types::chrono::NaiveDate;
-                    let val: Option<NaiveDate> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get date value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d").to_string()),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Binary types
-                "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
-                    let val: Option<Vec<u8>> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bytes value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bytes(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Other types - try to get as text
-                _ => {
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!(
-                            "Failed to get value for type {}: {}",
-                            type_name, e
-                        ))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
+        for i in 0..column_count {
+            // Try to get the value as various types
+            // Oracle crate requires knowing the type at compile time
+            let value = if let Ok(Some(s)) = row.get::<_, Option<String>>(i) {
+                QueryValue::Text(s)
+            } else if let Ok(Some(n)) = row.get::<_, Option<i64>>(i) {
+                QueryValue::Int(n)
+            } else if let Ok(Some(f)) = row.get::<_, Option<f64>>(i) {
+                QueryValue::Float(f)
+            } else if let Ok(Some(b)) = row.get::<_, Option<bool>>(i) {
+                QueryValue::Bool(b)
+            } else if let Ok(Some(bytes)) = row.get::<_, Option<Vec<u8>>>(i) {
+                QueryValue::Bytes(bytes)
+            } else {
+                QueryValue::Null
             };
 
             values.push(value);
@@ -289,156 +133,119 @@ impl OracleAdapter {
         Ok(values)
     }
 
-    /// Execute a SQL query and return results
-    ///
-    /// This method executes any SQL statement (SELECT, INSERT, UPDATE, DELETE, etc.)
-    /// and returns the results as a QueryResult.
-    ///
-    /// # Arguments
-    ///
-    /// * `query` - The SQL query to execute
-    ///
-    /// # Returns
-    ///
-    /// A QueryResult containing columns, rows, and rows_affected count.
-    ///
-    /// # Errors
-    ///
-    /// Returns DataError::Connection if not connected to the database.
-    /// Returns DataError::Query if the query execution fails.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let result = adapter.execute_query("SELECT * FROM users").await?;
-    /// println!("Found {} rows", result.rows.len());
-    /// ```
-    pub async fn execute_query(&self, query: &str) -> Result<QueryResult> {
-        // Check if connected
-        if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
+    /// Execute a query in blocking context
+    async fn execute_query_blocking(&self, query: String) -> Result<QueryResult> {
+        // Get the connection outside of spawn_blocking to avoid lifetime issues
+        let connection = self.connection.clone();
 
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        tokio::task::spawn_blocking(move || {
+            // Use tokio runtime handle to block on async operations within spawn_blocking
+            let handle = tokio::runtime::Handle::current();
+            let conn_guard = handle.block_on(connection.read());
+            let conn = conn_guard
+                .as_ref()
+                .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
 
-        // Execute query
-        let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
-            let error_msg = e.to_string();
+            // Prepare and execute the statement
+            let mut stmt = conn
+                .statement(&query)
+                .build()
+                .map_err(|e| DataError::Query(format!("Failed to prepare statement: {}", e)))?;
 
-            // Categorize errors for better error messages
-            if error_msg.contains("syntax") {
-                DataError::Query(format!("SQL syntax error: {}", e))
-            } else if error_msg.contains("Access denied") || error_msg.contains("permission") {
-                DataError::Query(format!("Permission denied: {}", e))
-            } else if error_msg.contains("doesn't exist") || error_msg.contains("Unknown") {
-                DataError::Query(format!("Object not found: {}", e))
-            } else if error_msg.contains("Duplicate") || error_msg.contains("constraint") {
-                DataError::Query(format!("Constraint violation: {}", e))
-            } else {
-                DataError::Query(format!("Query failed: {}", e))
+            let result_set = stmt
+                .query(&[])
+                .map_err(|e| DataError::Query(format!("Query execution failed: {}", e)))?;
+
+            // Get column information
+            let column_info = result_set.column_info();
+            let columns: Vec<String> = column_info
+                .iter()
+                .map(|col| col.name().to_string())
+                .collect();
+
+            let column_count = columns.len();
+
+            // Collect rows
+            let mut rows = Vec::new();
+            for row_result in result_set {
+                let row = row_result
+                    .map_err(|e| DataError::Query(format!("Failed to fetch row: {}", e)))?;
+                let values = Self::row_to_values(&row, column_count)?;
+                rows.push(values);
             }
-        })?;
 
-        // Handle empty results (e.g., from INSERT/UPDATE/DELETE)
-        if rows.is_empty() {
-            return Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                rows_affected: Some(0),
-            });
-        }
-
-        // Extract column names
-        let columns: Vec<String> = rows[0]
-            .columns()
-            .iter()
-            .map(|col| col.name().to_string())
-            .collect();
-
-        // Convert rows to QueryValue vectors
-        let mut result_rows = Vec::new();
-        for row in &rows {
-            let values = Self::row_to_values(row)?;
-            result_rows.push(values);
-        }
-
-        let rows_affected = result_rows.len() as u64;
-
-        Ok(QueryResult {
-            columns,
-            rows: result_rows,
-            rows_affected: Some(rows_affected),
+            Ok(QueryResult {
+                columns,
+                rows,
+                rows_affected: None,
+            })
         })
+        .await
+        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?
     }
 }
 
 #[async_trait::async_trait]
-impl Connection for OracleAdapter {
+impl ConnectionTrait for OracleAdapter {
     async fn connect(&mut self) -> Result<()> {
-        // Check if already connected
-        if *self.connected.read().await {
-            return Ok(());
+        if self.config.db_type != DatabaseType::Oracle {
+            return Err(DataError::Config(format!(
+                "Invalid database type: expected Oracle, got {:?}",
+                self.config.db_type
+            )));
         }
 
-        // Build connection string (without password for now - will need separate password handling)
-        let conn_str = self.build_connection_string(None)?;
+        let (username, password, connect_string) = Self::build_connection_params(&self.config, None);
+        let connection = self.connection.clone();
+        let connected = self.connected.clone();
 
-        // Create connection pool with sqlx
-        let pool = OracleConnectionOptions::new()
-            .max_connections(5)
-            .connect(&conn_str)
-            .await
-            .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+        tokio::task::spawn_blocking(move || {
+            let conn = oracle::Connection::connect(&username, &password, &connect_string)
+                .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
 
-        // Store the pool
-        *self.pool.write().await = Some(pool);
-        *self.connected.write().await = true;
+            let handle = tokio::runtime::Handle::current();
+            let mut conn_guard = handle.block_on(connection.write());
+            *conn_guard = Some(conn);
 
-        Ok(())
+            let mut connected_guard = handle.block_on(connected.write());
+            *connected_guard = true;
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        // Close the pool
-        if let Some(pool) = self.pool.write().await.take() {
-            pool.close().await;
-        }
-        *self.connected.write().await = false;
+        let mut conn_guard = self.connection.write().await;
+        *conn_guard = None;
+
+        let mut connected_guard = self.connected.write().await;
+        *connected_guard = false;
+
         Ok(())
     }
 
     fn is_connected(&self) -> bool {
-        // This needs to be a synchronous check, so we use try_read
-        // Returns false if the lock is held or if not connected
-        self.connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
+        // Check synchronously without blocking
+        match self.connected.try_read() {
+            Ok(guard) => *guard,
+            Err(_) => false,
+        }
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // Check internal state first
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Ok(false);
         }
 
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        // Execute health check query
-        match sqlx::query("SELECT 1").fetch_one(pool).await {
+        // Execute a simple query to verify connection
+        match self
+            .execute_query_blocking("SELECT 1 FROM DUAL".to_string())
+            .await
+        {
             Ok(_) => Ok(true),
-            Err(e) => Err(DataError::Query(format!("Health check failed: {}", e))),
+            Err(_) => Ok(false),
         }
     }
 
@@ -449,42 +256,36 @@ impl Connection for OracleAdapter {
 
 #[async_trait::async_trait]
 impl DbAdapter for OracleAdapter {
-    // ===== Connection Management =====
-
     async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<()> {
-        // Store config
         self.config = config.clone();
 
-        // Build connection string with password
-        let conn_str = self.build_connection_string(password)?;
+        let (username, password_str, connect_string) = Self::build_connection_params(config, password);
+        let connection = self.connection.clone();
+        let connected = self.connected.clone();
 
-        // Create connection pool
-        let pool = OracleConnectionOptions::new()
-            .max_connections(5)
-            .connect(&conn_str)
-            .await
-            .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+        tokio::task::spawn_blocking(move || {
+            let conn = oracle::Connection::connect(&username, &password_str, &connect_string)
+                .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
 
-        // Store the pool
-        *self.pool.write().await = Some(pool);
-        *self.connected.write().await = true;
+            let handle = tokio::runtime::Handle::current();
+            let mut conn_guard = handle.block_on(connection.write());
+            *conn_guard = Some(conn);
 
-        Ok(())
+            let mut connected_guard = handle.block_on(connected.write());
+            *connected_guard = true;
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        if let Some(pool) = self.pool.write().await.take() {
-            pool.close().await;
-        }
-        *self.connected.write().await = false;
-        Ok(())
+        ConnectionTrait::disconnect(self).await
     }
 
     fn is_connected(&self) -> bool {
-        self.connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
+        ConnectionTrait::is_connected(self)
     }
 
     async fn test_connection(
@@ -492,1013 +293,468 @@ impl DbAdapter for OracleAdapter {
         config: &ConnectionConfig,
         password: Option<&str>,
     ) -> Result<bool> {
-        // Build connection string
-        let host = config
-            .host
-            .as_ref()
-            .ok_or_else(|| DataError::Config("Missing host".to_string()))?;
-        let port = config.port.unwrap_or(1521);
-        let username = config
-            .username
-            .as_ref()
-            .ok_or_else(|| DataError::Config("Missing username".to_string()))?;
+        let (username, password_str, connect_string) = Self::build_connection_params(config, password);
 
-        let password = password.unwrap_or("");
-        let ssl_mode = if config.use_ssl {
-            "ssl-mode=REQUIRED"
-        } else {
-            "ssl-mode=DISABLED"
-        };
+        let result = tokio::task::spawn_blocking(move || {
+            oracle::Connection::connect(&username, &password_str, &connect_string)
+                .map(|_| true)
+                .map_err(|_| false)
+        })
+        .await
+        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?;
 
-        let conn_str = format!(
-            "oracle://{}:{}@{}:{}/{}?{}",
-            username, password, host, port, config.database, ssl_mode
-        );
-
-        // Try to connect briefly
-        match OracleConnection::connect(&conn_str).await {
-            Ok(pool) => {
-                pool.close().await;
-                Ok(true)
-            }
-            Err(_) => Ok(false),
-        }
+        Ok(result.unwrap_or(false))
     }
 
     fn database_type(&self) -> DatabaseType {
         DatabaseType::Oracle
     }
 
-    // ===== Query Operations =====
-
-    async fn execute_query(&self, query: &str) -> Result<QueryResult> {
-        self.execute_query(query).await
+    fn metadata(&self) -> AdapterMetadata<'_> {
+        AdapterMetadata::new(self)
     }
 
-    async fn export_dataframe(
-        &self,
-        df: &DataFrame,
-        table_name: &str,
-        _schema: Option<&str>,
-        replace: bool,
-    ) -> Result<u64> {
-        // Check connection
+    async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         if !*self.connected.read().await {
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        // If replace, drop and recreate table
-        if replace {
-            let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
-            pool.execute(drop_sql.as_str())
-                .await
-                .map_err(|e| DataError::Query(format!("Failed to drop table: {}", e)))?;
-
-            // Create table based on DataFrame schema
-            let create_sql = self.generate_create_table_sql(df, table_name)?;
-            pool.execute(create_sql.as_str())
-                .await
-                .map_err(|e| DataError::Query(format!("Failed to create table: {}", e)))?;
-        }
-
-        // Insert data row by row
-        let column_names: Vec<String> = df
-            .get_column_names()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let placeholders: Vec<String> = (1..=column_names.len()).map(|_| "?".to_string()).collect();
-
-        let insert_sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            table_name,
-            column_names.join(", "),
-            placeholders.join(", ")
-        );
-
-        let mut rows_inserted: u64 = 0;
-
-        // Insert rows using sqlx
-        for row_idx in 0..df.height() {
-            let mut query = sqlx::query(&insert_sql);
-
-            // Bind values for this row
-            for col_name in &column_names {
-                let column = df.column(col_name).map_err(|e| {
-                    DataError::DataFrame(format!("Column '{}' not found: {}", col_name, e))
-                })?;
-
-                let series = column.as_materialized_series();
-                query = self.bind_series_value(query, series, row_idx)?;
-            }
-
-            // Execute insert
-            query.execute(pool).await.map_err(|e| {
-                DataError::Query(format!("Failed to insert row {}: {}", row_idx, e))
-            })?;
-
-            rows_inserted += 1;
-        }
-
-        Ok(rows_inserted)
+        self.execute_query_blocking(query.to_string()).await
     }
 
-    // ===== Schema Discovery =====
-    // These methods will be implemented in arni-8b0.1.4
+    async fn export_dataframe(
+        &self,
+        _df: &DataFrame,
+        _table_name: &str,
+        _schema: Option<&str>,
+        _replace: bool,
+    ) -> Result<u64> {
+        Err(DataError::NotSupported(
+            "DataFrame export not yet implemented for Oracle".to_string(),
+        ))
+    }
 
     async fn list_databases(&self) -> Result<Vec<String>> {
-        // Check connection
-        if !Connection::is_connected(self) {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
-        }
-
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
-
-        // Query information_schema.SCHEMATA
-        let query = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME";
-        let rows: Vec<(String,)> = sqlx::query_as(query)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DataError::Query(format!("Failed to list databases: {}", e)))?;
-
-        let databases: Vec<String> = rows.into_iter().map(|(name,)| name).collect();
-
-        Ok(databases)
+        Err(DataError::NotSupported(
+            "list_databases not supported for Oracle (use service names/SIDs)".to_string(),
+        ))
     }
 
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
-        // Check connection
-        if !Connection::is_connected(self) {
+        if !*self.connected.read().await {
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        let owner = schema
+            .map(|s| s.to_uppercase())
+            .or_else(|| self.config.username.as_ref().map(|u| u.to_uppercase()))
+            .unwrap_or_else(|| "USER".to_string());
 
-        // Query information_schema.TABLES
-        let (query, schema_name) = if let Some(schema_name) = schema {
-            (
-                "SELECT TABLE_NAME FROM information_schema.TABLES \
-                 WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' \
-                 ORDER BY TABLE_NAME",
-                schema_name.to_string(),
-            )
-        } else {
-            // Use current database if no schema specified
-            let current_db_query = "SELECT DATABASE()";
-            let result: (Option<String>,) = sqlx::query_as(current_db_query)
-                .fetch_one(pool)
-                .await
-                .map_err(|e| DataError::Query(format!("Failed to get current database: {}", e)))?;
+        let query = format!(
+            "SELECT table_name FROM all_tables WHERE owner = '{}' ORDER BY table_name",
+            owner
+        );
 
-            let db_name = result.0.ok_or_else(|| {
-                DataError::Query("No database selected. Specify schema parameter.".to_string())
-            })?;
-
-            (
-                "SELECT TABLE_NAME FROM information_schema.TABLES \
-                 WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' \
-                 ORDER BY TABLE_NAME",
-                db_name,
-            )
-        };
-
-        let rows: Vec<(String,)> = sqlx::query_as(query)
-            .bind(&schema_name)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| DataError::Query(format!("Failed to list tables: {}", e)))?;
-
-        let tables: Vec<String> = rows.into_iter().map(|(name,)| name).collect();
+        let result = self.execute_query_blocking(query).await?;
+        let tables = result
+            .rows
+            .iter()
+            .filter_map(|row| {
+                if let Some(QueryValue::Text(name)) = row.first() {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         Ok(tables)
     }
 
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
-        // Check connection
-        if !Connection::is_connected(self) {
+        if !*self.connected.read().await {
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
-        // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        let owner = schema
+            .map(|s| s.to_uppercase())
+            .or_else(|| self.config.username.as_ref().map(|u| u.to_uppercase()))
+            .unwrap_or_else(|| "USER".to_string());
 
-        // Determine schema to use
-        let schema_name = if let Some(schema_name) = schema {
-            schema_name.to_string()
-        } else {
-            // Use current database if no schema specified
-            let current_db_query = "SELECT DATABASE()";
-            let result: (Option<String>,) = sqlx::query_as(current_db_query)
-                .fetch_one(pool)
-                .await
-                .map_err(|e| DataError::Query(format!("Failed to get current database: {}", e)))?;
+        let table_upper = table_name.to_uppercase();
 
-            result.0.ok_or_else(|| {
-                DataError::Query("No database selected. Specify schema parameter.".to_string())
-            })?
-        };
+        // Query column information
+        let query = format!(
+            "SELECT column_name, data_type, nullable, data_default \
+             FROM all_tab_columns \
+             WHERE owner = '{}' AND table_name = '{}' \
+             ORDER BY column_id",
+            owner, table_upper
+        );
 
-        // Query information_schema.COLUMNS for column details
-        let column_query =
-            "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY \
-                           FROM information_schema.COLUMNS \
-                           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
-                           ORDER BY ORDINAL_POSITION";
+        let result = self.execute_query_blocking(query).await?;
 
-        let rows: Vec<(String, String, String, Option<String>, String)> =
-            sqlx::query_as(column_query)
-                .bind(&schema_name)
-                .bind(table_name)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| DataError::Query(format!("Failed to describe table: {}", e)))?;
-
-        if rows.is_empty() {
+        if result.rows.is_empty() {
             return Err(DataError::Query(format!(
                 "Table '{}.{}' not found",
-                schema_name, table_name
+                owner, table_name
             )));
         }
 
+        // Query primary key constraints
+        let pk_query = format!(
+            "SELECT cols.column_name \
+             FROM all_constraints cons \
+             JOIN all_cons_columns cols ON cons.constraint_name = cols.constraint_name \
+             WHERE cons.constraint_type = 'P' \
+             AND cons.owner = '{}' \
+             AND cons.table_name = '{}'",
+            owner, table_upper
+        );
+
+        let pk_result = self.execute_query_blocking(pk_query).await?;
+        let primary_keys: std::collections::HashSet<String> = pk_result
+            .rows
+            .iter()
+            .filter_map(|row| {
+                if let Some(QueryValue::Text(name)) = row.first() {
+                    Some(name.to_uppercase())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         // Build column info
-        let columns: Vec<ColumnInfo> = rows
-            .into_iter()
-            .map(
-                |(col_name, data_type, is_nullable, default_value, column_key)| ColumnInfo {
-                    name: col_name,
+        let columns: Vec<ColumnInfo> = result
+            .rows
+            .iter()
+            .map(|row| {
+                let col_name = match &row[0] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => String::new(),
+                };
+                let data_type = match &row[1] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => String::new(),
+                };
+                let nullable = match &row[2] {
+                    QueryValue::Text(s) => s == "Y",
+                    _ => false,
+                };
+                let default_value = match &row[3] {
+                    QueryValue::Text(s) => Some(s.clone()),
+                    _ => None,
+                };
+
+                ColumnInfo {
+                    name: col_name.clone(),
                     data_type,
-                    nullable: is_nullable == "YES",
+                    nullable,
                     default_value,
-                    is_primary_key: column_key == "PRI",
-                },
-            )
+                    is_primary_key: primary_keys.contains(&col_name.to_uppercase()),
+                }
+            })
             .collect();
 
         Ok(TableInfo {
             name: table_name.to_string(),
-            schema: Some(schema_name),
+            schema: Some(owner),
             columns,
         })
     }
-}
 
-impl OracleAdapter {
-    /// Generate CREATE TABLE SQL from DataFrame schema
-    fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
-        let mut column_defs = Vec::new();
+    // Metadata methods will use default implementations from trait for now
+    // These can be enhanced with Oracle-specific queries later
 
-        for column in df.get_columns() {
-            let name = column.name();
-            let dtype = column.dtype();
-
-            let oracle_type = match dtype {
-                DataType::Boolean => "BOOLEAN",
-                DataType::Int8 => "TINYINT",
-                DataType::Int16 => "SMALLINT",
-                DataType::Int32 => "INT",
-                DataType::Int64 => "BIGINT",
-                DataType::UInt8 => "TINYINT UNSIGNED",
-                DataType::UInt16 => "SMALLINT UNSIGNED",
-                DataType::UInt32 => "INT UNSIGNED",
-                DataType::UInt64 => "BIGINT UNSIGNED",
-                DataType::Float32 => "FLOAT",
-                DataType::Float64 => "DOUBLE",
-                DataType::String => "TEXT",
-                DataType::Binary => "BLOB",
-                _ => "TEXT", // Fallback for unsupported types
-            };
-
-            column_defs.push(format!("{} {}", name, oracle_type));
+    async fn get_indexes(&self, table_name: &str, schema: Option<&str>) -> Result<Vec<IndexInfo>> {
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
         }
 
-        Ok(format!(
-            "CREATE TABLE {} ({})",
-            table_name,
-            column_defs.join(", ")
+        let owner = schema
+            .map(|s| s.to_uppercase())
+            .or_else(|| self.config.username.as_ref().map(|u| u.to_uppercase()))
+            .unwrap_or_else(|| "USER".to_string());
+
+        let table_upper = table_name.to_uppercase();
+
+        let query = format!(
+            "SELECT i.index_name, i.uniqueness, \
+             LISTAGG(ic.column_name, ',') WITHIN GROUP (ORDER BY ic.column_position) as columns \
+             FROM all_indexes i \
+             JOIN all_ind_columns ic ON i.index_name = ic.index_name AND i.owner = ic.index_owner \
+             WHERE i.table_owner = '{}' AND i.table_name = '{}' \
+             GROUP BY i.index_name, i.uniqueness \
+             ORDER BY i.index_name",
+            owner, table_upper
+        );
+
+        let result = self.execute_query_blocking(query).await?;
+
+        let indexes = result
+            .rows
+            .iter()
+            .map(|row| {
+                let index_name = match &row[0] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => String::new(),
+                };
+                let uniqueness = match &row[1] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => String::new(),
+                };
+                let columns_str = match &row[2] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => String::new(),
+                };
+
+                IndexInfo {
+                    name: index_name.clone(),
+                    table_name: table_name.to_string(),
+                    schema: Some(owner.clone()),
+                    columns: columns_str.split(',').map(|s| s.to_string()).collect(),
+                    is_unique: uniqueness == "UNIQUE",
+                    is_primary: index_name.contains("PK"),
+                    index_type: Some("BTREE".to_string()),
+                }
+            })
+            .collect();
+
+        Ok(indexes)
+    }
+
+    async fn get_foreign_keys(
+        &self,
+        table_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Vec<ForeignKeyInfo>> {
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let owner = schema
+            .map(|s| s.to_uppercase())
+            .or_else(|| self.config.username.as_ref().map(|u| u.to_uppercase()))
+            .unwrap_or_else(|| "USER".to_string());
+
+        let table_upper = table_name.to_uppercase();
+
+        let query = format!(
+            "SELECT \
+             a.constraint_name, \
+             a.table_name, \
+             c.column_name, \
+             b.table_name as referenced_table, \
+             d.column_name as referenced_column, \
+             a.delete_rule \
+             FROM all_constraints a \
+             JOIN all_constraints b ON a.r_constraint_name = b.constraint_name \
+             JOIN all_cons_columns c ON a.constraint_name = c.constraint_name \
+             JOIN all_cons_columns d ON b.constraint_name = d.constraint_name \
+             WHERE a.constraint_type = 'R' \
+             AND a.owner = '{}' \
+             AND a.table_name = '{}' \
+             ORDER BY a.constraint_name, c.position",
+            owner, table_upper
+        );
+
+        let result = self.execute_query_blocking(query).await?;
+
+        let mut fk_map: HashMap<String, ForeignKeyInfo> = HashMap::new();
+
+        for row in result.rows {
+            let fk_name = match &row[0] {
+                QueryValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let column = match &row[2] {
+                QueryValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let ref_table = match &row[3] {
+                QueryValue::Text(s) => s.clone(),
+                _ => String::new(),
+            };
+            let ref_column = match &row[4] {
+                QueryValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let delete_rule = match &row[5] {
+                QueryValue::Text(s) => Some(s.clone()),
+                _ => None,
+            };
+
+            fk_map
+                .entry(fk_name.clone())
+                .or_insert_with(|| ForeignKeyInfo {
+                    name: fk_name.clone(),
+                    table_name: table_name.to_string(),
+                    schema: Some(owner.clone()),
+                    columns: Vec::new(),
+                    referenced_table: ref_table,
+                    referenced_schema: Some(owner.clone()),
+                    referenced_columns: Vec::new(),
+                    on_delete: delete_rule,
+                    on_update: None,
+                })
+                .columns
+                .push(column);
+
+            if let Some(fk) = fk_map.get_mut(&fk_name) {
+                fk.referenced_columns.push(ref_column);
+            }
+        }
+
+        Ok(fk_map.into_values().collect())
+    }
+
+    async fn get_views(&self, schema: Option<&str>) -> Result<Vec<ViewInfo>> {
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let owner = schema
+            .map(|s| s.to_uppercase())
+            .or_else(|| self.config.username.as_ref().map(|u| u.to_uppercase()))
+            .unwrap_or_else(|| "USER".to_string());
+
+        let query = format!(
+            "SELECT view_name FROM all_views WHERE owner = '{}' ORDER BY view_name",
+            owner
+        );
+
+        let result = self.execute_query_blocking(query).await?;
+
+        let views = result
+            .rows
+            .iter()
+            .map(|row| ViewInfo {
+                name: match &row[0] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => String::new(),
+                },
+                schema: Some(owner.clone()),
+                definition: None,
+            })
+            .collect();
+
+        Ok(views)
+    }
+
+    async fn get_view_definition(
+        &self,
+        view_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Option<String>> {
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let owner = schema
+            .map(|s| s.to_uppercase())
+            .or_else(|| self.config.username.as_ref().map(|u| u.to_uppercase()))
+            .unwrap_or_else(|| "USER".to_string());
+
+        let view_upper = view_name.to_uppercase();
+
+        let query = format!(
+            "SELECT text FROM all_views WHERE owner = '{}' AND view_name = '{}'",
+            owner, view_upper
+        );
+
+        let result = self.execute_query_blocking(query).await?;
+
+        Ok(result.rows.first().and_then(|row| match &row[0] {
+            QueryValue::Text(s) => Some(s.clone()),
+            _ => None,
+        }))
+    }
+
+    async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let owner = schema
+            .map(|s| s.to_uppercase())
+            .or_else(|| self.config.username.as_ref().map(|u| u.to_uppercase()))
+            .unwrap_or_else(|| "USER".to_string());
+
+        let query = format!(
+            "SELECT object_name, object_type \
+             FROM all_procedures \
+             WHERE owner = '{}' \
+             ORDER BY object_name",
+            owner
+        );
+
+        let result = self.execute_query_blocking(query).await?;
+
+        let procedures = result
+            .rows
+            .iter()
+            .map(|row| ProcedureInfo {
+                name: match &row[0] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => String::new(),
+                },
+                schema: Some(owner.clone()),
+                return_type: None,
+                language: Some("PL/SQL".to_string()),
+            })
+            .collect();
+
+        Ok(procedures)
+    }
+
+    async fn bulk_insert(
+        &self,
+        _table_name: &str,
+        _columns: &[String],
+        _rows: &[Vec<QueryValue>],
+        _schema: Option<&str>,
+    ) -> Result<u64> {
+        Err(DataError::NotSupported(
+            "bulk_insert not yet implemented for Oracle".to_string(),
         ))
     }
 
-    /// Bind a Series value at a specific row index to a sqlx query
-    fn bind_series_value<'q>(
+    async fn bulk_update(
         &self,
-        query: sqlx::query::Query<'q, sqlx::MySql, oracle::MySqlArguments>,
-        series: &Series,
-        row_idx: usize,
-    ) -> Result<sqlx::query::Query<'q, sqlx::MySql, oracle::MySqlArguments>> {
-        // Check if value is null
-        let null_mask = series.is_null();
-        if null_mask.get(row_idx).unwrap_or(false) {
-            return Ok(query.bind(None::<String>));
-        }
-
-        // Convert based on Series data type and bind
-        let bound_query = match series.dtype() {
-            DataType::Boolean => {
-                let val = series
-                    .bool()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::Int8 => {
-                let series_i32 = series
-                    .cast(&DataType::Int32)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                let val = series_i32
-                    .i32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::Int16 => {
-                let series_i32 = series
-                    .cast(&DataType::Int32)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                let val = series_i32
-                    .i32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::Int32 => {
-                let val = series
-                    .i32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::Int64 => {
-                let val = series
-                    .i64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
-                let series_i64 = series
-                    .cast(&DataType::Int64)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                let val = series_i64
-                    .i64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::UInt64 => {
-                let series_i64 = series
-                    .cast(&DataType::Int64)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                let val = series_i64
-                    .i64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::Float32 => {
-                let val = series
-                    .f32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::Float64 => {
-                let val = series
-                    .f64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val)
-            }
-            DataType::String => {
-                let val = series
-                    .str()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val.to_string())
-            }
-            DataType::Binary => {
-                let val = series
-                    .binary()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val.to_vec())
-            }
-            dtype => {
-                // For unsupported types, try to convert to string
-                let series_str = series.cast(&DataType::String).map_err(|e| {
-                    DataError::TypeConversion(format!(
-                        "Cannot convert {:?} to Oracle type: {}",
-                        dtype, e
-                    ))
-                })?;
-                let val = series_str
-                    .str()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                query.bind(val.to_string())
-            }
-        };
-
-        Ok(bound_query)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::adapter::DatabaseType;
-    use std::collections::HashMap;
-
-    fn create_test_config() -> ConnectionConfig {
-        ConnectionConfig {
-            id: "test-oracle".to_string(),
-            name: "Test Oracle".to_string(),
-            db_type: DatabaseType::Oracle,
-            host: Some("localhost".to_string()),
-            port: Some(1521),
-            database: "test_db".to_string(),
-            username: Some("test_user".to_string()),
-            use_ssl: false,
-            parameters: HashMap::new(),
-        }
+        _table_name: &str,
+        _updates: &[(HashMap<String, QueryValue>, String)],
+        _schema: Option<&str>,
+    ) -> Result<u64> {
+        Err(DataError::NotSupported(
+            "bulk_update not yet implemented for Oracle".to_string(),
+        ))
     }
 
-    #[test]
-    fn test_new_oracle_adapter() {
-        let config = create_test_config();
-        let adapter = OracleAdapter::new(config.clone());
-
-        assert_eq!(adapter.config().id, "test-oracle");
-        assert_eq!(adapter.config().db_type, DatabaseType::Oracle);
-        assert!(!Connection::is_connected(&adapter));
-    }
-
-    #[test]
-    fn test_validate_database_name() {
-        assert!(OracleAdapter::validate_database_name("valid_db").is_ok());
-        assert!(OracleAdapter::validate_database_name("").is_err());
-        assert!(OracleAdapter::validate_database_name(&"a".repeat(65)).is_err());
-    }
-
-    #[test]
-    fn test_build_connection_string() {
-        let config = create_test_config();
-        let adapter = OracleAdapter::new(config);
-
-        let conn_str = adapter
-            .build_connection_string(Some("password123"))
-            .unwrap();
-        assert!(conn_str.contains("oracle://"));
-        assert!(conn_str.contains("test_user"));
-        assert!(conn_str.contains("password123"));
-        assert!(conn_str.contains("localhost"));
-        assert!(conn_str.contains("1521"));
-        assert!(conn_str.contains("test_db"));
-        assert!(conn_str.contains("ssl-mode=DISABLED"));
-    }
-
-    #[test]
-    fn test_build_connection_string_with_ssl() {
-        let mut config = create_test_config();
-        config.use_ssl = true;
-        let adapter = OracleAdapter::new(config);
-
-        let conn_str = adapter
-            .build_connection_string(Some("password123"))
-            .unwrap();
-        assert!(conn_str.contains("ssl-mode=REQUIRED"));
-    }
-
-    #[tokio::test]
-    async fn test_connect_not_connected() {
-        let config = create_test_config();
-        let adapter = OracleAdapter::new(config);
-
-        let result = adapter.health_check().await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, DataError::Connection(_)),
-            "Expected Connection error, got: {:?}",
-            err
-        );
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_connect() {
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config);
-
-        Connection::connect(&mut adapter)
-            .await
-            .expect("Failed to connect");
-        assert!(Connection::is_connected(&adapter));
-
-        Connection::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-        assert!(!Connection::is_connected(&adapter));
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_health_check() {
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config);
-
-        Connection::connect(&mut adapter)
-            .await
-            .expect("Failed to connect");
-
-        let result = adapter.health_check().await;
-        assert!(result.is_ok());
-        assert!(result.unwrap());
-
-        Connection::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    async fn test_execute_query_not_connected() {
-        let config = create_test_config();
-        let adapter = OracleAdapter::new(config);
-
-        let result = adapter.execute_query("SELECT 1").await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, DataError::Connection(_)),
-            "Expected Connection error, got: {:?}",
-            err
-        );
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_execute_query_select() {
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config);
-
-        Connection::connect(&mut adapter)
-            .await
-            .expect("Failed to connect");
-
-        let result = adapter
-            .execute_query("SELECT 1 as num, 'test' as text")
-            .await;
-        assert!(result.is_ok());
-
-        let query_result = result.unwrap();
-        assert_eq!(query_result.columns.len(), 2);
-        assert_eq!(query_result.columns[0], "num");
-        assert_eq!(query_result.columns[1], "text");
-        assert_eq!(query_result.rows.len(), 1);
-
-        Connection::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_execute_query_empty_result() {
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config);
-
-        Connection::connect(&mut adapter)
-            .await
-            .expect("Failed to connect");
-
-        // Create a test table
-        adapter
-            .execute_query("CREATE TEMPORARY TABLE test_empty (id INT)")
-            .await
-            .expect("Failed to create table");
-
-        // Query empty table
-        let result = adapter.execute_query("SELECT * FROM test_empty").await;
-        assert!(result.is_ok());
-
-        let query_result = result.unwrap();
-        assert_eq!(query_result.columns.len(), 0);
-        assert_eq!(query_result.rows.len(), 0);
-
-        Connection::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_execute_query_insert_update_delete() {
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config);
-
-        Connection::connect(&mut adapter)
-            .await
-            .expect("Failed to connect");
-
-        // Create a test table
-        adapter
-            .execute_query("CREATE TEMPORARY TABLE test_crud (id INT, name VARCHAR(100))")
-            .await
-            .expect("Failed to create table");
-
-        // Insert
-        let result = adapter
-            .execute_query("INSERT INTO test_crud (id, name) VALUES (1, 'Alice')")
-            .await;
-        assert!(result.is_ok());
-
-        // Update
-        let result = adapter
-            .execute_query("UPDATE test_crud SET name = 'Bob' WHERE id = 1")
-            .await;
-        assert!(result.is_ok());
-
-        // Verify update
-        let result = adapter
-            .execute_query("SELECT * FROM test_crud WHERE id = 1")
-            .await
-            .expect("Failed to select");
-        assert_eq!(result.rows.len(), 1);
-
-        // Delete
-        let result = adapter
-            .execute_query("DELETE FROM test_crud WHERE id = 1")
-            .await;
-        assert!(result.is_ok());
-
-        Connection::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[test]
-    fn test_generate_create_table_sql() {
-        use polars::prelude::*;
-
-        let config = create_test_config();
-        let adapter = OracleAdapter::new(config);
-
-        let df = DataFrame::new(vec![
-            Series::new("id".into(), &[1, 2, 3]).into(),
-            Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
-            Series::new("active".into(), &[true, false, true]).into(),
-        ])
-        .unwrap();
-
-        let sql = adapter
-            .generate_create_table_sql(&df, "test_table")
-            .unwrap();
-
-        assert!(sql.contains("CREATE TABLE test_table"));
-        assert!(sql.contains("id INT"));
-        assert!(sql.contains("name TEXT"));
-        assert!(sql.contains("active BOOLEAN"));
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_export_dataframe_replace() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config.clone());
-
-        DbAdapter::connect(&mut adapter, &config, None)
-            .await
-            .expect("Failed to connect");
-
-        let df = DataFrame::new(vec![
-            Series::new("id".into(), &[1, 2, 3]).into(),
-            Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
-        ])
-        .unwrap();
-
-        // Export with replace=true
-        let result = DbAdapter::export_dataframe(&adapter, &df, "test_export", None, true).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 3);
-
-        // Verify data was inserted
-        let query_result = adapter
-            .execute_query("SELECT * FROM test_export ORDER BY id")
-            .await
-            .expect("Failed to select");
-        assert_eq!(query_result.rows.len(), 3);
-
-        // Clean up
-        adapter
-            .execute_query("DROP TABLE test_export")
-            .await
-            .expect("Failed to drop table");
-
-        DbAdapter::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_read_table() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config.clone());
-
-        DbAdapter::connect(&mut adapter, &config, None)
-            .await
-            .expect("Failed to connect");
-
-        // Create and populate a test table
-        adapter
-            .execute_query("CREATE TEMPORARY TABLE test_read (id INT, name VARCHAR(100))")
-            .await
-            .expect("Failed to create table");
-
-        adapter
-            .execute_query("INSERT INTO test_read VALUES (1, 'Alice'), (2, 'Bob')")
-            .await
-            .expect("Failed to insert data");
-
-        // Read table as DataFrame
-        let result = DbAdapter::read_table(&adapter, "test_read", None).await;
-        assert!(result.is_ok());
-
-        let df = result.unwrap();
-        assert_eq!(df.height(), 2);
-        assert_eq!(df.width(), 2);
-
-        DbAdapter::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_query_df() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config.clone());
-
-        DbAdapter::connect(&mut adapter, &config, None)
-            .await
-            .expect("Failed to connect");
-
-        // Query as DataFrame
-        let result = DbAdapter::query_df(&adapter, "SELECT 1 as num, 'test' as text").await;
-        assert!(result.is_ok());
-
-        let df = result.unwrap();
-        assert_eq!(df.height(), 1);
-        assert_eq!(df.width(), 2);
-
-        DbAdapter::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_list_databases() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config.clone());
-
-        DbAdapter::connect(&mut adapter, &config, None)
-            .await
-            .expect("Failed to connect");
-
-        // List databases
-        let result = DbAdapter::list_databases(&adapter).await;
-        assert!(result.is_ok());
-
-        let databases = result.unwrap();
-        assert!(!databases.is_empty());
-        // Common system databases should be present
-        assert!(databases.contains(&"information_schema".to_string()));
-
-        DbAdapter::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_list_tables() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config.clone());
-
-        DbAdapter::connect(&mut adapter, &config, None)
-            .await
-            .expect("Failed to connect");
-
-        // Create a test table
-        adapter
-            .execute_query("CREATE TEMPORARY TABLE test_list_tables (id INT, name VARCHAR(100))")
-            .await
-            .expect("Failed to create table");
-
-        // List tables (temporary tables may not appear in information_schema)
-        // So we'll test that the method works without error
-        let result = DbAdapter::list_tables(&adapter, None).await;
-        assert!(result.is_ok());
-
-        let tables = result.unwrap();
-        // Tables vector should be valid (may be empty for temp tables)
-        assert!(tables.is_empty() || !tables.is_empty());
-
-        DbAdapter::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_list_tables_with_schema() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config.clone());
-
-        DbAdapter::connect(&mut adapter, &config, None)
-            .await
-            .expect("Failed to connect");
-
-        // List tables in specific schema (test_db)
-        let result = DbAdapter::list_tables(&adapter, Some("test_db")).await;
-        assert!(result.is_ok());
-
-        DbAdapter::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_describe_table() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let mut adapter = OracleAdapter::new(config.clone());
-
-        DbAdapter::connect(&mut adapter, &config, None)
-            .await
-            .expect("Failed to connect");
-
-        // Create a test table with various column types
-        adapter
-            .execute_query(
-                "CREATE TEMPORARY TABLE test_describe (
-                    id INT PRIMARY KEY,
-                    name VARCHAR(100) NOT NULL,
-                    age INT DEFAULT 0,
-                    active BOOLEAN,
-                    created_at TIMESTAMP
-                )",
-            )
-            .await
-            .expect("Failed to create table");
-
-        // Describe table (note: temporary tables may not appear in information_schema)
-        // We'll test with a real table if available, or expect error for temp table
-        let result = DbAdapter::describe_table(&adapter, "test_describe", None).await;
-
-        // Temporary tables may not show up in information_schema
-        // If it works, validate the structure
-        if result.is_ok() {
-            let table_info = result.unwrap();
-            assert_eq!(table_info.name, "test_describe");
-            assert!(!table_info.columns.is_empty());
-
-            // Find the id column and verify it's marked as primary key
-            let id_col = table_info.columns.iter().find(|c| c.name == "id");
-            if let Some(col) = id_col {
-                assert!(col.is_primary_key);
-            }
-        }
-
-        DbAdapter::disconnect(&mut adapter)
-            .await
-            .expect("Failed to disconnect");
-    }
-
-    #[tokio::test]
-    async fn test_list_databases_not_connected() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let adapter = OracleAdapter::new(config);
-
-        let result = DbAdapter::list_databases(&adapter).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, DataError::Connection(_)),
-            "Expected Connection error, got: {:?}",
-            err
-        );
-    }
-
-    #[tokio::test]
-    async fn test_list_tables_not_connected() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let adapter = OracleAdapter::new(config);
-
-        let result = DbAdapter::list_tables(&adapter, None).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, DataError::Connection(_)),
-            "Expected Connection error, got: {:?}",
-            err
-        );
-    }
-
-    #[tokio::test]
-    async fn test_describe_table_not_connected() {
-        use crate::adapter::DbAdapter;
-
-        let config = create_test_config();
-        let adapter = OracleAdapter::new(config);
-
-        let result = DbAdapter::describe_table(&adapter, "test_table", None).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, DataError::Connection(_)),
-            "Expected Connection error, got: {:?}",
-            err
-        );
+    async fn bulk_delete(
+        &self,
+        _table_name: &str,
+        _where_clauses: &[String],
+        _schema: Option<&str>,
+    ) -> Result<u64> {
+        Err(DataError::NotSupported(
+            "bulk_delete not yet implemented for Oracle".to_string(),
+        ))
     }
 }

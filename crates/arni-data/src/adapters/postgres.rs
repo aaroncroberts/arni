@@ -634,11 +634,7 @@ impl DbAdapter for PostgresAdapter {
 
     // ===== Metadata Methods =====
 
-    async fn get_indexes(
-        &self,
-        table_name: &str,
-        schema: Option<&str>,
-    ) -> Result<Vec<IndexInfo>> {
+    async fn get_indexes(&self, table_name: &str, schema: Option<&str>) -> Result<Vec<IndexInfo>> {
         // Check connection
         if !*self.connected.read().await {
             return Err(DataError::Connection(
@@ -813,12 +809,12 @@ impl DbAdapter for PostgresAdapter {
             ORDER BY table_name
         ";
 
-        let rows = client
-            .query(query, &[&schema_name])
-            .await
-            .map_err(|e| {
-                DataError::Query(format!("Failed to get views for schema '{}': {}", schema_name, e))
-            })?;
+        let rows = client.query(query, &[&schema_name]).await.map_err(|e| {
+            DataError::Query(format!(
+                "Failed to get views for schema '{}': {}",
+                schema_name, e
+            ))
+        })?;
 
         let views = rows
             .iter()
@@ -900,15 +896,12 @@ impl DbAdapter for PostgresAdapter {
             ORDER BY p.proname
         ";
 
-        let rows = client
-            .query(query, &[&schema_name])
-            .await
-            .map_err(|e| {
-                DataError::Query(format!(
-                    "Failed to get stored procedures for schema '{}': {}",
-                    schema_name, e
-                ))
-            })?;
+        let rows = client.query(query, &[&schema_name]).await.map_err(|e| {
+            DataError::Query(format!(
+                "Failed to get stored procedures for schema '{}': {}",
+                schema_name, e
+            ))
+        })?;
 
         let procedures = rows
             .iter()
