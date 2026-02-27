@@ -45,8 +45,8 @@
 
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result,
-    TableInfo, ViewInfo,
+    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
+    Result, ServerInfo, TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -190,63 +190,63 @@ impl OracleAdapter {
             DataType::Boolean => {
                 let v = series
                     .bool()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or(false);
                 if v { "1".to_string() } else { "0".to_string() }
             }
             DataType::Int8 => series
                 .i8()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int16 => series
                 .i16()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int32 => series
                 .i32()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int64 => series
                 .i64()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt8 => series
                 .u8()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt16 => series
                 .u16()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt32 => series
                 .u32()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt64 => series
                 .u64()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Float32 => {
                 let v = series
                     .f32()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or(0.0);
                 if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
@@ -254,7 +254,7 @@ impl OracleAdapter {
             DataType::Float64 => {
                 let v = series
                     .f64()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or(0.0);
                 if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
@@ -262,7 +262,7 @@ impl OracleAdapter {
             DataType::String => {
                 let v = series
                     .str()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or("");
                 format!("'{}'", v.replace('\'', "''"))
@@ -270,7 +270,7 @@ impl OracleAdapter {
             DataType::Binary => {
                 let v = series
                     .binary()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or(&[]);
                 let hex: String = v.iter().map(|b| format!("{:02X}", b)).collect();
@@ -279,10 +279,10 @@ impl OracleAdapter {
             _ => {
                 let cast = series
                     .cast(&DataType::String)
-                    .map_err(|e| DataError::Query(e.to_string()))?;
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?;
                 match cast
                     .str()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                 {
                     Some(s) => format!("'{}'", s.replace('\'', "''")),
@@ -576,6 +576,7 @@ impl DbAdapter for OracleAdapter {
     }
 
 
+    #[instrument(skip(self, df), fields(adapter = "oracle", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
         df: &DataFrame,
@@ -635,7 +636,7 @@ impl DbAdapter for OracleAdapter {
             for col_name in &column_names {
                 let series = df
                     .column(col_name)
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", col_name, row_idx, e)))?
                     .as_materialized_series();
                 literals.push(Self::series_value_to_sql_literal(series, row_idx)?);
             }
@@ -651,6 +652,7 @@ impl DbAdapter for OracleAdapter {
         Ok(total)
     }
 
+    #[instrument(skip(self), fields(adapter = "oracle"))]
     async fn list_databases(&self) -> Result<Vec<String>> {
         Err(DataError::NotSupported(
             "list_databases not supported for Oracle (use service names/SIDs)".to_string(),
@@ -695,6 +697,61 @@ impl DbAdapter for OracleAdapter {
         Ok(tables)
     }
 
+    #[instrument(skip(self), fields(adapter = "oracle", pattern = %pattern, mode = ?mode, schema = ?schema))]
+    async fn find_tables(
+        &self,
+        pattern: &str,
+        schema: Option<&str>,
+        mode: TableSearchMode,
+    ) -> Result<Vec<String>> {
+        debug!("Finding tables by pattern");
+
+        if !*self.connected.read().await {
+            error!("Find tables failed: not connected");
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let owner = schema
+            .map(|s| s.to_uppercase())
+            .or_else(|| self.config.username.as_ref().map(|u| u.to_uppercase()))
+            .unwrap_or_else(|| "USER".to_string());
+
+        let escaped = escape_like_pattern(pattern);
+        let like_pattern = match mode {
+            TableSearchMode::StartsWith => format!("{}%", escaped),
+            TableSearchMode::Contains => format!("%{}%", escaped),
+            TableSearchMode::EndsWith => format!("%{}", escaped),
+        };
+        // Oracle table names are uppercase; escape single quotes for inline SQL
+        let safe_pattern = like_pattern.to_uppercase().replace('\'', "''");
+
+        let query = format!(
+            "SELECT table_name FROM all_tables \
+             WHERE owner = '{}' AND table_name LIKE '{}' ESCAPE '\\' \
+             ORDER BY table_name",
+            owner, safe_pattern
+        );
+
+        let result = self.execute_query_blocking(query).await?;
+        let tables = result
+            .rows
+            .iter()
+            .filter_map(|row| {
+                if let Some(QueryValue::Text(name)) = row.first() {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        info!(count = tables.len(), owner = %owner, "Found tables successfully");
+        Ok(tables)
+    }
+
+    #[instrument(skip(self), fields(adapter = "oracle", table = %table_name, schema = ?schema))]
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
         if !*self.connected.read().await {
             return Err(DataError::Connection(
@@ -783,10 +840,58 @@ impl DbAdapter for OracleAdapter {
             })
             .collect();
 
+        // Fetch row count (from stats) and creation time from catalog views
+        let stats_query = format!(
+            "SELECT at.num_rows, \
+                    TO_CHAR(ao.created, 'YYYY-MM-DD\"T\"HH24:MI:SS') \
+             FROM all_tables at \
+             JOIN all_objects ao ON ao.owner = at.owner \
+                 AND ao.object_name = at.table_name \
+                 AND ao.object_type = 'TABLE' \
+             WHERE at.owner = '{}' AND at.table_name = '{}'",
+            owner, table_upper
+        );
+        let stats_result = self.execute_query_blocking(stats_query).await.ok();
+        let (row_count, created_at) = stats_result
+            .as_ref()
+            .and_then(|r| r.rows.first())
+            .map(|row| {
+                let rc = match row.get(0) {
+                    Some(QueryValue::Int(n)) => Some(*n),
+                    Some(QueryValue::Float(f)) => Some(*f as i64),
+                    _ => None,
+                };
+                let ca = match row.get(1) {
+                    Some(QueryValue::Text(s)) => Some(s.clone()),
+                    _ => None,
+                };
+                (rc, ca)
+            })
+            .unwrap_or((None, None));
+
+        // Size from user_segments (best-effort; may be None if not analyzable)
+        let size_query = format!(
+            "SELECT bytes FROM user_segments WHERE segment_name = '{}'",
+            table_upper
+        );
+        let size_bytes = self
+            .execute_query_blocking(size_query)
+            .await
+            .ok()
+            .and_then(|r| r.rows.into_iter().next())
+            .and_then(|row| match row.into_iter().next() {
+                Some(QueryValue::Int(n)) => Some(n),
+                Some(QueryValue::Float(f)) => Some(f as i64),
+                _ => None,
+            });
+
         Ok(TableInfo {
             name: table_name.to_string(),
             schema: Some(owner),
             columns,
+            row_count,
+            size_bytes,
+            created_at,
         })
     }
 
@@ -1044,6 +1149,31 @@ impl DbAdapter for OracleAdapter {
         Ok(procedures)
     }
 
+    #[instrument(skip(self), fields(adapter = "oracle"))]
+    async fn get_server_info(&self) -> Result<ServerInfo> {
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+        let query = "SELECT banner FROM v$version WHERE ROWNUM = 1".to_string();
+        let result = self.execute_query_blocking(query).await?;
+        let version = result
+            .rows
+            .first()
+            .and_then(|row| match &row[0] {
+                QueryValue::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+        Ok(ServerInfo {
+            version,
+            server_type: "Oracle".to_string(),
+            extra_info: HashMap::new(),
+        })
+    }
+
+    #[instrument(skip(self, columns, rows), fields(adapter = "oracle", table = %table_name, row_count = rows.len()))]
     async fn bulk_insert(
         &self,
         table_name: &str,
@@ -1090,10 +1220,11 @@ impl DbAdapter for OracleAdapter {
         Ok(total)
     }
 
+    #[instrument(skip(self, updates), fields(adapter = "oracle", table = %table_name))]
     async fn bulk_update(
         &self,
         table_name: &str,
-        updates: &[(HashMap<String, QueryValue>, String)],
+        updates: &[(HashMap<String, QueryValue>, FilterExpr)],
         _schema: Option<&str>,
     ) -> Result<u64> {
         if updates.is_empty() {
@@ -1101,7 +1232,7 @@ impl DbAdapter for OracleAdapter {
         }
         let table_upper = table_name.to_uppercase();
         let mut total: u64 = 0;
-        for (set_values, where_clause) in updates {
+        for (set_values, filter) in updates {
             if set_values.is_empty() {
                 continue;
             }
@@ -1119,26 +1250,31 @@ impl DbAdapter for OracleAdapter {
                 "UPDATE {} SET {} WHERE {}",
                 table_upper,
                 set_parts.join(", "),
-                where_clause
+                filter_to_sql(filter)
             );
             total += self.execute_statement_blocking(sql).await?;
         }
         Ok(total)
     }
 
+    #[instrument(skip(self, filters), fields(adapter = "oracle", table = %table_name))]
     async fn bulk_delete(
         &self,
         table_name: &str,
-        where_clauses: &[String],
+        filters: &[FilterExpr],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        if where_clauses.is_empty() {
+        if filters.is_empty() {
             return Ok(0);
         }
         let table_upper = table_name.to_uppercase();
         let mut total: u64 = 0;
-        for where_clause in where_clauses {
-            let sql = format!("DELETE FROM {} WHERE {}", table_upper, where_clause);
+        for filter in filters {
+            let sql = format!(
+                "DELETE FROM {} WHERE {}",
+                table_upper,
+                filter_to_sql(filter)
+            );
             total += self.execute_statement_blocking(sql).await?;
         }
         Ok(total)
@@ -1344,5 +1480,31 @@ mod tests {
             OracleAdapter::polars_dtype_to_oracle_type(&DataType::Date),
             "VARCHAR2(4000)"
         );
+    }
+
+    #[tokio::test]
+    async fn test_find_tables_not_connected() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result =
+            DbAdapter::find_tables(&adapter, "PS_", None, TableSearchMode::StartsWith).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_starts_with() {
+        let like_pattern = format!("{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_contains() {
+        let like_pattern = format!("%{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_ends_with() {
+        let like_pattern = format!("%{}", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_");
     }
 }

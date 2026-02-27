@@ -1,7 +1,7 @@
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, ServerInfo,
-    TableInfo, ViewInfo,
+    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
+    ServerInfo, TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -166,63 +166,63 @@ impl SqlServerAdapter {
             DataType::Boolean => {
                 let v = series
                     .bool()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or(false);
                 if v { "1".to_string() } else { "0".to_string() }
             }
             DataType::Int8 => series
                 .i8()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int16 => series
                 .i16()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int32 => series
                 .i32()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int64 => series
                 .i64()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt8 => series
                 .u8()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt16 => series
                 .u16()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt32 => series
                 .u32()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt64 => series
                 .u64()
-                .map_err(|e| DataError::Query(e.to_string()))?
+                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Float32 => {
                 let v = series
                     .f32()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or(0.0);
                 if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
@@ -230,7 +230,7 @@ impl SqlServerAdapter {
             DataType::Float64 => {
                 let v = series
                     .f64()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or(0.0);
                 if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
@@ -238,7 +238,7 @@ impl SqlServerAdapter {
             DataType::String => {
                 let v = series
                     .str()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or("");
                 format!("N'{}'", v.replace('\'', "''"))
@@ -246,7 +246,7 @@ impl SqlServerAdapter {
             DataType::Binary => {
                 let v = series
                     .binary()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                     .unwrap_or(&[]);
                 let hex: String = v.iter().map(|b| format!("{:02X}", b)).collect();
@@ -255,10 +255,10 @@ impl SqlServerAdapter {
             _ => {
                 let cast = series
                     .cast(&DataType::String)
-                    .map_err(|e| DataError::Query(e.to_string()))?;
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?;
                 match cast
                     .str()
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
                     .get(row_idx)
                 {
                     Some(s) => format!("N'{}'", s.replace('\'', "''")),
@@ -538,6 +538,7 @@ impl DbAdapter for SqlServerAdapter {
         })
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlserver"))]
     async fn list_databases(&self) -> Result<Vec<String>> {
         let query = "SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name";
         let result = self.execute_query(query).await?;
@@ -557,6 +558,7 @@ impl DbAdapter for SqlServerAdapter {
         Ok(databases)
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlserver", schema = ?schema))]
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
         let schema_filter = schema.unwrap_or("dbo");
         let query = format!(
@@ -582,6 +584,49 @@ impl DbAdapter for SqlServerAdapter {
         Ok(tables)
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlserver", pattern = %pattern, mode = ?mode, schema = ?schema))]
+    async fn find_tables(
+        &self,
+        pattern: &str,
+        schema: Option<&str>,
+        mode: TableSearchMode,
+    ) -> Result<Vec<String>> {
+        let schema_filter = schema.unwrap_or("dbo");
+
+        let escaped = escape_like_pattern(pattern);
+        let like_pattern = match mode {
+            TableSearchMode::StartsWith => format!("{}%", escaped),
+            TableSearchMode::Contains => format!("%{}%", escaped),
+            TableSearchMode::EndsWith => format!("%{}", escaped),
+        };
+        // Escape single quotes for safe inline SQL formatting
+        let safe_pattern = like_pattern.replace('\'', "''");
+
+        let query = format!(
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = '{}' AND table_type = 'BASE TABLE' \
+             AND table_name LIKE '{}' ESCAPE '\\' \
+             ORDER BY table_name",
+            schema_filter, safe_pattern
+        );
+
+        let result = self.execute_query(&query).await?;
+        let tables = result
+            .rows
+            .into_iter()
+            .filter_map(|row| {
+                if let Some(QueryValue::Text(name)) = row.into_iter().next() {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok(tables)
+    }
+
+    #[instrument(skip(self), fields(adapter = "sqlserver", table = %table_name, schema = ?schema))]
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
         let schema_name = schema.unwrap_or("dbo");
 
@@ -622,13 +667,50 @@ impl DbAdapter for SqlServerAdapter {
             }
         }
 
+        // Fetch row count, total size, and creation date from sys catalog
+        let stats_query = format!(
+            "SELECT SUM(p.rows), SUM(a.total_pages) * 8192, \
+                    CONVERT(NVARCHAR(30), t.create_date, 127) \
+             FROM sys.tables t \
+             JOIN sys.schemas s ON t.schema_id = s.schema_id \
+             JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1) \
+             JOIN sys.allocation_units a ON p.partition_id = a.container_id \
+             WHERE t.name = '{}' AND s.name = '{}' \
+             GROUP BY t.create_date",
+            table_name, schema_name
+        );
+        let stats_result = self.execute_query(&stats_query).await.ok();
+        let (row_count, size_bytes, created_at) = stats_result
+            .as_ref()
+            .and_then(|r| r.rows.first())
+            .map(|row| {
+                let rc = match row.get(0) {
+                    Some(QueryValue::Int(n)) => Some(*n),
+                    _ => None,
+                };
+                let sz = match row.get(1) {
+                    Some(QueryValue::Int(n)) => Some(*n),
+                    _ => None,
+                };
+                let ca = match row.get(2) {
+                    Some(QueryValue::Text(s)) => Some(s.clone()),
+                    _ => None,
+                };
+                (rc, sz, ca)
+            })
+            .unwrap_or((None, None, None));
+
         Ok(TableInfo {
             name: table_name.to_string(),
             schema: Some(schema_name.to_string()),
             columns,
+            row_count,
+            size_bytes,
+            created_at,
         })
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlserver"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
         let query = "SELECT @@VERSION AS version";
         let result = self.execute_query(query).await?;
@@ -866,6 +948,7 @@ impl DbAdapter for SqlServerAdapter {
         Ok(procedures)
     }
 
+    #[instrument(skip(self, df), fields(adapter = "sqlserver", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
         df: &DataFrame,
@@ -916,7 +999,7 @@ impl DbAdapter for SqlServerAdapter {
             for col_name in &column_names {
                 let series = df
                     .column(col_name)
-                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", col_name, row_idx, e)))?
                     .as_materialized_series();
                 literals.push(Self::series_value_to_sql_literal(series, row_idx)?);
             }
@@ -932,6 +1015,7 @@ impl DbAdapter for SqlServerAdapter {
         Ok(total)
     }
 
+    #[instrument(skip(self, columns, rows), fields(adapter = "sqlserver", table = %table_name, row_count = rows.len()))]
     async fn bulk_insert(
         &self,
         table_name: &str,
@@ -972,49 +1056,49 @@ impl DbAdapter for SqlServerAdapter {
         Ok(total)
     }
 
+    #[instrument(skip(self, updates), fields(adapter = "sqlserver", table = %table_name))]
     async fn bulk_update(
         &self,
         table_name: &str,
-        updates: &[(HashMap<String, QueryValue>, String)],
+        updates: &[(HashMap<String, QueryValue>, FilterExpr)],
         _schema: Option<&str>,
     ) -> Result<u64> {
         if updates.is_empty() {
             return Ok(0);
         }
         let mut total: u64 = 0;
-        for (set_values, where_clause) in updates {
+        for (set_values, filter) in updates {
             if set_values.is_empty() {
                 continue;
             }
             let set_parts: Vec<String> = set_values
                 .iter()
-                .map(|(col, val)| {
-                    format!("{} = {}", col, Self::query_value_to_sql_literal(val))
-                })
+                .map(|(col, val)| format!("{} = {}", col, Self::query_value_to_sql_literal(val)))
                 .collect();
             let sql = format!(
                 "UPDATE {} SET {} WHERE {}",
                 table_name,
                 set_parts.join(", "),
-                where_clause
+                filter_to_sql(filter)
             );
             total += self.execute_statement(&sql).await?;
         }
         Ok(total)
     }
 
+    #[instrument(skip(self, filters), fields(adapter = "sqlserver", table = %table_name))]
     async fn bulk_delete(
         &self,
         table_name: &str,
-        where_clauses: &[String],
+        filters: &[FilterExpr],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        if where_clauses.is_empty() {
+        if filters.is_empty() {
             return Ok(0);
         }
         let mut total: u64 = 0;
-        for where_clause in where_clauses {
-            let sql = format!("DELETE FROM {} WHERE {}", table_name, where_clause);
+        for filter in filters {
+            let sql = format!("DELETE FROM {} WHERE {}", table_name, filter_to_sql(filter));
             total += self.execute_statement(&sql).await?;
         }
         Ok(total)
@@ -1221,5 +1305,23 @@ mod tests {
             SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Date),
             "NVARCHAR(MAX)"
         );
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_starts_with() {
+        let like_pattern = format!("{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_contains() {
+        let like_pattern = format!("%{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_ends_with() {
+        let like_pattern = format!("%{}", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_");
     }
 }

@@ -1,7 +1,7 @@
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, ServerInfo,
-    TableInfo, ViewInfo,
+    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
+    ServerInfo, TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -529,12 +529,14 @@ impl DbAdapter for SqliteAdapter {
         })
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlite"))]
     async fn list_databases(&self) -> Result<Vec<String>> {
         // SQLite is file-based, so there's only the current database
         // Return the database path as the single "database"
         Ok(vec![self.config.database.clone()])
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlite"))]
     async fn list_tables(&self, _schema: Option<&str>) -> Result<Vec<String>> {
         let query = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
         let result = self.execute_query(query).await?;
@@ -554,6 +556,41 @@ impl DbAdapter for SqliteAdapter {
         Ok(tables)
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlite", pattern = %pattern, mode = ?mode))]
+    async fn find_tables(
+        &self,
+        pattern: &str,
+        _schema: Option<&str>,
+        mode: TableSearchMode,
+    ) -> Result<Vec<String>> {
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Find tables attempted while not connected");
+            DataError::Connection("Not connected - call connect() first".to_string())
+        })?;
+
+        let escaped = escape_like_pattern(pattern);
+        let like_pattern = match mode {
+            TableSearchMode::StartsWith => format!("{}%", escaped),
+            TableSearchMode::Contains => format!("%{}%", escaped),
+            TableSearchMode::EndsWith => format!("%{}", escaped),
+        };
+
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master \
+             WHERE type = 'table' AND name NOT LIKE 'sqlite_%' \
+             AND name LIKE ?1 ESCAPE '\\' \
+             ORDER BY name",
+        )
+        .bind(&like_pattern)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| DataError::Query(format!("Failed to find tables: {}", e)))?;
+
+        Ok(rows.into_iter().map(|(name,)| name).collect())
+    }
+
+    #[instrument(skip(self), fields(adapter = "sqlite", table = %table_name, schema = ?_schema))]
     async fn describe_table(&self, table_name: &str, _schema: Option<&str>) -> Result<TableInfo> {
         // Get column information
         let pragma_query = format!("PRAGMA table_info({})", table_name);
@@ -594,13 +631,29 @@ impl DbAdapter for SqliteAdapter {
             }
         }
 
+        // Row count via COUNT(*); size and creation time are not tracked per-table in SQLite
+        let count_query = format!("SELECT COUNT(*) FROM \"{}\"", table_name);
+        let row_count = self
+            .execute_query(&count_query)
+            .await
+            .ok()
+            .and_then(|r| r.rows.into_iter().next())
+            .and_then(|row| match row.into_iter().next() {
+                Some(QueryValue::Int(n)) => Some(n),
+                _ => None,
+            });
+
         Ok(TableInfo {
             name: table_name.to_string(),
             schema: None,
             columns,
+            row_count,
+            size_bytes: None,
+            created_at: None,
         })
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlite"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
         let version_result = self.execute_query("SELECT sqlite_version()").await?;
         let version = version_result
@@ -689,7 +742,7 @@ impl DbAdapter for SqliteAdapter {
                 {
                     foreign_keys
                         .entry(*id)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push((from_col.clone(), to_col.clone()));
                     fk_tables.insert(*id, ref_table.clone());
                 }
@@ -769,6 +822,7 @@ impl DbAdapter for SqliteAdapter {
         Ok(vec![])
     }
 
+    #[instrument(skip(self, df), fields(adapter = "sqlite", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
         df: &DataFrame,
@@ -779,6 +833,7 @@ impl DbAdapter for SqliteAdapter {
         {
             let pool_guard = self.pool.read().await;
             if pool_guard.is_none() {
+                error!("sqlite connection error - not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
                 ));
@@ -843,6 +898,7 @@ impl DbAdapter for SqliteAdapter {
         Ok(rows_inserted)
     }
 
+    #[instrument(skip(self, columns, rows), fields(adapter = "sqlite", table = %table_name, row_count = rows.len()))]
     async fn bulk_insert(
         &self,
         table_name: &str,
@@ -859,6 +915,7 @@ impl DbAdapter for SqliteAdapter {
         {
             let pool_guard = self.pool.read().await;
             if pool_guard.is_none() {
+                error!("sqlite connection error - not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
                 ));
@@ -904,10 +961,11 @@ impl DbAdapter for SqliteAdapter {
         Ok(total_inserted)
     }
 
+    #[instrument(skip(self, updates), fields(adapter = "sqlite", table = %table_name))]
     async fn bulk_update(
         &self,
         table_name: &str,
-        updates: &[(HashMap<String, QueryValue>, String)],
+        updates: &[(HashMap<String, QueryValue>, FilterExpr)],
         _schema: Option<&str>,
     ) -> Result<u64> {
         if updates.is_empty() {
@@ -916,6 +974,7 @@ impl DbAdapter for SqliteAdapter {
         {
             let pool_guard = self.pool.read().await;
             if pool_guard.is_none() {
+                error!("sqlite connection error - not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
                 ));
@@ -924,8 +983,8 @@ impl DbAdapter for SqliteAdapter {
 
         let mut total_affected = 0u64;
 
-        for (set_values, where_clause) in updates {
-            if set_values.is_empty() || where_clause.trim().is_empty() {
+        for (set_values, filter) in updates {
+            if set_values.is_empty() {
                 continue;
             }
             let set_clause: String = set_values
@@ -933,8 +992,12 @@ impl DbAdapter for SqliteAdapter {
                 .map(|(col, val)| format!("{} = {}", col, Self::query_value_to_sql_literal(val)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let update_sql =
-                format!("UPDATE {} SET {} WHERE {}", table_name, set_clause, where_clause);
+            let update_sql = format!(
+                "UPDATE {} SET {} WHERE {}",
+                table_name,
+                set_clause,
+                filter_to_sql(filter)
+            );
             let rows_affected = self.execute_statement(&update_sql).await?;
             total_affected += rows_affected;
         }
@@ -942,18 +1005,20 @@ impl DbAdapter for SqliteAdapter {
         Ok(total_affected)
     }
 
+    #[instrument(skip(self, filters), fields(adapter = "sqlite", table = %table_name))]
     async fn bulk_delete(
         &self,
         table_name: &str,
-        where_clauses: &[String],
+        filters: &[FilterExpr],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        if where_clauses.is_empty() {
+        if filters.is_empty() {
             return Ok(0);
         }
         {
             let pool_guard = self.pool.read().await;
             if pool_guard.is_none() {
+                error!("sqlite connection error - not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
                 ));
@@ -962,11 +1027,12 @@ impl DbAdapter for SqliteAdapter {
 
         let mut total_affected = 0u64;
 
-        for where_clause in where_clauses {
-            if where_clause.trim().is_empty() {
-                continue;
-            }
-            let delete_sql = format!("DELETE FROM {} WHERE {}", table_name, where_clause);
+        for filter in filters {
+            let delete_sql = format!(
+                "DELETE FROM {} WHERE {}",
+                table_name,
+                filter_to_sql(filter)
+            );
             let rows_affected = self.execute_statement(&delete_sql).await?;
             total_affected += rows_affected;
         }
@@ -1060,5 +1126,32 @@ mod tests {
         let adapter = SqliteAdapter::new(config.clone());
         assert_eq!(adapter.config().id, config.id);
         assert_eq!(adapter.config().database, ":memory:");
+    }
+
+    #[tokio::test]
+    async fn test_find_tables_not_connected() {
+        let config = make_config(":memory:");
+        let adapter = SqliteAdapter::new(config);
+        let result =
+            DbAdapter::find_tables(&adapter, "PS_", None, TableSearchMode::StartsWith).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_starts_with() {
+        let like_pattern = format!("{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_contains() {
+        let like_pattern = format!("%{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_ends_with() {
+        let like_pattern = format!("%{}", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_");
     }
 }

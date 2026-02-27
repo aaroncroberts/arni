@@ -40,6 +40,48 @@ pub struct ConnectionConfig {
 }
 
 /// Supported database types
+/// Controls how [`DbAdapter::find_tables`] matches table names against a search pattern.
+///
+/// In all modes the pattern is matched **literally** — characters with special meaning
+/// in SQL `LIKE` expressions (underscore `_` and percent `%`) are automatically escaped
+/// so that, for example, searching for `"PS_"` finds tables whose names contain the
+/// exact two characters `P`, `S`, `_`, not tables whose names match the SQL wildcard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableSearchMode {
+    /// Table name **starts with** the pattern (e.g. `"PS_"` → `LIKE 'PS\_%'`)
+    StartsWith,
+    /// Table name **contains** the pattern anywhere (e.g. `"PS_"` → `LIKE '%PS\_%'`)
+    Contains,
+    /// Table name **ends with** the pattern (e.g. `"PS_"` → `LIKE '%PS\_'`)
+    EndsWith,
+}
+
+/// Escape a user-supplied search pattern so that it is safe to embed in a SQL
+/// `LIKE` expression using backslash as the escape character (`ESCAPE '\'`).
+///
+/// Both `_` (single-character wildcard) and `%` (multi-character wildcard) are
+/// prefixed with `\` so they are treated as literal characters by the database.
+///
+/// # Examples
+/// ```
+/// use arni_data::adapter::escape_like_pattern;
+/// assert_eq!(escape_like_pattern("PS_"), "PS\\_");
+/// assert_eq!(escape_like_pattern("50%"), "50\\%");
+/// assert_eq!(escape_like_pattern("plain"), "plain");
+/// ```
+pub fn escape_like_pattern(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len() + 4);
+    for ch in pattern.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '_' => out.push_str("\\_"),
+            '%' => out.push_str("\\%"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseType {
@@ -106,6 +148,123 @@ impl fmt::Display for QueryValue {
             QueryValue::Text(s) => write!(f, "{}", s),
             QueryValue::Bytes(bytes) => write!(f, "<{} bytes>", bytes.len()),
         }
+    }
+}
+
+/// Adapter-agnostic filter expression for `bulk_update` and `bulk_delete` operations.
+///
+/// Each adapter translates `FilterExpr` into its native query language:
+/// SQL `WHERE` clauses for relational databases, BSON documents for MongoDB, etc.
+///
+/// # Examples
+///
+/// ```ignore
+/// use arni_data::{FilterExpr, QueryValue};
+///
+/// // id = 42
+/// let f = FilterExpr::Eq("id".to_string(), QueryValue::Int(42));
+///
+/// // status = 'active' AND score >= 80
+/// let f = FilterExpr::And(vec![
+///     FilterExpr::Eq("status".to_string(), QueryValue::Text("active".to_string())),
+///     FilterExpr::Gte("score".to_string(), QueryValue::Int(80)),
+/// ]);
+/// ```
+#[derive(Debug, Clone)]
+pub enum FilterExpr {
+    /// `col = value`
+    Eq(String, QueryValue),
+    /// `col <> value`
+    Ne(String, QueryValue),
+    /// `col > value`
+    Gt(String, QueryValue),
+    /// `col >= value`
+    Gte(String, QueryValue),
+    /// `col < value`
+    Lt(String, QueryValue),
+    /// `col <= value`
+    Lte(String, QueryValue),
+    /// `col IN (v1, v2, …)`
+    In(String, Vec<QueryValue>),
+    /// `col IS NULL`
+    IsNull(String),
+    /// `col IS NOT NULL`
+    IsNotNull(String),
+    /// `(expr1 AND expr2 AND …)` — empty list renders as `1=1` (always true)
+    And(Vec<FilterExpr>),
+    /// `(expr1 OR expr2 OR …)` — empty list renders as `1=0` (always false)
+    Or(Vec<FilterExpr>),
+    /// `NOT (expr)`
+    Not(Box<FilterExpr>),
+}
+
+/// Render a [`QueryValue`] as a SQL literal safe for inline embedding.
+///
+/// - Strings are single-quoted with internal `'` escaped as `''`.
+/// - Booleans render as `TRUE` / `FALSE` (SQL standard, supported by all SQL adapters).
+/// - NaN / infinite floats map to `NULL`.
+/// - Byte arrays render as a hex literal `X'...'`.
+pub fn query_value_to_sql_literal(value: &QueryValue) -> String {
+    match value {
+        QueryValue::Null => "NULL".to_string(),
+        QueryValue::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
+        QueryValue::Int(i) => i.to_string(),
+        QueryValue::Float(f) => {
+            if f.is_nan() || f.is_infinite() {
+                "NULL".to_string()
+            } else {
+                format!("{}", f)
+            }
+        }
+        QueryValue::Text(s) => format!("'{}'", s.replace('\'', "''")),
+        QueryValue::Bytes(b) => {
+            let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+            format!("X'{}'", hex)
+        }
+    }
+}
+
+/// Render a [`FilterExpr`] as a SQL `WHERE`-clause fragment.
+///
+/// The output is self-contained (no bind parameters) and can be embedded directly
+/// in any SQL `WHERE` clause across all SQL-based adapters.
+///
+/// # Example
+///
+/// ```ignore
+/// let sql = format!("DELETE FROM users WHERE {}", filter_to_sql(&filter));
+/// ```
+pub fn filter_to_sql(expr: &FilterExpr) -> String {
+    match expr {
+        FilterExpr::Eq(col, val) => format!("{} = {}", col, query_value_to_sql_literal(val)),
+        FilterExpr::Ne(col, val) => format!("{} <> {}", col, query_value_to_sql_literal(val)),
+        FilterExpr::Gt(col, val) => format!("{} > {}", col, query_value_to_sql_literal(val)),
+        FilterExpr::Gte(col, val) => format!("{} >= {}", col, query_value_to_sql_literal(val)),
+        FilterExpr::Lt(col, val) => format!("{} < {}", col, query_value_to_sql_literal(val)),
+        FilterExpr::Lte(col, val) => format!("{} <= {}", col, query_value_to_sql_literal(val)),
+        FilterExpr::In(col, vals) => {
+            let literals: Vec<String> = vals.iter().map(query_value_to_sql_literal).collect();
+            format!("{} IN ({})", col, literals.join(", "))
+        }
+        FilterExpr::IsNull(col) => format!("{} IS NULL", col),
+        FilterExpr::IsNotNull(col) => format!("{} IS NOT NULL", col),
+        FilterExpr::And(exprs) => {
+            if exprs.is_empty() {
+                "1=1".to_string()
+            } else {
+                let parts: Vec<String> = exprs.iter().map(filter_to_sql).collect();
+                format!("({})", parts.join(" AND "))
+            }
+        }
+        FilterExpr::Or(exprs) => {
+            if exprs.is_empty() {
+                "1=0".to_string()
+            } else {
+                let parts: Vec<String> = exprs.iter().map(filter_to_sql).collect();
+                format!("({})", parts.join(" OR "))
+            }
+        }
+        FilterExpr::Not(expr) => format!("NOT ({})", filter_to_sql(expr)),
     }
 }
 
@@ -227,6 +386,12 @@ pub struct TableInfo {
     pub name: String,
     pub schema: Option<String>,
     pub columns: Vec<ColumnInfo>,
+    /// Approximate row count (may be None if unavailable or not yet analyzed)
+    pub row_count: Option<i64>,
+    /// Total on-disk size in bytes including indexes (None for in-memory or unsupported)
+    pub size_bytes: Option<i64>,
+    /// Table creation timestamp as an ISO-8601 string (None if the DB does not track it)
+    pub created_at: Option<String>,
 }
 
 /// Column information
@@ -244,17 +409,6 @@ pub struct ColumnInfo {
 pub struct ServerInfo {
     pub version: String,
     pub server_type: String,
-    pub extra_info: HashMap<String, String>,
-}
-
-/// Database metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseMetadata {
-    pub name: String,
-    pub size_bytes: Option<i64>,
-    pub owner: Option<String>,
-    pub encoding: Option<String>,
-    pub created_at: Option<String>,
     pub extra_info: HashMap<String, String>,
 }
 
@@ -299,17 +453,6 @@ pub struct ProcedureInfo {
     pub schema: Option<String>,
     pub return_type: Option<String>,
     pub language: Option<String>,
-}
-
-/// Enhanced table metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TableMetadata {
-    pub name: String,
-    pub schema: Option<String>,
-    pub size_bytes: Option<i64>,
-    pub row_count: Option<i64>,
-    pub created_at: Option<String>,
-    pub table_type: Option<String>,
 }
 
 /// Trait for managing database connection lifecycle
@@ -475,20 +618,6 @@ impl<'a> AdapterMetadata<'a> {
         self.adapter.get_server_info().await
     }
 
-    /// Get metadata about a specific database
-    pub async fn get_database_metadata(&self, database_name: &str) -> Result<DatabaseMetadata> {
-        self.adapter.get_database_metadata(database_name).await
-    }
-
-    /// Get metadata about a specific table
-    pub async fn get_table_metadata(
-        &self,
-        table_name: &str,
-        schema: Option<&str>,
-    ) -> Result<TableMetadata> {
-        self.adapter.get_table_metadata(table_name, schema).await
-    }
-
     /// Get all indexes for a table
     pub async fn get_indexes(
         &self,
@@ -524,6 +653,34 @@ impl<'a> AdapterMetadata<'a> {
     /// List all stored procedures/functions in a schema
     pub async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         self.adapter.list_stored_procedures(schema).await
+    }
+
+    /// Search for tables whose names start with, contain, or end with `pattern`.
+    ///
+    /// The `pattern` is matched **literally**: SQL wildcard characters (`_` and `%`)
+    /// in the pattern are treated as ordinary characters, not wildcards.
+    ///
+    /// # Arguments
+    /// * `pattern` – the string fragment to search for (e.g. `"PS_"`)
+    /// * `schema`  – optional schema/owner filter (same as [`list_tables`](Self::list_tables))
+    /// * `mode`    – controls whether to match at the start, anywhere, or at the end
+    ///
+    /// # Examples
+    /// ```no_run
+    /// # async fn example(adapter: &dyn arni_data::DbAdapter) -> arni_data::Result<()> {
+    /// use arni_data::adapter::TableSearchMode;
+    /// let metadata = adapter.metadata();
+    /// // find all tables whose name starts with the literal string "PS_"
+    /// let tables = metadata.find_tables("PS_", None, TableSearchMode::StartsWith).await?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn find_tables(
+        &self,
+        pattern: &str,
+        schema: Option<&str>,
+        mode: TableSearchMode,
+    ) -> Result<Vec<String>> {
+        self.adapter.find_tables(pattern, schema, mode).await
     }
 }
 
@@ -688,6 +845,22 @@ pub trait DbAdapter: Send + Sync {
     /// List all tables in the current database
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>>;
 
+    /// Search for tables by name fragment.
+    ///
+    /// See [`AdapterMetadata::find_tables`] for the full contract and examples.
+    /// Adapters should escape `pattern` with [`escape_like_pattern`] before
+    /// embedding it in a `LIKE` expression.
+    async fn find_tables(
+        &self,
+        _pattern: &str,
+        _schema: Option<&str>,
+        _mode: TableSearchMode,
+    ) -> Result<Vec<String>> {
+        Err(crate::DataError::NotSupported(
+            "find_tables not implemented for this adapter".to_string(),
+        ))
+    }
+
     /// Get detailed information about a table
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo>;
 
@@ -700,36 +873,6 @@ pub trait DbAdapter: Send + Sync {
             version: "Unknown".to_string(),
             server_type: format!("{}", self.database_type()),
             extra_info: HashMap::new(),
-        })
-    }
-
-    /// Get metadata about a specific database
-    async fn get_database_metadata(&self, database_name: &str) -> Result<DatabaseMetadata> {
-        // Default implementation returns minimal info
-        Ok(DatabaseMetadata {
-            name: database_name.to_string(),
-            size_bytes: None,
-            owner: None,
-            encoding: None,
-            created_at: None,
-            extra_info: HashMap::new(),
-        })
-    }
-
-    /// Get metadata about a specific table
-    async fn get_table_metadata(
-        &self,
-        table_name: &str,
-        schema: Option<&str>,
-    ) -> Result<TableMetadata> {
-        // Default implementation returns minimal info
-        Ok(TableMetadata {
-            name: table_name.to_string(),
-            schema: schema.map(|s| s.to_string()),
-            size_bytes: None,
-            row_count: None,
-            created_at: None,
-            table_type: None,
         })
     }
 
@@ -796,11 +939,14 @@ pub trait DbAdapter: Send + Sync {
 
     /// Bulk update multiple rows efficiently
     ///
-    /// Returns the number of rows updated.
+    /// Each entry in `updates` is `(column_values, filter)` where `filter` selects the rows
+    /// to update. The adapter translates [`FilterExpr`] to its native query language.
+    ///
+    /// Returns the total number of rows updated.
     async fn bulk_update(
         &self,
         _table_name: &str,
-        _updates: &[(HashMap<String, QueryValue>, String)], // (column_values, where_clause)
+        _updates: &[(HashMap<String, QueryValue>, FilterExpr)],
         _schema: Option<&str>,
     ) -> Result<u64> {
         Err(crate::DataError::NotSupported(
@@ -810,11 +956,14 @@ pub trait DbAdapter: Send + Sync {
 
     /// Bulk delete multiple rows efficiently
     ///
-    /// Returns the number of rows deleted.
+    /// Each entry in `filters` selects a set of rows to delete. The adapter translates
+    /// each [`FilterExpr`] to its native query language.
+    ///
+    /// Returns the total number of rows deleted.
     async fn bulk_delete(
         &self,
         _table_name: &str,
-        _where_clauses: &[String],
+        _filters: &[FilterExpr],
         _schema: Option<&str>,
     ) -> Result<u64> {
         Err(crate::DataError::NotSupported(
@@ -996,6 +1145,9 @@ mod tests {
             name: "users".to_string(),
             schema: Some("public".to_string()),
             columns: vec![col.clone()],
+            row_count: Some(42),
+            size_bytes: Some(8192),
+            created_at: Some("2024-01-01T00:00:00".to_string()),
         };
         assert_eq!(table.name, "users");
         assert_eq!(table.schema.as_deref(), Some("public"));
@@ -1038,22 +1190,6 @@ mod tests {
         assert_eq!(info.extra_info.get("max_connections").unwrap(), "100");
         let cloned = info.clone();
         assert_eq!(cloned.server_type, info.server_type);
-    }
-
-    #[test]
-    fn test_database_metadata_construction() {
-        let meta = DatabaseMetadata {
-            name: "test_db".to_string(),
-            size_bytes: Some(1024 * 1024),
-            owner: Some("admin".to_string()),
-            encoding: Some("UTF8".to_string()),
-            created_at: None,
-            extra_info: HashMap::new(),
-        };
-        assert_eq!(meta.name, "test_db");
-        assert_eq!(meta.size_bytes, Some(1048576));
-        assert!(meta.created_at.is_none());
-        assert!(!format!("{:?}", meta).is_empty());
     }
 
     #[test]
@@ -1118,22 +1254,6 @@ mod tests {
         assert_eq!(proc.name, "get_user_count");
         assert_eq!(proc.language.as_deref(), Some("plpgsql"));
         assert!(!format!("{:?}", proc).is_empty());
-    }
-
-    #[test]
-    fn test_table_metadata_construction() {
-        let meta = TableMetadata {
-            name: "users".to_string(),
-            schema: Some("public".to_string()),
-            size_bytes: Some(8192),
-            row_count: Some(100),
-            created_at: Some("2024-01-01".to_string()),
-            table_type: Some("BASE TABLE".to_string()),
-        };
-        assert_eq!(meta.name, "users");
-        assert_eq!(meta.row_count, Some(100));
-        let cloned = meta.clone();
-        assert_eq!(cloned.size_bytes, meta.size_bytes);
     }
 
     #[test]
@@ -1375,5 +1495,137 @@ mod tests {
         // Disconnect again should be no-op
         conn.disconnect().await.unwrap();
         assert!(!conn.is_connected());
+    }
+
+    #[test]
+    fn test_query_value_to_sql_literal() {
+        assert_eq!(query_value_to_sql_literal(&QueryValue::Null), "NULL");
+        assert_eq!(query_value_to_sql_literal(&QueryValue::Bool(true)), "TRUE");
+        assert_eq!(query_value_to_sql_literal(&QueryValue::Bool(false)), "FALSE");
+        assert_eq!(query_value_to_sql_literal(&QueryValue::Int(42)), "42");
+        assert_eq!(query_value_to_sql_literal(&QueryValue::Float(3.14)), "3.14");
+        assert_eq!(
+            query_value_to_sql_literal(&QueryValue::Text("hello".to_string())),
+            "'hello'"
+        );
+        // Single quotes inside strings are escaped
+        assert_eq!(
+            query_value_to_sql_literal(&QueryValue::Text("it's".to_string())),
+            "'it''s'"
+        );
+        // NaN becomes NULL
+        assert_eq!(
+            query_value_to_sql_literal(&QueryValue::Float(f64::NAN)),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_filter_to_sql_simple() {
+        assert_eq!(
+            filter_to_sql(&FilterExpr::Eq("id".to_string(), QueryValue::Int(5))),
+            "id = 5"
+        );
+        assert_eq!(
+            filter_to_sql(&FilterExpr::Ne("status".to_string(), QueryValue::Text("x".to_string()))),
+            "status <> 'x'"
+        );
+        assert_eq!(
+            filter_to_sql(&FilterExpr::IsNull("email".to_string())),
+            "email IS NULL"
+        );
+        assert_eq!(
+            filter_to_sql(&FilterExpr::IsNotNull("email".to_string())),
+            "email IS NOT NULL"
+        );
+    }
+
+    #[test]
+    fn test_filter_to_sql_in() {
+        let f = FilterExpr::In(
+            "id".to_string(),
+            vec![QueryValue::Int(1), QueryValue::Int(2), QueryValue::Int(3)],
+        );
+        assert_eq!(filter_to_sql(&f), "id IN (1, 2, 3)");
+    }
+
+    #[test]
+    fn test_filter_to_sql_compound() {
+        let f = FilterExpr::And(vec![
+            FilterExpr::Gt("score".to_string(), QueryValue::Int(0)),
+            FilterExpr::Lte("score".to_string(), QueryValue::Int(100)),
+        ]);
+        assert_eq!(filter_to_sql(&f), "(score > 0 AND score <= 100)");
+
+        let f = FilterExpr::Or(vec![
+            FilterExpr::Eq("a".to_string(), QueryValue::Bool(true)),
+            FilterExpr::Eq("b".to_string(), QueryValue::Bool(true)),
+        ]);
+        assert_eq!(filter_to_sql(&f), "(a = TRUE OR b = TRUE)");
+
+        let f = FilterExpr::Not(Box::new(FilterExpr::IsNull("x".to_string())));
+        assert_eq!(filter_to_sql(&f), "NOT (x IS NULL)");
+    }
+
+    #[test]
+    fn test_filter_to_sql_empty_and_or() {
+        assert_eq!(filter_to_sql(&FilterExpr::And(vec![])), "1=1");
+        assert_eq!(filter_to_sql(&FilterExpr::Or(vec![])), "1=0");
+    }
+
+    // ── escape_like_pattern ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_escape_like_plain_string_unchanged() {
+        assert_eq!(escape_like_pattern("hello"), "hello");
+        assert_eq!(escape_like_pattern("TABLE_NAME"), "TABLE\\_NAME");
+    }
+
+    #[test]
+    fn test_escape_like_underscore_escaped() {
+        // "PS_" must become "PS\_" so SQL LIKE treats _ as a literal character
+        assert_eq!(escape_like_pattern("PS_"), "PS\\_");
+    }
+
+    #[test]
+    fn test_escape_like_percent_escaped() {
+        assert_eq!(escape_like_pattern("50%"), "50\\%");
+    }
+
+    #[test]
+    fn test_escape_like_mixed_pattern() {
+        // "PS_%_data" -> "PS\_%\_data"
+        assert_eq!(escape_like_pattern("PS_%_data"), "PS\\_\\%\\_data");
+    }
+
+    #[test]
+    fn test_escape_like_backslash_escaped() {
+        // An existing backslash must also be escaped so it doesn't become a spurious escape char
+        assert_eq!(escape_like_pattern("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn test_escape_like_empty_string() {
+        assert_eq!(escape_like_pattern(""), "");
+    }
+
+    #[test]
+    fn test_escape_like_multiple_underscores() {
+        assert_eq!(escape_like_pattern("__"), "\\_\\_");
+    }
+
+    // ── TableSearchMode ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_table_search_mode_debug() {
+        assert_eq!(format!("{:?}", TableSearchMode::StartsWith), "StartsWith");
+        assert_eq!(format!("{:?}", TableSearchMode::Contains), "Contains");
+        assert_eq!(format!("{:?}", TableSearchMode::EndsWith), "EndsWith");
+    }
+
+    #[test]
+    fn test_table_search_mode_eq() {
+        assert_eq!(TableSearchMode::StartsWith, TableSearchMode::StartsWith);
+        assert_ne!(TableSearchMode::StartsWith, TableSearchMode::Contains);
     }
 }

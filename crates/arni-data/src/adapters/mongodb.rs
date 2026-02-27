@@ -1,12 +1,13 @@
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, ServerInfo,
-    TableInfo, ViewInfo,
+    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
+    ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 use async_trait::async_trait;
+use regex::Regex;
 use mongodb::{
-    bson::{doc, Bson, Document},
+    bson::{doc, spec::BinarySubtype, Binary, Bson, Document},
     options::ClientOptions,
     Client,
 };
@@ -221,45 +222,55 @@ impl ConnectionTrait for MongoDbAdapter {
 
                 if error_msg.contains("authentication failed") || error_msg.contains("auth failed")
                 {
-                    DataError::Connection(format!(
+                    let err = DataError::Authentication(format!(
                         "Authentication failed for database '{}' at {}:{} - {}",
                         self.config.database,
                         self.config.host.as_deref().unwrap_or("localhost"),
                         self.config.port.unwrap_or(27017),
                         e
-                    ))
+                    ));
+                    error!(error = %err, "MongoDB authentication failed");
+                    err
                 } else if error_msg.contains("connection refused")
                     || error_msg.contains("No connection available")
                 {
-                    DataError::Connection(format!(
+                    let err = DataError::Connection(format!(
                         "Network error connecting to MongoDB at {}:{} - {}",
                         self.config.host.as_deref().unwrap_or("localhost"),
                         self.config.port.unwrap_or(27017),
                         e
-                    ))
+                    ));
+                    error!(error = %err, "MongoDB network error");
+                    err
                 } else if error_msg.contains("not master") || error_msg.contains("replica set") {
-                    DataError::Connection(format!(
+                    let err = DataError::Connection(format!(
                         "Replica set configuration issue at {}:{} - {}",
                         self.config.host.as_deref().unwrap_or("localhost"),
                         self.config.port.unwrap_or(27017),
                         e
-                    ))
+                    ));
+                    error!(error = %err, "MongoDB replica set error");
+                    err
                 } else if error_msg.contains("unauthorized") {
-                    DataError::Connection(format!(
+                    let err = DataError::Authentication(format!(
                         "Unauthorized access to database '{}' at {}:{} - {}",
                         self.config.database,
                         self.config.host.as_deref().unwrap_or("localhost"),
                         self.config.port.unwrap_or(27017),
                         e
-                    ))
+                    ));
+                    error!(error = %err, "MongoDB unauthorized access");
+                    err
                 } else {
-                    DataError::Connection(format!(
+                    let err = DataError::Connection(format!(
                         "Failed to connect to database '{}' at {}:{} - {}",
                         self.config.database,
                         self.config.host.as_deref().unwrap_or("localhost"),
                         self.config.port.unwrap_or(27017),
                         e
-                    ))
+                    ));
+                    error!(error = %err, "MongoDB connection failed");
+                    err
                 }
             })?;
 
@@ -469,6 +480,7 @@ impl DbAdapter for MongoDbAdapter {
         }
     }
 
+    #[instrument(skip(self, _df), fields(adapter = "mongodb", collection = %_table_name))]
     async fn export_dataframe(
         &self,
         _df: &DataFrame,
@@ -481,6 +493,7 @@ impl DbAdapter for MongoDbAdapter {
         ))
     }
 
+    #[instrument(skip(self), fields(adapter = "mongodb", collection = %_table_name))]
     async fn read_table(
         &self,
         _table_name: &str,
@@ -501,40 +514,116 @@ impl DbAdapter for MongoDbAdapter {
         AdapterMetadata::new(self)
     }
 
+    #[instrument(skip(self, columns, rows), fields(adapter = "mongodb", table = %table_name, row_count = rows.len()))]
     async fn bulk_insert(
         &self,
-        _table_name: &str,
-        _columns: &[String],
-        _rows: &[Vec<QueryValue>],
+        table_name: &str,
+        columns: &[String],
+        rows: &[Vec<QueryValue>],
         _schema: Option<&str>,
     ) -> Result<u64, DataError> {
-        Err(DataError::NotSupported(
-            "bulk_insert not yet implemented for MongoDB".to_string(),
-        ))
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+        let db_name = self.current_database.as_deref().unwrap_or("test");
+        let collection = client
+            .database(db_name)
+            .collection::<Document>(table_name);
+
+        let docs: Vec<Document> = rows
+            .iter()
+            .map(|row| {
+                let mut doc = Document::new();
+                for (col, val) in columns.iter().zip(row.iter()) {
+                    doc.insert(col.clone(), mongo_value_to_bson(val));
+                }
+                doc
+            })
+            .collect();
+
+        let count = docs.len() as u64;
+        collection
+            .insert_many(docs, None)
+            .await
+            .map_err(|e| DataError::Query(format!("bulk_insert failed: {}", e)))?;
+        Ok(count)
     }
 
+    #[instrument(skip(self, updates), fields(adapter = "mongodb", table = %table_name))]
     async fn bulk_update(
         &self,
-        _table_name: &str,
-        _updates: &[(HashMap<String, QueryValue>, String)],
+        table_name: &str,
+        updates: &[(HashMap<String, QueryValue>, FilterExpr)],
         _schema: Option<&str>,
     ) -> Result<u64, DataError> {
-        Err(DataError::NotSupported(
-            "bulk_update not yet implemented for MongoDB".to_string(),
-        ))
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+        let db_name = self.current_database.as_deref().unwrap_or("test");
+        let collection = client
+            .database(db_name)
+            .collection::<Document>(table_name);
+
+        let mut total: u64 = 0;
+        for (set_values, filter) in updates {
+            if set_values.is_empty() {
+                continue;
+            }
+            let filter_doc = mongo_filter_to_bson(filter);
+            let mut set_doc = Document::new();
+            for (col, val) in set_values {
+                set_doc.insert(col.clone(), mongo_value_to_bson(val));
+            }
+            let update = doc! { "$set": set_doc };
+            let result = collection
+                .update_many(filter_doc, update, None)
+                .await
+                .map_err(|e| DataError::Query(format!("bulk_update failed: {}", e)))?;
+            total += result.modified_count;
+        }
+        Ok(total)
     }
 
+    #[instrument(skip(self, filters), fields(adapter = "mongodb", table = %table_name))]
     async fn bulk_delete(
         &self,
-        _table_name: &str,
-        _where_clauses: &[String],
+        table_name: &str,
+        filters: &[FilterExpr],
         _schema: Option<&str>,
     ) -> Result<u64, DataError> {
-        Err(DataError::NotSupported(
-            "bulk_delete not yet implemented for MongoDB".to_string(),
-        ))
+        if filters.is_empty() {
+            return Ok(0);
+        }
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+        let db_name = self.current_database.as_deref().unwrap_or("test");
+        let collection = client
+            .database(db_name)
+            .collection::<Document>(table_name);
+
+        let mut total: u64 = 0;
+        for filter in filters {
+            let filter_doc = mongo_filter_to_bson(filter);
+            let result = collection
+                .delete_many(filter_doc, None)
+                .await
+                .map_err(|e| DataError::Query(format!("bulk_delete failed: {}", e)))?;
+            total += result.deleted_count;
+        }
+        Ok(total)
     }
 
+    #[instrument(skip(self), fields(adapter = "mongodb"))]
     async fn get_server_info(&self) -> Result<ServerInfo, DataError> {
         let client = self
             .client
@@ -575,6 +664,7 @@ impl DbAdapter for MongoDbAdapter {
         })
     }
 
+    #[instrument(skip(self), fields(adapter = "mongodb"))]
     async fn list_databases(&self) -> Result<Vec<String>, DataError> {
         let client = self
             .client
@@ -589,6 +679,7 @@ impl DbAdapter for MongoDbAdapter {
         Ok(db_names)
     }
 
+    #[instrument(skip(self), fields(adapter = "mongodb"))]
     async fn list_tables(&self, _schema: Option<&str>) -> Result<Vec<String>, DataError> {
         let client = self
             .client
@@ -609,6 +700,47 @@ impl DbAdapter for MongoDbAdapter {
         Ok(collections)
     }
 
+    #[instrument(skip(self), fields(adapter = "mongodb", pattern = %pattern, mode = ?mode))]
+    async fn find_tables(
+        &self,
+        pattern: &str,
+        _schema: Option<&str>,
+        mode: TableSearchMode,
+    ) -> Result<Vec<String>, DataError> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+
+        let db_name = self
+            .current_database
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("No database selected".to_string()))?;
+
+        // Use regex::escape so literal "PS_" is not treated as a regex wildcard
+        let escaped = regex::escape(pattern);
+        let regex_pattern = match mode {
+            TableSearchMode::StartsWith => format!("^{}", escaped),
+            TableSearchMode::Contains => escaped,
+            TableSearchMode::EndsWith => format!("{}$", escaped),
+        };
+
+        let re = Regex::new(&regex_pattern).map_err(|e| {
+            DataError::Query(format!("Invalid regex pattern '{}': {}", regex_pattern, e))
+        })?;
+
+        let db = client.database(db_name);
+        let collections = db
+            .list_collection_names(None)
+            .await
+            .map_err(|e| DataError::Query(format!("Failed to list collections: {}", e)))?;
+
+        let matched: Vec<String> = collections.into_iter().filter(|c| re.is_match(c)).collect();
+        info!(count = matched.len(), "Found collections by pattern");
+        Ok(matched)
+    }
+
+    #[instrument(skip(self), fields(adapter = "mongodb", table = %table_name, schema = ?_schema))]
     async fn describe_table(
         &self,
         table_name: &str,
@@ -669,10 +801,19 @@ impl DbAdapter for MongoDbAdapter {
             })
             .collect();
 
+        let row_count = collection
+            .count_documents(None, None)
+            .await
+            .ok()
+            .map(|n| n as i64);
+
         Ok(TableInfo {
             name: table_name.to_string(),
             schema: None,
             columns,
+            row_count,
+            size_bytes: None,
+            created_at: None,
         })
     }
 
@@ -761,6 +902,66 @@ impl DbAdapter for MongoDbAdapter {
         // MongoDB doesn't have stored procedures in the traditional sense
         // It has server-side JavaScript functions, but they're less common
         Ok(Vec::new())
+    }
+}
+
+/// Convert a [`QueryValue`] to a BSON [`Bson`] value.
+fn mongo_value_to_bson(val: &QueryValue) -> Bson {
+    match val {
+        QueryValue::Null => Bson::Null,
+        QueryValue::Bool(b) => Bson::Boolean(*b),
+        QueryValue::Int(i) => Bson::Int64(*i),
+        QueryValue::Float(f) => Bson::Double(*f),
+        QueryValue::Text(s) => Bson::String(s.clone()),
+        QueryValue::Bytes(b) => Bson::Binary(Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: b.clone(),
+        }),
+    }
+}
+
+/// Translate a [`FilterExpr`] to a MongoDB BSON filter document.
+fn mongo_filter_to_bson(expr: &FilterExpr) -> Document {
+    match expr {
+        FilterExpr::Eq(col, val) => doc! { col: mongo_value_to_bson(val) },
+        FilterExpr::Ne(col, val) => doc! { col: { "$ne": mongo_value_to_bson(val) } },
+        FilterExpr::Gt(col, val) => doc! { col: { "$gt": mongo_value_to_bson(val) } },
+        FilterExpr::Gte(col, val) => doc! { col: { "$gte": mongo_value_to_bson(val) } },
+        FilterExpr::Lt(col, val) => doc! { col: { "$lt": mongo_value_to_bson(val) } },
+        FilterExpr::Lte(col, val) => doc! { col: { "$lte": mongo_value_to_bson(val) } },
+        FilterExpr::In(col, vals) => {
+            let bson_vals: Vec<Bson> = vals.iter().map(mongo_value_to_bson).collect();
+            doc! { col: { "$in": bson_vals } }
+        }
+        FilterExpr::IsNull(col) => doc! { col: Bson::Null },
+        FilterExpr::IsNotNull(col) => doc! { col: { "$ne": Bson::Null } },
+        FilterExpr::And(exprs) => {
+            if exprs.is_empty() {
+                doc! {}
+            } else {
+                let docs: Vec<Bson> = exprs
+                    .iter()
+                    .map(|e| Bson::Document(mongo_filter_to_bson(e)))
+                    .collect();
+                doc! { "$and": docs }
+            }
+        }
+        FilterExpr::Or(exprs) => {
+            if exprs.is_empty() {
+                // Always-false: match nothing via impossible condition
+                doc! { "$nor": [Bson::Document(doc! {})] }
+            } else {
+                let docs: Vec<Bson> = exprs
+                    .iter()
+                    .map(|e| Bson::Document(mongo_filter_to_bson(e)))
+                    .collect();
+                doc! { "$or": docs }
+            }
+        }
+        FilterExpr::Not(expr) => {
+            // $nor with a single element is equivalent to NOT
+            doc! { "$nor": [Bson::Document(mongo_filter_to_bson(expr))] }
+        }
     }
 }
 
@@ -863,5 +1064,35 @@ mod tests {
         config.username = None;
         let uri = MongoDbAdapter::build_connection_string(&config, None);
         assert_eq!(uri, "mongodb://localhost:27017");
+    }
+
+    /// Verify that regex::escape treats "PS_" as a literal string (underscore is not special in regex)
+    /// but the StartsWith pattern anchors with ^ so "PSA" does NOT match "^PS_".
+    #[test]
+    fn test_find_tables_regex_starts_with_no_match() {
+        let escaped = regex::escape("PS_");
+        let pattern = format!("^{}", escaped);
+        let re = Regex::new(&pattern).unwrap();
+        // "PS_" as literal: "^PS_" requires the string to start with literal "PS_"
+        assert!(!re.is_match("PSA"), "PSA should not match ^PS_ (underscore is literal)");
+        assert!(re.is_match("PS_TABLE"), "PS_TABLE should match ^PS_");
+        assert!(re.is_match("PS_"), "PS_ itself should match ^PS_");
+    }
+
+    #[test]
+    fn test_find_tables_regex_contains_matches() {
+        let escaped = regex::escape("PS_");
+        let re = Regex::new(&escaped).unwrap();
+        assert!(re.is_match("DATA_PS_COL"), "DATA_PS_COL should match PS_");
+        assert!(!re.is_match("PSA"), "PSA should not match PS_");
+    }
+
+    #[test]
+    fn test_find_tables_regex_ends_with() {
+        let escaped = regex::escape("PS_");
+        let pattern = format!("{}$", escaped);
+        let re = Regex::new(&pattern).unwrap();
+        assert!(re.is_match("DATA_PS_"), "DATA_PS_ should match PS_$");
+        assert!(!re.is_match("DATA_PS_X"), "DATA_PS_X should not match PS_$");
     }
 }

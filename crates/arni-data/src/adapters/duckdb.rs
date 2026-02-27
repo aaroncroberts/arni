@@ -1,7 +1,7 @@
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, ServerInfo,
-    TableInfo, ViewInfo,
+    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
+    ServerInfo, TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -503,6 +503,7 @@ impl DbAdapter for DuckDbAdapter {
         self.execute_query_blocking(query.to_string()).await
     }
 
+    #[instrument(skip(self, df), fields(adapter = "duckdb", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
         df: &DataFrame,
@@ -511,6 +512,7 @@ impl DbAdapter for DuckDbAdapter {
         replace: bool,
     ) -> Result<u64> {
         if !ConnectionTrait::is_connected(self) {
+            error!("duckdb connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -574,6 +576,7 @@ impl DbAdapter for DuckDbAdapter {
         Ok(rows_inserted)
     }
 
+    #[instrument(skip(self), fields(adapter = "duckdb", table = %table_name))]
     async fn read_table(&self, table_name: &str, _schema: Option<&str>) -> Result<DataFrame> {
         let query = format!("SELECT * FROM {}", table_name);
         let result = self.execute_query(&query).await?;
@@ -589,6 +592,7 @@ impl DbAdapter for DuckDbAdapter {
         AdapterMetadata::new(self)
     }
 
+    #[instrument(skip(self, columns, rows), fields(adapter = "duckdb", table = %table_name, row_count = rows.len()))]
     async fn bulk_insert(
         &self,
         table_name: &str,
@@ -603,6 +607,7 @@ impl DbAdapter for DuckDbAdapter {
             return Ok(0);
         }
         if !ConnectionTrait::is_connected(self) {
+            error!("duckdb connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -648,16 +653,18 @@ impl DbAdapter for DuckDbAdapter {
         Ok(total_inserted)
     }
 
+    #[instrument(skip(self, updates), fields(adapter = "duckdb", table = %table_name))]
     async fn bulk_update(
         &self,
         table_name: &str,
-        updates: &[(HashMap<String, QueryValue>, String)],
+        updates: &[(HashMap<String, QueryValue>, FilterExpr)],
         _schema: Option<&str>,
     ) -> Result<u64> {
         if updates.is_empty() {
             return Ok(0);
         }
         if !ConnectionTrait::is_connected(self) {
+            error!("duckdb connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -665,8 +672,8 @@ impl DbAdapter for DuckDbAdapter {
 
         let mut total_affected = 0u64;
 
-        for (set_values, where_clause) in updates {
-            if set_values.is_empty() || where_clause.trim().is_empty() {
+        for (set_values, filter) in updates {
+            if set_values.is_empty() {
                 continue;
             }
             let set_clause: String = set_values
@@ -674,8 +681,12 @@ impl DbAdapter for DuckDbAdapter {
                 .map(|(col, val)| format!("{} = {}", col, Self::query_value_to_sql_literal(val)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let update_sql =
-                format!("UPDATE {} SET {} WHERE {}", table_name, set_clause, where_clause);
+            let update_sql = format!(
+                "UPDATE {} SET {} WHERE {}",
+                table_name,
+                set_clause,
+                filter_to_sql(filter)
+            );
             let rows_affected = self.execute_statement_blocking(update_sql).await?;
             total_affected += rows_affected;
         }
@@ -683,16 +694,18 @@ impl DbAdapter for DuckDbAdapter {
         Ok(total_affected)
     }
 
+    #[instrument(skip(self, filters), fields(adapter = "duckdb", table = %table_name))]
     async fn bulk_delete(
         &self,
         table_name: &str,
-        where_clauses: &[String],
+        filters: &[FilterExpr],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        if where_clauses.is_empty() {
+        if filters.is_empty() {
             return Ok(0);
         }
         if !ConnectionTrait::is_connected(self) {
+            error!("duckdb connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -700,11 +713,12 @@ impl DbAdapter for DuckDbAdapter {
 
         let mut total_affected = 0u64;
 
-        for where_clause in where_clauses {
-            if where_clause.trim().is_empty() {
-                continue;
-            }
-            let delete_sql = format!("DELETE FROM {} WHERE {}", table_name, where_clause);
+        for filter in filters {
+            let delete_sql = format!(
+                "DELETE FROM {} WHERE {}",
+                table_name,
+                filter_to_sql(filter)
+            );
             let rows_affected = self.execute_statement_blocking(delete_sql).await?;
             total_affected += rows_affected;
         }
@@ -712,18 +726,19 @@ impl DbAdapter for DuckDbAdapter {
         Ok(total_affected)
     }
 
+    #[instrument(skip(self), fields(adapter = "duckdb"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
-        let query = "SELECT library_version() as version";
-        let result = self.execute_query_blocking(query.to_string()).await?;
-
-        let version = if let Some(row) = result.rows.first() {
-            if let Some(QueryValue::Text(v)) = row.first() {
-                v.clone()
-            } else {
+        // Read the bundled DuckDB version directly from the C library — avoids any
+        // SQL compatibility issues across DuckDB engine versions.
+        let version = unsafe {
+            let ptr = duckdb::ffi::duckdb_library_version();
+            if ptr.is_null() {
                 "unknown".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(ptr)
+                    .to_string_lossy()
+                    .into_owned()
             }
-        } else {
-            "unknown".to_string()
         };
 
         let mut extra_info = HashMap::new();
@@ -736,6 +751,7 @@ impl DbAdapter for DuckDbAdapter {
         })
     }
 
+    #[instrument(skip(self), fields(adapter = "duckdb"))]
     async fn list_databases(&self) -> Result<Vec<String>> {
         // DuckDB can attach multiple databases
         let query = "SELECT database_name FROM duckdb_databases()";
@@ -756,6 +772,7 @@ impl DbAdapter for DuckDbAdapter {
         Ok(databases)
     }
 
+    #[instrument(skip(self), fields(adapter = "duckdb", schema = ?schema))]
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
         let query = if let Some(schema_name) = schema {
             format!(
@@ -784,6 +801,47 @@ impl DbAdapter for DuckDbAdapter {
         Ok(tables)
     }
 
+    #[instrument(skip(self), fields(adapter = "duckdb", pattern = %pattern, mode = ?mode, schema = ?schema))]
+    async fn find_tables(
+        &self,
+        pattern: &str,
+        schema: Option<&str>,
+        mode: TableSearchMode,
+    ) -> Result<Vec<String>> {
+        let escaped = escape_like_pattern(pattern);
+        let like_pattern = match mode {
+            TableSearchMode::StartsWith => format!("{}%", escaped),
+            TableSearchMode::Contains => format!("%{}%", escaped),
+            TableSearchMode::EndsWith => format!("%{}", escaped),
+        };
+        // Escape single quotes for safe inline SQL formatting
+        let safe_pattern = like_pattern.replace('\'', "''");
+        let schema_name = schema.unwrap_or("main");
+
+        let query = format!(
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = '{}' AND table_name LIKE '{}' ESCAPE '\\' \
+             ORDER BY table_name",
+            schema_name, safe_pattern
+        );
+
+        let result = self.execute_query_blocking(query).await?;
+        let tables = result
+            .rows
+            .iter()
+            .filter_map(|row| {
+                if let Some(QueryValue::Text(name)) = row.first() {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok(tables)
+    }
+
+    #[instrument(skip(self), fields(adapter = "duckdb", table = %table_name, schema = ?schema))]
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
         let schema_name = schema.unwrap_or("main");
         let query = format!(
@@ -825,10 +883,25 @@ impl DbAdapter for DuckDbAdapter {
             })
             .collect();
 
+        // Row count via COUNT(*); size and creation time are not tracked for in-memory tables
+        let count_query = format!("SELECT COUNT(*) FROM \"{}\".\"{}\"", schema_name, table_name);
+        let row_count = self
+            .execute_query_blocking(count_query)
+            .await
+            .ok()
+            .and_then(|r| r.rows.into_iter().next())
+            .and_then(|row| match row.into_iter().next() {
+                Some(QueryValue::Int(n)) => Some(n),
+                _ => None,
+            });
+
         Ok(TableInfo {
             name: table_name.to_string(),
             schema: Some(schema_name.to_string()),
             columns,
+            row_count,
+            size_bytes: None,
+            created_at: None,
         })
     }
 
@@ -1121,5 +1194,23 @@ mod tests {
             DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Date),
             "VARCHAR"
         );
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_starts_with() {
+        let like_pattern = format!("{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_contains() {
+        let like_pattern = format!("%{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_ends_with() {
+        let like_pattern = format!("%{}", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_");
     }
 }

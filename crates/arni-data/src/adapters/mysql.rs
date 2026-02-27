@@ -44,8 +44,9 @@
 //! ```
 
 use crate::adapter::{
-    AdapterMetadata, ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter,
-    ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, TableInfo, ViewInfo,
+    AdapterMetadata, ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter, FilterExpr,
+    ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo,
+    TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -500,6 +501,7 @@ impl Connection for MySqlAdapter {
         // Check internal state first
         if !*self.connected.read().await {
             warn!("Health check failed: not connected");
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -622,6 +624,7 @@ impl DbAdapter for MySqlAdapter {
         self.execute_query(query).await
     }
 
+    #[instrument(skip(self, df), fields(adapter = "mysql", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
         df: &DataFrame,
@@ -631,6 +634,7 @@ impl DbAdapter for MySqlAdapter {
     ) -> Result<u64> {
         // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -702,9 +706,11 @@ impl DbAdapter for MySqlAdapter {
     // ===== Schema Discovery =====
     // These methods will be implemented in arni-8b0.1.4
 
+    #[instrument(skip(self), fields(adapter = "mysql"))]
     async fn list_databases(&self) -> Result<Vec<String>> {
         // Check connection
         if !Connection::is_connected(self) {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -728,9 +734,11 @@ impl DbAdapter for MySqlAdapter {
         Ok(databases)
     }
 
+    #[instrument(skip(self), fields(adapter = "mysql", schema = ?schema))]
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
         // Check connection
         if !Connection::is_connected(self) {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -781,9 +789,65 @@ impl DbAdapter for MySqlAdapter {
         Ok(tables)
     }
 
+    #[instrument(skip(self), fields(adapter = "mysql", pattern = %pattern, mode = ?mode, schema = ?schema))]
+    async fn find_tables(
+        &self,
+        pattern: &str,
+        schema: Option<&str>,
+        mode: TableSearchMode,
+    ) -> Result<Vec<String>> {
+        if !Connection::is_connected(self) {
+            error!("mysql find tables error - not connected");
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+
+        // Resolve schema_name the same way as list_tables
+        let schema_name = if let Some(s) = schema {
+            s.to_string()
+        } else {
+            let result: (Option<String>,) = sqlx::query_as("SELECT DATABASE()")
+                .fetch_one(pool)
+                .await
+                .map_err(|e| DataError::Query(format!("Failed to get current database: {}", e)))?;
+            result.0.ok_or_else(|| {
+                DataError::Query("No database selected. Specify schema parameter.".to_string())
+            })?
+        };
+
+        let escaped = escape_like_pattern(pattern);
+        let like_pattern = match mode {
+            TableSearchMode::StartsWith => format!("{}%", escaped),
+            TableSearchMode::Contains => format!("%{}%", escaped),
+            TableSearchMode::EndsWith => format!("%{}", escaped),
+        };
+
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT TABLE_NAME FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' \
+             AND TABLE_NAME LIKE ? ESCAPE '\\' \
+             ORDER BY TABLE_NAME",
+        )
+        .bind(&schema_name)
+        .bind(&like_pattern)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| DataError::Query(format!("Failed to find tables: {}", e)))?;
+
+        Ok(rows.into_iter().map(|(name,)| name).collect())
+    }
+
+    #[instrument(skip(self), fields(adapter = "mysql", table = %table_name, schema = ?schema))]
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
         // Check connection
         if !Connection::is_connected(self) {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -829,6 +893,7 @@ impl DbAdapter for MySqlAdapter {
                 .map_err(|e| DataError::Query(format!("Failed to describe table: {}", e)))?;
 
         if rows.is_empty() {
+            error!("mysql query failed - not connected");
             return Err(DataError::Query(format!(
                 "Table '{}.{}' not found",
                 schema_name, table_name
@@ -849,10 +914,33 @@ impl DbAdapter for MySqlAdapter {
             )
             .collect();
 
+        // Fetch row count, total size, and creation time from information_schema
+        let stats_query = "
+            SELECT table_rows,
+                   data_length + index_length,
+                   DATE_FORMAT(create_time, '%Y-%m-%dT%H:%i:%s')
+            FROM information_schema.TABLES
+            WHERE table_schema = ? AND table_name = ?
+        ";
+        let stats: Option<(Option<i64>, Option<i64>, Option<String>)> =
+            sqlx::query_as(stats_query)
+                .bind(&schema_name)
+                .bind(table_name)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+        let (row_count, size_bytes, created_at) = stats
+            .map(|(rc, sz, ca)| (rc, sz, ca))
+            .unwrap_or((None, None, None));
+
         Ok(TableInfo {
             name: table_name.to_string(),
             schema: Some(schema_name),
             columns,
+            row_count,
+            size_bytes,
+            created_at,
         })
     }
 
@@ -861,6 +949,7 @@ impl DbAdapter for MySqlAdapter {
     async fn get_indexes(&self, table_name: &str, _schema: Option<&str>) -> Result<Vec<IndexInfo>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -925,6 +1014,7 @@ impl DbAdapter for MySqlAdapter {
     ) -> Result<Vec<ForeignKeyInfo>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -999,6 +1089,7 @@ impl DbAdapter for MySqlAdapter {
     async fn get_views(&self, _schema: Option<&str>) -> Result<Vec<ViewInfo>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1041,6 +1132,7 @@ impl DbAdapter for MySqlAdapter {
     ) -> Result<Option<String>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1052,8 +1144,10 @@ impl DbAdapter for MySqlAdapter {
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
+        // LONGTEXT columns in INFORMATION_SCHEMA come back as bytes on MySQL 8;
+        // CAST to CHAR forces VARCHAR so sqlx can decode them as String.
         let query = "
-            SELECT VIEW_DEFINITION
+            SELECT CAST(VIEW_DEFINITION AS CHAR) AS view_def
             FROM INFORMATION_SCHEMA.VIEWS
             WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE()
         ";
@@ -1069,12 +1163,13 @@ impl DbAdapter for MySqlAdapter {
                 ))
             })?;
 
-        Ok(result.and_then(|row| row.try_get("VIEW_DEFINITION").ok()))
+        Ok(result.and_then(|row| row.try_get("view_def").ok()))
     }
 
     async fn list_stored_procedures(&self, _schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1114,8 +1209,35 @@ impl DbAdapter for MySqlAdapter {
         Ok(procedures)
     }
 
+    #[instrument(skip(self), fields(adapter = "mysql"))]
+    async fn get_server_info(&self) -> Result<ServerInfo> {
+        if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        let row = sqlx::query("SELECT VERSION() AS version")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| DataError::Query(format!("Failed to get server info: {}", e)))?;
+        let version: String = row
+            .try_get("version")
+            .unwrap_or_else(|_| "Unknown".to_string());
+        Ok(ServerInfo {
+            version,
+            server_type: "MySQL".to_string(),
+            extra_info: HashMap::new(),
+        })
+    }
+
     // ===== Bulk Operations =====
 
+    #[instrument(skip(self, columns, rows), fields(adapter = "mysql", table = %table_name, row_count = rows.len()))]
     async fn bulk_insert(
         &self,
         table_name: &str,
@@ -1133,6 +1255,7 @@ impl DbAdapter for MySqlAdapter {
 
         // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1198,24 +1321,24 @@ impl DbAdapter for MySqlAdapter {
         Ok(result.rows_affected())
     }
 
+    #[instrument(skip(self, updates), fields(adapter = "mysql", table = %table_name))]
     async fn bulk_update(
         &self,
         table_name: &str,
-        updates: &[(HashMap<String, QueryValue>, String)],
+        updates: &[(HashMap<String, QueryValue>, FilterExpr)],
         schema: Option<&str>,
     ) -> Result<u64> {
         if updates.is_empty() {
             return Ok(0);
         }
 
-        // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
-        // Get pool
         let pool_guard = self.pool.read().await;
         let pool = pool_guard
             .as_ref()
@@ -1224,13 +1347,12 @@ impl DbAdapter for MySqlAdapter {
         let schema_prefix = schema.map(|s| format!("{}.", s)).unwrap_or_default();
         let mut total_affected = 0u64;
 
-        // Execute each update in a batch
-        for (set_clauses, where_clause) in updates {
+        for (set_clauses, filter) in updates {
             if set_clauses.is_empty() {
                 continue;
             }
 
-            // Build SET clause with placeholders
+            // SET uses parameterized ? placeholders; WHERE uses typed FilterExpr literal
             let set_parts: Vec<String> = set_clauses
                 .keys()
                 .map(|column| format!("{} = ?", column))
@@ -1241,12 +1363,10 @@ impl DbAdapter for MySqlAdapter {
                 schema_prefix,
                 table_name,
                 set_parts.join(", "),
-                where_clause
+                filter_to_sql(filter)
             );
 
-            // Bind parameters
             let mut query_builder = sqlx::query(&query);
-
             for value in set_clauses.values() {
                 query_builder = match value {
                     QueryValue::Null => query_builder.bind(None::<String>),
@@ -1271,24 +1391,24 @@ impl DbAdapter for MySqlAdapter {
         Ok(total_affected)
     }
 
+    #[instrument(skip(self, filters), fields(adapter = "mysql", table = %table_name))]
     async fn bulk_delete(
         &self,
         table_name: &str,
-        where_clauses: &[String],
+        filters: &[FilterExpr],
         schema: Option<&str>,
     ) -> Result<u64> {
-        if where_clauses.is_empty() {
+        if filters.is_empty() {
             return Ok(0);
         }
 
-        // Check connection
         if !*self.connected.read().await {
+            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
-        // Get pool
         let pool_guard = self.pool.read().await;
         let pool = pool_guard
             .as_ref()
@@ -1297,15 +1417,12 @@ impl DbAdapter for MySqlAdapter {
         let schema_prefix = schema.map(|s| format!("{}.", s)).unwrap_or_default();
         let mut total_affected = 0u64;
 
-        // Execute each delete
-        for where_clause in where_clauses {
-            if where_clause.trim().is_empty() {
-                continue;
-            }
-
+        for filter in filters {
             let query = format!(
                 "DELETE FROM {}{} WHERE {}",
-                schema_prefix, table_name, where_clause
+                schema_prefix,
+                table_name,
+                filter_to_sql(filter)
             );
 
             let result = sqlx::query(&query).execute(pool).await.map_err(|e| {
@@ -2133,5 +2250,32 @@ mod tests {
             "Expected Connection error, got: {:?}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn test_find_tables_not_connected() {
+        let config = create_test_config();
+        let adapter = MySqlAdapter::new(config);
+        let result =
+            DbAdapter::find_tables(&adapter, "PS_", None, TableSearchMode::StartsWith).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_starts_with() {
+        let like_pattern = format!("{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_contains() {
+        let like_pattern = format!("%{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_ends_with() {
+        let like_pattern = format!("%{}", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_");
     }
 }

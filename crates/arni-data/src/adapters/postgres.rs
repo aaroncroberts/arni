@@ -44,8 +44,9 @@
 //! ```
 
 use crate::adapter::{
-    AdapterMetadata, Connection, ConnectionConfig, DatabaseType, DbAdapter, ForeignKeyInfo,
-    IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, ViewInfo,
+    AdapterMetadata, Connection, ConnectionConfig, DatabaseType, DbAdapter, FilterExpr,
+    ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo,
+    TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql, query_value_to_sql_literal,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -230,6 +231,7 @@ impl Connection for PostgresAdapter {
         // Check internal state first
         if !*self.connected.read().await {
             warn!("Health check failed: not connected");
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -609,6 +611,55 @@ impl DbAdapter for PostgresAdapter {
         Ok(tables)
     }
 
+    #[instrument(skip(self), fields(adapter = "postgres", pattern = %pattern, mode = ?mode, schema = ?schema))]
+    async fn find_tables(
+        &self,
+        pattern: &str,
+        schema: Option<&str>,
+        mode: TableSearchMode,
+    ) -> Result<Vec<String>> {
+        debug!("Finding tables by pattern");
+
+        if !*self.connected.read().await {
+            error!("Find tables failed: not connected");
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let client_guard = self.client.read().await;
+        let client = client_guard.as_ref().ok_or_else(|| {
+            error!("Client not available");
+            DataError::Connection("Client not available".to_string())
+        })?;
+
+        let escaped = escape_like_pattern(pattern);
+        let like_pattern = match mode {
+            TableSearchMode::StartsWith => format!("{}%", escaped),
+            TableSearchMode::Contains => format!("%{}%", escaped),
+            TableSearchMode::EndsWith => format!("%{}", escaped),
+        };
+
+        let schema_name = schema.unwrap_or("public");
+        let query = format!(
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = '{}' AND table_type = 'BASE TABLE' \
+             AND table_name LIKE $1 ESCAPE '\\' \
+             ORDER BY table_name",
+            schema_name
+        );
+
+        let rows = client.query(&query, &[&like_pattern]).await.map_err(|e| {
+            error!(error = %e, "Failed to find tables");
+            DataError::Query(format!("Failed to find tables: {}", e))
+        })?;
+
+        let tables: Vec<String> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+        info!(count = tables.len(), "Found tables successfully");
+        Ok(tables)
+    }
+
+    #[instrument(skip(self), fields(adapter = "postgres", table = %table_name, schema = ?schema))]
     async fn describe_table(
         &self,
         table_name: &str,
@@ -616,6 +667,7 @@ impl DbAdapter for PostgresAdapter {
     ) -> Result<crate::adapter::TableInfo> {
         // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -645,6 +697,7 @@ impl DbAdapter for PostgresAdapter {
             .map_err(|e| DataError::Query(format!("Failed to describe table: {}", e)))?;
 
         if rows.is_empty() {
+            error!("postgres query failed - not connected");
             return Err(DataError::Query(format!(
                 "Table '{}.{}' not found",
                 schema_name, table_name
@@ -687,10 +740,31 @@ impl DbAdapter for PostgresAdapter {
             })
             .collect();
 
+        // Fetch row count (approximate via pg_class) and total size in one query
+        let stats_query = "
+            SELECT reltuples::BIGINT, pg_total_relation_size(c.oid)
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = $1 AND c.relname = $2
+        ";
+        let stats = client.query(stats_query, &[&schema_name, &table_name]).await.ok();
+        let (row_count, size_bytes) = stats
+            .as_ref()
+            .and_then(|rows| rows.first())
+            .map(|row| {
+                let rc: i64 = row.get(0);
+                let sz: i64 = row.get(1);
+                (Some(rc.max(0)), Some(sz))
+            })
+            .unwrap_or((None, None));
+
         Ok(crate::adapter::TableInfo {
             name: table_name.to_string(),
             schema: Some(schema_name.to_string()),
             columns,
+            row_count,
+            size_bytes,
+            created_at: None, // PostgreSQL does not natively track table creation time
         })
     }
 
@@ -699,6 +773,7 @@ impl DbAdapter for PostgresAdapter {
     async fn get_indexes(&self, table_name: &str, schema: Option<&str>) -> Result<Vec<IndexInfo>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -764,6 +839,7 @@ impl DbAdapter for PostgresAdapter {
     ) -> Result<Vec<ForeignKeyInfo>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -849,6 +925,7 @@ impl DbAdapter for PostgresAdapter {
     async fn get_views(&self, schema: Option<&str>) -> Result<Vec<ViewInfo>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -897,6 +974,7 @@ impl DbAdapter for PostgresAdapter {
     ) -> Result<Option<String>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -932,6 +1010,7 @@ impl DbAdapter for PostgresAdapter {
     async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -978,11 +1057,39 @@ impl DbAdapter for PostgresAdapter {
         Ok(procedures)
     }
 
+    #[instrument(skip(self), fields(adapter = "postgres"))]
+    async fn get_server_info(&self) -> Result<ServerInfo> {
+        if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+        let client_guard = self.client.read().await;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+        let rows = client
+            .query("SELECT version()", &[])
+            .await
+            .map_err(|e| DataError::Query(format!("Failed to get server info: {}", e)))?;
+        let version = rows
+            .first()
+            .map(|row| row.get::<_, String>(0))
+            .unwrap_or_else(|| "Unknown".to_string());
+        Ok(ServerInfo {
+            version,
+            server_type: "PostgreSQL".to_string(),
+            extra_info: HashMap::new(),
+        })
+    }
+
     // ===== Bulk Operations =====
 
+    #[instrument(skip(self, columns, rows), fields(adapter = "postgres", table = %table_name, row_count = rows.len()))]
     async fn bulk_insert(
         &self,
-        _table_name: &str,
+        table_name: &str,
         columns: &[String],
         rows: &[Vec<QueryValue>],
         schema: Option<&str>,
@@ -997,6 +1104,7 @@ impl DbAdapter for PostgresAdapter {
 
         // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1024,18 +1132,19 @@ impl DbAdapter for PostgresAdapter {
         ));
     }
 
+    #[instrument(skip(self, updates), fields(adapter = "postgres", table = %table_name))]
     async fn bulk_update(
         &self,
         table_name: &str,
-        updates: &[(HashMap<String, QueryValue>, String)],
+        updates: &[(HashMap<String, QueryValue>, FilterExpr)],
         schema: Option<&str>,
     ) -> Result<u64> {
         if updates.is_empty() {
             return Ok(0);
         }
 
-        // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1043,7 +1152,6 @@ impl DbAdapter for PostgresAdapter {
 
         let schema_name = schema.unwrap_or("public");
 
-        // Get client
         let client_guard = self.client.read().await;
         let client = client_guard
             .as_ref()
@@ -1051,27 +1159,24 @@ impl DbAdapter for PostgresAdapter {
 
         let mut total_affected = 0u64;
 
-        // Execute each update
-        for (set_clauses, where_clause) in updates {
+        for (set_clauses, filter) in updates {
             if set_clauses.is_empty() {
                 continue;
             }
 
-            // Build SET clause
-            let mut set_parts = Vec::new();
-            for (column, _) in set_clauses.iter() {
-                set_parts.push(format!("{} = $1", column));
-            }
+            let set_parts: Vec<String> = set_clauses
+                .iter()
+                .map(|(col, val)| format!("{} = {}", col, query_value_to_sql_literal(val)))
+                .collect();
 
             let query = format!(
                 "UPDATE {}.{} SET {} WHERE {}",
                 schema_name,
                 table_name,
                 set_parts.join(", "),
-                where_clause
+                filter_to_sql(filter)
             );
 
-            // Note: Simplified implementation - proper implementation would need dynamic parameter binding
             let result = client.execute(&query, &[]).await.map_err(|e| {
                 DataError::Query(format!(
                     "Failed to bulk update {}.{}: {}",
@@ -1085,18 +1190,19 @@ impl DbAdapter for PostgresAdapter {
         Ok(total_affected)
     }
 
+    #[instrument(skip(self, filters), fields(adapter = "postgres", table = %table_name))]
     async fn bulk_delete(
         &self,
         table_name: &str,
-        where_clauses: &[String],
+        filters: &[FilterExpr],
         schema: Option<&str>,
     ) -> Result<u64> {
-        if where_clauses.is_empty() {
+        if filters.is_empty() {
             return Ok(0);
         }
 
-        // Check connection
         if !*self.connected.read().await {
+            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1104,7 +1210,6 @@ impl DbAdapter for PostgresAdapter {
 
         let schema_name = schema.unwrap_or("public");
 
-        // Get client
         let client_guard = self.client.read().await;
         let client = client_guard
             .as_ref()
@@ -1112,15 +1217,12 @@ impl DbAdapter for PostgresAdapter {
 
         let mut total_affected = 0u64;
 
-        // Execute each delete
-        for where_clause in where_clauses {
-            if where_clause.trim().is_empty() {
-                continue;
-            }
-
+        for filter in filters {
             let query = format!(
                 "DELETE FROM {}.{} WHERE {}",
-                schema_name, table_name, where_clause
+                schema_name,
+                table_name,
+                filter_to_sql(filter)
             );
 
             let result = client.execute(&query, &[]).await.map_err(|e| {
@@ -2112,5 +2214,33 @@ mod tests {
         assert!(matches!(row[1], QueryValue::Int(42)));
 
         DbAdapter::disconnect(&mut adapter).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_find_tables_not_connected() {
+        let config = create_test_config();
+        let adapter = PostgresAdapter::new(config);
+        let result =
+            DbAdapter::find_tables(&adapter, "PS_", None, TableSearchMode::StartsWith).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_starts_with() {
+        let like_pattern = format!("{}%", escape_like_pattern("PS_"));
+        // PS_ escapes _ → \_ so the LIKE pattern is PS\_% which won't match PSA
+        assert_eq!(like_pattern, "PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_contains() {
+        let like_pattern = format!("%{}%", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_%");
+    }
+
+    #[test]
+    fn test_find_tables_like_pattern_ends_with() {
+        let like_pattern = format!("%{}", escape_like_pattern("PS_"));
+        assert_eq!(like_pattern, "%PS\\_");
     }
 }

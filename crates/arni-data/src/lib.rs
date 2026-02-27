@@ -118,8 +118,8 @@ pub mod error;
 
 // Re-export commonly used types
 pub use adapter::{
-    ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter, QueryResult, QueryValue,
-    TableInfo,
+    ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, QueryResult,
+    QueryValue, TableInfo, TableSearchMode, escape_like_pattern, filter_to_sql,
 };
 pub use config::{ArniConfig, ConfigProfile};
 pub use error::{DataError, Result};
