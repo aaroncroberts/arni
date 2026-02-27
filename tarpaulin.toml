@@ -1,0 +1,35 @@
+# cargo-tarpaulin configuration
+# Run: cargo tarpaulin
+# Report: open target/tarpaulin/tarpaulin-report.html
+
+[default]
+# Measure all workspace crates
+workspace = true
+
+# Output formats for local inspection
+out = ["Html", "Lcov"]
+
+# HTML report location
+output-dir = "target/tarpaulin"
+
+# Fail CI if coverage drops below this threshold
+fail-under = 80.0
+
+# Test timeout in seconds (DuckDB + SQLite can be slow under instrumentation)
+timeout = 180
+
+# Only compile and run lib + integration tests; skip doc tests (slow, minimal gain)
+doc = false
+
+# Run tests for all features that don't require network containers.
+# Network adapter tests (postgres, mysql, etc.) run in the separate
+# integration-tests CI job with live databases.
+features = "sqlite,duckdb"
+
+# Exclude generated code, integration test harness, examples, and build scripts
+# from coverage measurement.
+exclude-files = [
+    "crates/arni-data/tests/*",
+    "examples/*",
+    "target/*",
+]
