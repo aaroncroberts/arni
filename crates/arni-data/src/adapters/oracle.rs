@@ -44,9 +44,10 @@
 //! ```
 
 use crate::adapter::{
-    AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
-    Result, ServerInfo, TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
+    escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
+    ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
+    ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo, TableInfo, TableSearchMode,
+    ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -141,7 +142,13 @@ impl OracleAdapter {
     fn query_value_to_sql_literal(value: &QueryValue) -> String {
         match value {
             QueryValue::Null => "NULL".to_string(),
-            QueryValue::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
+            QueryValue::Bool(b) => {
+                if *b {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
+            }
             QueryValue::Int(n) => n.to_string(),
             QueryValue::Float(f) => {
                 if f.is_nan() || f.is_infinite() {
@@ -190,79 +197,175 @@ impl OracleAdapter {
             DataType::Boolean => {
                 let v = series
                     .bool()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or(false);
-                if v { "1".to_string() } else { "0".to_string() }
+                if v {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
             }
             DataType::Int8 => series
                 .i8()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int16 => series
                 .i16()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int32 => series
                 .i32()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int64 => series
                 .i64()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt8 => series
                 .u8()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt16 => series
                 .u16()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt32 => series
                 .u32()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt64 => series
                 .u64()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Float32 => {
                 let v = series
                     .f32()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or(0.0);
-                if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
+                if v.is_nan() || v.is_infinite() {
+                    "NULL".to_string()
+                } else {
+                    v.to_string()
+                }
             }
             DataType::Float64 => {
                 let v = series
                     .f64()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or(0.0);
-                if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
+                if v.is_nan() || v.is_infinite() {
+                    "NULL".to_string()
+                } else {
+                    v.to_string()
+                }
             }
             DataType::String => {
                 let v = series
                     .str()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or("");
                 format!("'{}'", v.replace('\'', "''"))
@@ -270,19 +373,42 @@ impl OracleAdapter {
             DataType::Binary => {
                 let v = series
                     .binary()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or(&[]);
                 let hex: String = v.iter().map(|b| format!("{:02X}", b)).collect();
-                if hex.is_empty() { "NULL".to_string() } else { format!("HEXTORAW('{}')", hex) }
+                if hex.is_empty() {
+                    "NULL".to_string()
+                } else {
+                    format!("HEXTORAW('{}')", hex)
+                }
             }
             _ => {
-                let cast = series
-                    .cast(&DataType::String)
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?;
+                let cast = series.cast(&DataType::String).map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?;
                 match cast
                     .str()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                 {
                     Some(s) => format!("'{}'", s.replace('\'', "''")),
@@ -299,15 +425,15 @@ impl OracleAdapter {
         tokio::task::spawn_blocking(move || {
             let handle = tokio::runtime::Handle::current();
             let conn_guard = handle.block_on(connection.read());
-            let conn = conn_guard.as_ref().ok_or_else(|| {
-                DataError::Connection("Not connected".to_string())
-            })?;
-            let mut stmt = conn.statement(&sql).build().map_err(|e| {
-                DataError::Query(format!("Failed to prepare statement: {}", e))
-            })?;
-            stmt.execute(&[]).map_err(|e| {
-                DataError::Query(format!("Statement execution failed: {}", e))
-            })?;
+            let conn = conn_guard
+                .as_ref()
+                .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            let mut stmt = conn
+                .statement(&sql)
+                .build()
+                .map_err(|e| DataError::Query(format!("Failed to prepare statement: {}", e)))?;
+            stmt.execute(&[])
+                .map_err(|e| DataError::Query(format!("Statement execution failed: {}", e)))?;
             // row_count is valid for DML; DDL returns 0 or an error (ignored)
             let count = stmt.row_count().unwrap_or(0);
             // commit DML changes; DDL auto-commits in Oracle
@@ -391,7 +517,7 @@ impl OracleAdapter {
     /// Returns `true` when the SQL starts with a keyword that produces a result
     /// set (SELECT, WITH …). Everything else is treated as DDL/DML.
     fn is_select_query(sql: &str) -> bool {
-        let first = sql.trim_start().split_whitespace().next().unwrap_or("");
+        let first = sql.split_whitespace().next().unwrap_or("");
         matches!(first.to_uppercase().as_str(), "SELECT" | "WITH")
     }
 }
@@ -575,7 +701,6 @@ impl DbAdapter for OracleAdapter {
         }
     }
 
-
     #[instrument(skip(self, df), fields(adapter = "oracle", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -613,8 +738,7 @@ impl DbAdapter for OracleAdapter {
                     )
                 })
                 .collect();
-            let create_sql =
-                format!("CREATE TABLE {} ({})", table_upper, col_defs.join(", "));
+            let create_sql = format!("CREATE TABLE {} ({})", table_upper, col_defs.join(", "));
             self.execute_statement_blocking(create_sql).await?;
         }
 
@@ -636,7 +760,12 @@ impl DbAdapter for OracleAdapter {
             for col_name in &column_names {
                 let series = df
                     .column(col_name)
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", col_name, row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            col_name, row_idx, e
+                        ))
+                    })?
                     .as_materialized_series();
                 literals.push(Self::series_value_to_sql_literal(series, row_idx)?);
             }
@@ -856,7 +985,7 @@ impl DbAdapter for OracleAdapter {
             .as_ref()
             .and_then(|r| r.rows.first())
             .map(|row| {
-                let rc = match row.get(0) {
+                let rc = match row.first() {
                     Some(QueryValue::Int(n)) => Some(*n),
                     Some(QueryValue::Float(f)) => Some(*f as i64),
                     _ => None,
@@ -1207,8 +1336,7 @@ impl DbAdapter for OracleAdapter {
 
         let mut total: u64 = 0;
         for row in rows {
-            let literals: Vec<String> =
-                row.iter().map(Self::query_value_to_sql_literal).collect();
+            let literals: Vec<String> = row.iter().map(Self::query_value_to_sql_literal).collect();
             let sql = format!(
                 "INSERT INTO {} ({}) VALUES ({})",
                 table_upper,
@@ -1317,7 +1445,8 @@ mod tests {
     #[test]
     fn test_build_connection_params_defaults() {
         let config = make_config("ORCL");
-        let (user, _pass, connect_str) = OracleAdapter::build_connection_params(&config, Some("pw"));
+        let (user, _pass, connect_str) =
+            OracleAdapter::build_connection_params(&config, Some("pw"));
         assert_eq!(user, "system");
         assert!(connect_str.contains("1521"));
         assert!(connect_str.ends_with("/ORCL"));
@@ -1328,8 +1457,7 @@ mod tests {
         let mut config = make_config("FREE");
         config.host = Some("db.example.com".to_string());
         config.port = Some(1522);
-        let (_user, _pass, connect_str) =
-            OracleAdapter::build_connection_params(&config, None);
+        let (_user, _pass, connect_str) = OracleAdapter::build_connection_params(&config, None);
         assert!(connect_str.starts_with("db.example.com:1522/"));
     }
 
@@ -1408,9 +1536,7 @@ mod tests {
     #[test]
     fn test_sql_literal_text_with_single_quote() {
         assert_eq!(
-            OracleAdapter::query_value_to_sql_literal(&QueryValue::Text(
-                "O'Brien".to_string()
-            )),
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Text("O'Brien".to_string())),
             "'O''Brien'"
         );
     }
@@ -1436,11 +1562,26 @@ mod tests {
     #[test]
     fn test_dtype_mapping_int_types() {
         use polars::prelude::DataType;
-        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int8), "NUMBER(10)");
-        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int16), "NUMBER(10)");
-        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int32), "NUMBER(10)");
-        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int64), "NUMBER(19)");
-        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::UInt64), "NUMBER(20)");
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int8),
+            "NUMBER(10)"
+        );
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int16),
+            "NUMBER(10)"
+        );
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int32),
+            "NUMBER(10)"
+        );
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int64),
+            "NUMBER(19)"
+        );
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::UInt64),
+            "NUMBER(20)"
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # Local dependencies
 arni = { path = "../arni" }
-arni-data = { path = "../arni-data" }
+arni-data = { path = "../arni-data", features = ["all-databases"] }
 arni-logging = { path = "../arni-logging" }
 
 # Workspace dependencies
@@ -32,6 +32,9 @@ tracing-subscriber = { workspace = true }
 # CLI-specific dependencies
 figlet-rs = "0.1"
 colored = "3.1"
+polars = { workspace = true, features = ["csv"] }
+rpassword = "7"
+comfy-table = "7"
 
 [dev-dependencies]
 tempfile = { workspace = true }

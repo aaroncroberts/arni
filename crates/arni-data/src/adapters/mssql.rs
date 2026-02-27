@@ -1,7 +1,7 @@
 use crate::adapter::{
-    AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
-    ServerInfo, TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
+    escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
+    ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
+    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -94,7 +94,13 @@ impl SqlServerAdapter {
     fn query_value_to_sql_literal(value: &QueryValue) -> String {
         match value {
             QueryValue::Null => "NULL".to_string(),
-            QueryValue::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
+            QueryValue::Bool(b) => {
+                if *b {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
+            }
             QueryValue::Int(n) => n.to_string(),
             QueryValue::Float(f) => {
                 if f.is_nan() || f.is_infinite() {
@@ -166,79 +172,175 @@ impl SqlServerAdapter {
             DataType::Boolean => {
                 let v = series
                     .bool()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or(false);
-                if v { "1".to_string() } else { "0".to_string() }
+                if v {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
             }
             DataType::Int8 => series
                 .i8()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int16 => series
                 .i16()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int32 => series
                 .i32()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Int64 => series
                 .i64()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt8 => series
                 .u8()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt16 => series
                 .u16()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt32 => series
                 .u32()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::UInt64 => series
                 .u64()
-                .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                .map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?
                 .get(row_idx)
                 .unwrap_or(0)
                 .to_string(),
             DataType::Float32 => {
                 let v = series
                     .f32()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or(0.0);
-                if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
+                if v.is_nan() || v.is_infinite() {
+                    "NULL".to_string()
+                } else {
+                    v.to_string()
+                }
             }
             DataType::Float64 => {
                 let v = series
                     .f64()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or(0.0);
-                if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
+                if v.is_nan() || v.is_infinite() {
+                    "NULL".to_string()
+                } else {
+                    v.to_string()
+                }
             }
             DataType::String => {
                 let v = series
                     .str()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or("");
                 format!("N'{}'", v.replace('\'', "''"))
@@ -246,19 +348,42 @@ impl SqlServerAdapter {
             DataType::Binary => {
                 let v = series
                     .binary()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                     .unwrap_or(&[]);
                 let hex: String = v.iter().map(|b| format!("{:02X}", b)).collect();
-                if hex.is_empty() { "NULL".to_string() } else { format!("0x{}", hex) }
+                if hex.is_empty() {
+                    "NULL".to_string()
+                } else {
+                    format!("0x{}", hex)
+                }
             }
             _ => {
-                let cast = series
-                    .cast(&DataType::String)
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?;
+                let cast = series.cast(&DataType::String).map_err(|e| {
+                    DataError::TypeConversion(format!(
+                        "Failed to read column \'{}\' at row {}: {}",
+                        series.name(),
+                        row_idx,
+                        e
+                    ))
+                })?;
                 match cast
                     .str()
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", series.name(), row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            series.name(),
+                            row_idx,
+                            e
+                        ))
+                    })?
                     .get(row_idx)
                 {
                     Some(s) => format!("N'{}'", s.replace('\'', "''")),
@@ -275,9 +400,10 @@ impl SqlServerAdapter {
         let client = client_guard.as_mut().ok_or_else(|| {
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
-        let result = client.execute(sql, &[]).await.map_err(|e| {
-            DataError::Query(format!("Statement execution failed: {}", e))
-        })?;
+        let result = client
+            .execute(sql, &[])
+            .await
+            .map_err(|e| DataError::Query(format!("Statement execution failed: {}", e)))?;
         Ok(result.rows_affected().iter().sum::<u64>())
     }
 
@@ -684,7 +810,7 @@ impl DbAdapter for SqlServerAdapter {
             .as_ref()
             .and_then(|r| r.rows.first())
             .map(|row| {
-                let rc = match row.get(0) {
+                let rc = match row.first() {
                     Some(QueryValue::Int(n)) => Some(*n),
                     _ => None,
                 };
@@ -973,11 +1099,14 @@ impl DbAdapter for SqlServerAdapter {
                 .get_columns()
                 .iter()
                 .map(|col| {
-                    format!("{} {}", col.name(), Self::polars_dtype_to_mssql_type(col.dtype()))
+                    format!(
+                        "{} {}",
+                        col.name(),
+                        Self::polars_dtype_to_mssql_type(col.dtype())
+                    )
                 })
                 .collect();
-            let create_sql =
-                format!("CREATE TABLE {} ({})", table_name, col_defs.join(", "));
+            let create_sql = format!("CREATE TABLE {} ({})", table_name, col_defs.join(", "));
             self.execute_statement(&create_sql).await?;
         }
 
@@ -999,7 +1128,12 @@ impl DbAdapter for SqlServerAdapter {
             for col_name in &column_names {
                 let series = df
                     .column(col_name)
-                    .map_err(|e| DataError::TypeConversion(format!("Failed to read column \'{}\' at row {}: {}", col_name, row_idx, e)))?
+                    .map_err(|e| {
+                        DataError::TypeConversion(format!(
+                            "Failed to read column \'{}\' at row {}: {}",
+                            col_name, row_idx, e
+                        ))
+                    })?
                     .as_materialized_series();
                 literals.push(Self::series_value_to_sql_literal(series, row_idx)?);
             }
@@ -1043,8 +1177,7 @@ impl DbAdapter for SqlServerAdapter {
         let cols_str = columns.join(", ");
         let mut total: u64 = 0;
         for row in rows {
-            let literals: Vec<String> =
-                row.iter().map(Self::query_value_to_sql_literal).collect();
+            let literals: Vec<String> = row.iter().map(Self::query_value_to_sql_literal).collect();
             let sql = format!(
                 "INSERT INTO {} ({}) VALUES ({})",
                 table_name,
@@ -1238,9 +1371,7 @@ mod tests {
     #[test]
     fn test_sql_literal_text_with_single_quote() {
         assert_eq!(
-            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Text(
-                "it's".to_string()
-            )),
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Text("it's".to_string())),
             "N'it''s'"
         );
     }
@@ -1266,19 +1397,43 @@ mod tests {
     #[test]
     fn test_dtype_mapping_int_types() {
         use polars::prelude::DataType;
-        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int8), "SMALLINT");
-        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int16), "SMALLINT");
-        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int32), "INT");
-        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int64), "BIGINT");
-        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::UInt32), "INT");
-        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::UInt64), "BIGINT");
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int8),
+            "SMALLINT"
+        );
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int16),
+            "SMALLINT"
+        );
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int32),
+            "INT"
+        );
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int64),
+            "BIGINT"
+        );
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::UInt32),
+            "INT"
+        );
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::UInt64),
+            "BIGINT"
+        );
     }
 
     #[test]
     fn test_dtype_mapping_float_types() {
         use polars::prelude::DataType;
-        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Float32), "REAL");
-        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Float64), "FLOAT");
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Float32),
+            "REAL"
+        );
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Float64),
+            "FLOAT"
+        );
     }
 
     #[test]

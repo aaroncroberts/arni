@@ -44,9 +44,9 @@
 //! ```
 
 use crate::adapter::{
-    AdapterMetadata, ColumnInfo, Connection, ConnectionConfig, DatabaseType, DbAdapter, FilterExpr,
-    ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo,
-    TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
+    escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection, ConnectionConfig,
+    DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult,
+    QueryValue, Result, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -385,7 +385,11 @@ impl MySqlAdapter {
             let result = sqlx::query(query).execute(pool).await.map_err(map_err)?;
             let affected = result.rows_affected();
             let duration = start.elapsed();
-            info!(rows_affected = affected, duration_ms = duration.as_millis(), "DML executed");
+            info!(
+                rows_affected = affected,
+                duration_ms = duration.as_millis(),
+                "DML executed"
+            );
             return Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
@@ -877,8 +881,7 @@ impl DbAdapter for MySqlAdapter {
 
         // MySQL 8 returns COLUMN_TYPE/IS_NULLABLE/COLUMN_KEY as MEDIUMTEXT (BLOB on the
         // wire).  CAST to CHAR forces VARCHAR so sqlx can decode them as String.
-        let column_query =
-            "SELECT CAST(COLUMN_NAME AS CHAR), CAST(COLUMN_TYPE AS CHAR), \
+        let column_query = "SELECT CAST(COLUMN_NAME AS CHAR), CAST(COLUMN_TYPE AS CHAR), \
                     CAST(IS_NULLABLE AS CHAR), COLUMN_DEFAULT, CAST(COLUMN_KEY AS CHAR) \
                     FROM information_schema.COLUMNS \
                     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
@@ -922,17 +925,14 @@ impl DbAdapter for MySqlAdapter {
             FROM information_schema.TABLES
             WHERE table_schema = ? AND table_name = ?
         ";
-        let stats: Option<(Option<i64>, Option<i64>, Option<String>)> =
-            sqlx::query_as(stats_query)
-                .bind(&schema_name)
-                .bind(table_name)
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten();
-        let (row_count, size_bytes, created_at) = stats
-            .map(|(rc, sz, ca)| (rc, sz, ca))
-            .unwrap_or((None, None, None));
+        let stats: Option<(Option<i64>, Option<i64>, Option<String>)> = sqlx::query_as(stats_query)
+            .bind(&schema_name)
+            .bind(table_name)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+        let (row_count, size_bytes, created_at) = stats.unwrap_or((None, None, None));
 
         Ok(TableInfo {
             name: table_name.to_string(),
@@ -1644,8 +1644,8 @@ mod tests {
     fn create_test_config() -> ConnectionConfig {
         let mut parameters = HashMap::new();
         // Allow override via env; fall back to the default dev password.
-        let password = std::env::var("TEST_MYSQL_PASSWORD")
-            .unwrap_or_else(|_| "test_password".to_string());
+        let password =
+            std::env::var("TEST_MYSQL_PASSWORD").unwrap_or_else(|_| "test_password".to_string());
         parameters.insert("password".to_string(), password);
         ConnectionConfig {
             id: "test-mysql".to_string(),
@@ -1663,8 +1663,7 @@ mod tests {
             database: std::env::var("TEST_MYSQL_DATABASE")
                 .unwrap_or_else(|_| "test_db".to_string()),
             username: Some(
-                std::env::var("TEST_MYSQL_USERNAME")
-                    .unwrap_or_else(|_| "test_user".to_string()),
+                std::env::var("TEST_MYSQL_USERNAME").unwrap_or_else(|_| "test_user".to_string()),
             ),
             use_ssl: false,
             parameters,
@@ -1962,9 +1961,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .expect("Failed to connect");
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .expect("Failed to connect");
 
         let df = DataFrame::new(vec![
             Series::new("id".into(), &[1, 2, 3]).into(),
@@ -2004,9 +2007,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .expect("Failed to connect");
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .expect("Failed to connect");
 
         // Use a regular table (not TEMPORARY) so all pool connections can see it
         adapter
@@ -2052,9 +2059,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .expect("Failed to connect");
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .expect("Failed to connect");
 
         // Query as DataFrame
         let result = DbAdapter::query_df(&adapter, "SELECT 1 as num, 'test' as text").await;
@@ -2078,9 +2089,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .expect("Failed to connect");
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .expect("Failed to connect");
 
         // List databases
         let result = DbAdapter::list_databases(&adapter).await;
@@ -2105,9 +2120,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .expect("Failed to connect");
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .expect("Failed to connect");
 
         // Create a test table
         adapter
@@ -2138,9 +2157,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .expect("Failed to connect");
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .expect("Failed to connect");
 
         // List tables in specific schema (test_db)
         let result = DbAdapter::list_tables(&adapter, Some("test_db")).await;
@@ -2160,9 +2183,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = MySqlAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .expect("Failed to connect");
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .expect("Failed to connect");
 
         // Create a test table with various column types
         adapter

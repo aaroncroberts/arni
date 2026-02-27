@@ -1,12 +1,15 @@
 mod app_config;
 mod config;
+mod db;
 mod logging_config;
 
-use arni_data::adapter::{ConnectionConfig, DatabaseType};
+use arni_data::adapter::{ConnectionConfig, DatabaseType, TableSearchMode};
 use clap::{Parser, Subcommand};
 use colored::*;
+use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as CTable};
 use config::{ConfigStore, ConnectionEntry};
 use figlet_rs::FIGfont;
+use polars::prelude::{CsvWriter, DataFrame, JsonFormat, JsonWriter, ParquetWriter, SerWriter};
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::TcpStream;
@@ -65,25 +68,37 @@ enum Commands {
         #[arg(short, long)]
         profile: String,
 
-        /// Show tables
+        /// List all tables in the database
         #[arg(long)]
         tables: bool,
 
-        /// Show columns
+        /// Describe columns for a specific table (requires --table)
         #[arg(long)]
         columns: bool,
 
-        /// Show schemas
+        /// List databases/schemas on the server
         #[arg(long)]
         schemas: bool,
 
-        /// Show views
+        /// List views
         #[arg(long)]
         views: bool,
 
-        /// Show indexes
+        /// List indexes for a specific table (requires --table)
         #[arg(long)]
         indexes: bool,
+
+        /// Table name used with --columns and --indexes
+        #[arg(long)]
+        table: Option<String>,
+
+        /// Search for tables whose name starts with, contains, or ends with this literal string
+        #[arg(long)]
+        search: Option<String>,
+
+        /// How to match the search pattern: starts, contains, or ends [default: contains]
+        #[arg(long, default_value = "contains")]
+        search_mode: String,
     },
     /// Manage database connection profiles
     Config {
@@ -256,27 +271,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             handle_dev_command(action).await?;
         }
         Commands::Connect { profile } => {
-            println!(
-                "{} {}",
-                "Connecting to profile:".green(),
-                profile.bright_white()
-            );
-            println!("{}", "Not yet implemented".yellow());
+            handle_connect_command(profile).await?;
         }
         Commands::Query {
             query,
             profile,
             format,
         } => {
-            println!(
-                "{} {} {} {}",
-                "Executing query on".green(),
-                profile.bright_white(),
-                "with format".green(),
-                format.bright_white()
-            );
-            println!("{} {}", "Query:".cyan(), query);
-            println!("{}", "Not yet implemented".yellow());
+            handle_query_command(query, profile, format).await?;
         }
         Commands::Metadata {
             profile,
@@ -285,30 +287,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
             schemas,
             views,
             indexes,
+            table,
+            search,
+            search_mode,
         } => {
-            println!(
-                "{} {}",
-                "Fetching metadata from".green(),
-                profile.bright_white()
-            );
-
-            if tables {
-                println!("{}", "  • Tables".cyan());
-            }
-            if columns {
-                println!("{}", "  • Columns".cyan());
-            }
-            if schemas {
-                println!("{}", "  • Schemas".cyan());
-            }
-            if views {
-                println!("{}", "  • Views".cyan());
-            }
-            if indexes {
-                println!("{}", "  • Indexes".cyan());
-            }
-
-            println!("{}", "Not yet implemented".yellow());
+            handle_metadata_command(
+                profile,
+                tables,
+                columns,
+                schemas,
+                views,
+                indexes,
+                table,
+                search,
+                search_mode,
+            )
+            .await?;
         }
         Commands::Export {
             query,
@@ -316,17 +310,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             format,
             output,
         } => {
-            println!(
-                "{} {} {} {} {} {}",
-                "Exporting from".green(),
-                profile.bright_white(),
-                "to".green(),
-                output.bright_white(),
-                "as".green(),
-                format.bright_white()
-            );
-            println!("{} {}", "Query:".cyan(), query);
-            println!("{}", "Not yet implemented".yellow());
+            handle_export_command(query, profile, format, output).await?;
         }
     }
 
@@ -671,6 +655,400 @@ fn run_compose_command(args: &[&str]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// ─── Connect command handler ──────────────────────────────────────────────────
+
+async fn handle_connect_command(profile: String) -> Result<(), Box<dyn Error>> {
+    let store = ConfigStore::load(None)?;
+    let cfg = store.get(&profile)?;
+
+    println!(
+        "Connecting to '{}' ({})...",
+        profile.bright_white(),
+        cfg.db_type.to_string().cyan()
+    );
+
+    let adapter = db::connect(&store, &profile).await?;
+
+    println!("{} Connected.", "✓".bright_green());
+
+    // Server info (best-effort — not all adapters implement it).
+    if let Ok(info) = adapter.get_server_info().await {
+        println!(
+            "  {} {} {}",
+            "Server:".dimmed(),
+            info.server_type.cyan(),
+            info.version.bright_white()
+        );
+        for (k, v) in &info.extra_info {
+            println!("  {}: {}", k.dimmed(), v);
+        }
+    }
+
+    // Quick table summary.
+    if let Ok(tables) = adapter.metadata().list_tables(None).await {
+        println!(
+            "  {} {} table(s) visible",
+            "Tables:".dimmed(),
+            tables.len().to_string().bright_white()
+        );
+    }
+
+    Ok(())
+}
+
+// ─── Query command handler ────────────────────────────────────────────────────
+
+async fn handle_query_command(
+    query: String,
+    profile: String,
+    format: String,
+) -> Result<(), Box<dyn Error>> {
+    let store = ConfigStore::load(None)?;
+    let adapter = db::connect(&store, &profile).await?;
+
+    let mut df = adapter
+        .query_df(&query)
+        .await
+        .map_err(|e| format!("Query failed: {}", e))?;
+
+    match format.to_lowercase().as_str() {
+        "table" | "t" => {
+            println!("{}", df_to_table(&df));
+            println!(
+                "\n{} row(s) × {} column(s)",
+                df.height().to_string().bright_white(),
+                df.width().to_string().bright_white()
+            );
+        }
+        "json" => {
+            let json = df_to_json(&mut df)?;
+            println!("{}", json);
+        }
+        "csv" => {
+            let csv = df_to_csv(&mut df)?;
+            print!("{}", csv);
+        }
+        other => {
+            return Err(format!("Unknown format '{}'. Valid: table, json, csv", other).into());
+        }
+    }
+
+    Ok(())
+}
+
+// ─── Metadata command handler ─────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_metadata_command(
+    profile: String,
+    tables: bool,
+    columns: bool,
+    schemas: bool,
+    views: bool,
+    indexes: bool,
+    table: Option<String>,
+    search: Option<String>,
+    search_mode: String,
+) -> Result<(), Box<dyn Error>> {
+    let store = ConfigStore::load(None)?;
+    let adapter = db::connect(&store, &profile).await?;
+    let meta = adapter.metadata();
+
+    // --search: find tables by literal name fragment.
+    if let Some(ref pattern) = search {
+        let mode = match search_mode.to_lowercase().as_str() {
+            "starts" | "starts-with" | "startswith" => TableSearchMode::StartsWith,
+            "ends" | "ends-with" | "endswith" => TableSearchMode::EndsWith,
+            _ => TableSearchMode::Contains,
+        };
+        let results = meta
+            .find_tables(pattern, None, mode.clone())
+            .await
+            .map_err(|e| format!("find_tables failed: {}", e))?;
+
+        let mode_label = match mode {
+            TableSearchMode::StartsWith => "starts with",
+            TableSearchMode::Contains => "contains",
+            TableSearchMode::EndsWith => "ends with",
+        };
+        println!(
+            "Tables matching '{}' ({}):",
+            pattern.bright_white(),
+            mode_label.cyan()
+        );
+        if results.is_empty() {
+            println!("  {}", "(none found)".dimmed());
+        } else {
+            for t in &results {
+                println!("  • {}", t.bright_cyan());
+            }
+            println!(
+                "\n{} table(s) found.",
+                results.len().to_string().bright_white()
+            );
+        }
+        return Ok(());
+    }
+
+    let any_flag = tables || columns || schemas || views || indexes;
+
+    // --schemas: list databases/schemas.
+    if schemas {
+        let dbs = meta
+            .list_databases()
+            .await
+            .map_err(|e| format!("list_databases failed: {}", e))?;
+        println!("{}", "Databases / Schemas:".bright_white().bold());
+        for db in &dbs {
+            println!("  • {}", db);
+        }
+        println!();
+    }
+
+    // --tables (or default when no flag is given).
+    if tables || !any_flag {
+        let tbl_list = meta
+            .list_tables(None)
+            .await
+            .map_err(|e| format!("list_tables failed: {}", e))?;
+        println!("{}", "Tables:".bright_white().bold());
+        if tbl_list.is_empty() {
+            println!("  {}", "(no tables found)".dimmed());
+        } else {
+            for t in &tbl_list {
+                println!("  • {}", t.bright_cyan());
+            }
+            println!("\n{} table(s).", tbl_list.len().to_string().bright_white());
+        }
+        if !any_flag {
+            return Ok(());
+        }
+        println!();
+    }
+
+    // --views: list views.
+    if views {
+        let view_list = meta
+            .get_views(None)
+            .await
+            .map_err(|e| format!("get_views failed: {}", e))?;
+        println!("{}", "Views:".bright_white().bold());
+        if view_list.is_empty() {
+            println!("  {}", "(no views found)".dimmed());
+        } else {
+            for v in &view_list {
+                println!("  • {}", v.name.bright_cyan());
+            }
+        }
+        println!();
+    }
+
+    // --columns: describe a table's columns.
+    if columns {
+        let tbl = table
+            .as_deref()
+            .ok_or("--columns requires --table <table_name>")?;
+        let info = meta
+            .describe_table(tbl, None)
+            .await
+            .map_err(|e| format!("describe_table('{}') failed: {}", tbl, e))?;
+        print_table_info(&info);
+        println!();
+    }
+
+    // --indexes: show indexes for a table.
+    if indexes {
+        let tbl = table
+            .as_deref()
+            .ok_or("--indexes requires --table <table_name>")?;
+        let idx_list = meta
+            .get_indexes(tbl, None)
+            .await
+            .map_err(|e| format!("get_indexes('{}') failed: {}", tbl, e))?;
+        println!("{}", format!("Indexes on '{}':", tbl).bright_white().bold());
+        if idx_list.is_empty() {
+            println!("  {}", "(no indexes found)".dimmed());
+        } else {
+            for idx in &idx_list {
+                println!(
+                    "  • {} ({}) — [{}]",
+                    idx.name.bright_cyan(),
+                    if idx.is_unique {
+                        "unique"
+                    } else {
+                        "non-unique"
+                    }
+                    .dimmed(),
+                    idx.columns.join(", ")
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ─── Export command handler ───────────────────────────────────────────────────
+
+async fn handle_export_command(
+    query: String,
+    profile: String,
+    format: String,
+    output: String,
+) -> Result<(), Box<dyn Error>> {
+    let store = ConfigStore::load(None)?;
+    let adapter = db::connect(&store, &profile).await?;
+
+    println!("{}", "Executing query...".dimmed());
+    let mut df = adapter
+        .query_df(&query)
+        .await
+        .map_err(|e| format!("Query failed: {}", e))?;
+
+    let rows = df.height();
+    println!(
+        "Fetched {} row(s). Writing {} to '{}'...",
+        rows.to_string().bright_white(),
+        format.cyan(),
+        output.bright_white()
+    );
+
+    match format.to_lowercase().as_str() {
+        "json" => {
+            let json = df_to_json(&mut df)?;
+            std::fs::write(&output, json)?;
+        }
+        "csv" => {
+            let csv = df_to_csv(&mut df)?;
+            std::fs::write(&output, csv)?;
+        }
+        "parquet" => {
+            df_to_parquet(&mut df, &output)?;
+        }
+        other => {
+            return Err(format!(
+                "Unknown export format '{}'. Valid: json, csv, parquet",
+                other
+            )
+            .into());
+        }
+    }
+
+    println!(
+        "{} Exported {} row(s) to '{}'.",
+        "✓".bright_green(),
+        rows,
+        output.bright_white()
+    );
+    Ok(())
+}
+
+// ─── DataFrame formatting helpers ─────────────────────────────────────────────
+
+/// Render a DataFrame as a pretty UTF-8 table using comfy-table.
+fn df_to_table(df: &DataFrame) -> String {
+    let mut table = CTable::new();
+    table.load_preset(presets::UTF8_FULL);
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+
+    // Bold cyan headers.
+    let headers: Vec<Cell> = df
+        .get_column_names()
+        .iter()
+        .map(|name| {
+            Cell::new(*name)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan)
+        })
+        .collect();
+    table.set_header(headers);
+
+    // Data rows.
+    for i in 0..df.height() {
+        let cells: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|name| {
+                df.column(name)
+                    .ok()
+                    .and_then(|s| s.get(i).ok())
+                    .map(|v| format!("{}", v))
+                    .unwrap_or_else(|| "null".to_string())
+            })
+            .collect();
+        table.add_row(cells);
+    }
+
+    table.to_string()
+}
+
+/// Serialize a DataFrame to a JSON array string.
+fn df_to_json(df: &mut DataFrame) -> Result<String, Box<dyn Error>> {
+    let mut buf: Vec<u8> = Vec::new();
+    JsonWriter::new(&mut buf)
+        .with_json_format(JsonFormat::Json)
+        .finish(df)?;
+    Ok(String::from_utf8(buf)?)
+}
+
+/// Serialize a DataFrame to CSV.
+fn df_to_csv(df: &mut DataFrame) -> Result<String, Box<dyn Error>> {
+    let mut buf: Vec<u8> = Vec::new();
+    CsvWriter::new(&mut buf).finish(df)?;
+    Ok(String::from_utf8(buf)?)
+}
+
+/// Write a DataFrame to a Parquet file at `path`.
+fn df_to_parquet(df: &mut DataFrame, path: &str) -> Result<(), Box<dyn Error>> {
+    let file = std::fs::File::create(path)?;
+    ParquetWriter::new(file).finish(df)?;
+    Ok(())
+}
+
+/// Print a formatted describe-table view.
+fn print_table_info(info: &arni_data::TableInfo) {
+    const W_NAME: usize = 25;
+    const W_TYPE: usize = 20;
+
+    println!("{}", format!("Table: {}", info.name).bright_white().bold());
+    if let Some(schema) = &info.schema {
+        println!("  Schema: {}", schema.dimmed());
+    }
+    if let Some(rows) = info.row_count {
+        println!("  Rows: ~{}", rows.to_string().bright_white());
+    }
+    println!();
+    println!(
+        "  {}  {}  {}  {}",
+        format!("{:<W_NAME$}", "COLUMN").bright_white().bold(),
+        format!("{:<W_TYPE$}", "TYPE").bright_white().bold(),
+        format!("{:<8}", "NULLABLE").bright_white().bold(),
+        "PK".bright_white().bold(),
+    );
+    println!("  {}", "─".repeat(W_NAME + W_TYPE + 20).dimmed());
+    for col in &info.columns {
+        let name_s = if col.name.len() > W_NAME {
+            col.name[..W_NAME].to_string()
+        } else {
+            col.name.clone()
+        };
+        let type_s = if col.data_type.len() > W_TYPE {
+            col.data_type[..W_TYPE].to_string()
+        } else {
+            col.data_type.clone()
+        };
+        let name_col = format!("{:<W_NAME$}", name_s).bright_cyan();
+        let type_col = format!("{:<W_TYPE$}", type_s);
+        let null_col = format!("{:<8}", if col.nullable { "yes" } else { "no" }).dimmed();
+        let pk_col = if col.is_primary_key { "✓" } else { "" }.bright_yellow();
+        println!("  {name_col}  {type_col}  {null_col}  {pk_col}");
+    }
+    println!(
+        "\n{} column(s).",
+        info.columns.len().to_string().bright_white()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,10 +1062,7 @@ mod tests {
 
     #[test]
     fn test_parse_db_type_postgresql_alias() {
-        assert_eq!(
-            parse_db_type("postgresql").unwrap(),
-            DatabaseType::Postgres
-        );
+        assert_eq!(parse_db_type("postgresql").unwrap(), DatabaseType::Postgres);
     }
 
     #[test]
@@ -707,10 +1082,7 @@ mod tests {
 
     #[test]
     fn test_parse_db_type_sqlserver() {
-        assert_eq!(
-            parse_db_type("sqlserver").unwrap(),
-            DatabaseType::SQLServer
-        );
+        assert_eq!(parse_db_type("sqlserver").unwrap(), DatabaseType::SQLServer);
     }
 
     #[test]
@@ -791,9 +1163,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("nonexistent.db");
 
-        let err =
-            test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap()))
-                .unwrap_err();
+        let err = test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap()))
+            .unwrap_err();
         assert!(err.to_string().contains("Database file not found"));
     }
 
