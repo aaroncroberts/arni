@@ -229,4 +229,236 @@ mod sqlite_tests {
         let adapter = SqliteAdapter::new(cfg);
         assert_eq!(DbAdapter::database_type(&adapter), DatabaseType::SQLite);
     }
+
+    // ── export_dataframe ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sqlite_export_dataframe_not_connected_returns_error() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let adapter = SqliteAdapter::new(cfg);
+
+        let df = df! { "id" => [1i32, 2] }.unwrap();
+        let result = DbAdapter::export_dataframe(&adapter, &df, "t", None, true).await;
+        assert!(result.is_err(), "should fail before connect");
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_export_dataframe_creates_and_inserts() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df = df! {
+            "id" => [1i32, 2, 3],
+            "label" => ["alpha", "beta", "gamma"],
+        }
+        .unwrap();
+
+        let rows = DbAdapter::export_dataframe(&adapter, &df, "exp_basic", None, true)
+            .await
+            .expect("export_dataframe should succeed");
+        assert_eq!(rows, 3);
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM exp_basic")
+                .await
+                .unwrap();
+        assert_eq!(result.rows[0][0], QueryValue::Int(3));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_export_dataframe_replace() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df1 = df! { "x" => [1i64, 2, 3, 4, 5] }.unwrap();
+        DbAdapter::export_dataframe(&adapter, &df1, "repl", None, true)
+            .await
+            .unwrap();
+
+        let df2 = df! { "x" => [10i64, 20] }.unwrap();
+        let rows = DbAdapter::export_dataframe(&adapter, &df2, "repl", None, true)
+            .await
+            .expect("replace should succeed");
+        assert_eq!(rows, 2);
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM repl")
+                .await
+                .unwrap();
+        assert_eq!(result.rows[0][0], QueryValue::Int(2));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_export_dataframe_empty_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE emp (id INTEGER)")
+            .await
+            .unwrap();
+
+        let df = DataFrame::new(vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
+        let rows = DbAdapter::export_dataframe(&adapter, &df, "emp", None, false)
+            .await
+            .expect("empty export should succeed");
+        assert_eq!(rows, 0);
+    }
+
+    // ── bulk_insert ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_basic() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bi (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
+
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let rows = vec![
+            vec![QueryValue::Int(1), QueryValue::Text("alice".to_string())],
+            vec![QueryValue::Int(2), QueryValue::Text("bob".to_string())],
+        ];
+
+        let inserted = DbAdapter::bulk_insert(&adapter, "bi", &cols, &rows, None)
+            .await
+            .expect("bulk_insert should succeed");
+        assert_eq!(inserted, 2);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_empty_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bi_empty (id INTEGER)")
+            .await
+            .unwrap();
+        let cols = vec!["id".to_string()];
+        let n = DbAdapter::bulk_insert(&adapter, "bi_empty", &cols, &[], None)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_mismatch_returns_error() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let cols = vec!["a".to_string(), "b".to_string()];
+        let rows = vec![vec![QueryValue::Int(1)]]; // 1 value, 2 cols
+        let result = DbAdapter::bulk_insert(&adapter, "any", &cols, &rows, None).await;
+        assert!(result.is_err());
+    }
+
+    // ── bulk_update ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_update_basic() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+        use std::collections::HashMap;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bu (id INTEGER, score INTEGER)")
+            .await
+            .unwrap();
+        DbAdapter::execute_query(&adapter, "INSERT INTO bu VALUES (1, 10), (2, 20)")
+            .await
+            .unwrap();
+
+        let mut set_vals = HashMap::new();
+        set_vals.insert("score".to_string(), QueryValue::Int(99));
+        let updates = vec![(set_vals, "id = 1".to_string())];
+
+        let affected = DbAdapter::bulk_update(&adapter, "bu", &updates, None)
+            .await
+            .expect("bulk_update should succeed");
+        assert_eq!(affected, 1);
+
+        let r = DbAdapter::execute_query(&adapter, "SELECT score FROM bu WHERE id = 1")
+            .await
+            .unwrap();
+        assert_eq!(r.rows[0][0], QueryValue::Int(99));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_update_empty_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let n = DbAdapter::bulk_update(&adapter, "t", &[], None).await.unwrap();
+        assert_eq!(n, 0);
+    }
+
+    // ── bulk_delete ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_delete_basic() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bd (id INTEGER)")
+            .await
+            .unwrap();
+        DbAdapter::execute_query(&adapter, "INSERT INTO bd VALUES (1), (2), (3)")
+            .await
+            .unwrap();
+
+        let deleted = DbAdapter::bulk_delete(&adapter, "bd", &["id = 2".to_string()], None)
+            .await
+            .expect("bulk_delete should succeed");
+        assert_eq!(deleted, 1);
+
+        let r = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bd")
+            .await
+            .unwrap();
+        assert_eq!(r.rows[0][0], QueryValue::Int(2));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_delete_empty_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let n = DbAdapter::bulk_delete(&adapter, "t", &[], None).await.unwrap();
+        assert_eq!(n, 0);
+    }
 }

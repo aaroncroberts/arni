@@ -85,6 +85,184 @@ impl SqliteAdapter {
         }
     }
 
+    /// Execute a DML/DDL statement and return rows affected.
+    ///
+    /// Uses `sqlx::query::execute` rather than `fetch_all` so DML operations
+    /// correctly return the row count instead of an empty result set.
+    async fn execute_statement(&self, sql: &str) -> Result<u64> {
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            DataError::Connection("Not connected - call connect() first".to_string())
+        })?;
+
+        let result = sqlx::query(sql).execute(pool).await.map_err(|e| {
+            DataError::Query(format!("Failed to execute statement: {}", e))
+        })?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Convert a [`QueryValue`] to a SQL literal suitable for inline SQLite SQL.
+    fn query_value_to_sql_literal(value: &QueryValue) -> String {
+        match value {
+            QueryValue::Null => "NULL".to_string(),
+            QueryValue::Bool(b) => if *b { "1" } else { "0" }.to_string(), // SQLite has no BOOLEAN
+            QueryValue::Int(i) => i.to_string(),
+            QueryValue::Float(f) => {
+                if f.is_nan() || f.is_infinite() {
+                    "NULL".to_string()
+                } else {
+                    format!("{}", f)
+                }
+            }
+            QueryValue::Text(s) => format!("'{}'", s.replace('\'', "''")),
+            QueryValue::Bytes(b) => {
+                let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+                format!("X'{}'", hex)
+            }
+        }
+    }
+
+    /// Map a Polars [`DataType`] to the corresponding SQLite type affinity.
+    fn polars_dtype_to_sqlite_type(dtype: &DataType) -> &'static str {
+        match dtype {
+            DataType::Boolean => "INTEGER", // SQLite stores booleans as 0/1
+            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => "INTEGER",
+            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => "INTEGER",
+            DataType::Float32 | DataType::Float64 => "REAL",
+            DataType::String => "TEXT",
+            DataType::Binary => "BLOB",
+            _ => "TEXT", // Safe fallback
+        }
+    }
+
+    /// Extract the value at `row_idx` from `series` as a SQLite SQL literal.
+    fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
+        if series.is_null().get(row_idx).unwrap_or(false) {
+            return Ok("NULL".to_string());
+        }
+        match series.dtype() {
+            DataType::Boolean => {
+                let val = series
+                    .bool()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(if val { "1" } else { "0" }.to_string())
+            }
+            DataType::Int8 | DataType::Int16 | DataType::Int32 => {
+                let s = series
+                    .cast(&DataType::Int32)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = s
+                    .i32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(val.to_string())
+            }
+            DataType::Int64 => {
+                let val = series
+                    .i64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(val.to_string())
+            }
+            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
+                let s = series
+                    .cast(&DataType::UInt32)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = s
+                    .u32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(val.to_string())
+            }
+            DataType::UInt64 => {
+                let val = series
+                    .u64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(val.to_string())
+            }
+            DataType::Float32 => {
+                let val = series
+                    .f32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                if val.is_nan() || val.is_infinite() {
+                    Ok("NULL".to_string())
+                } else {
+                    Ok(format!("{}", val))
+                }
+            }
+            DataType::Float64 => {
+                let val = series
+                    .f64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                if val.is_nan() || val.is_infinite() {
+                    Ok("NULL".to_string())
+                } else {
+                    Ok(format!("{}", val))
+                }
+            }
+            DataType::String => {
+                let val = series
+                    .str()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(format!("'{}'", val.replace('\'', "''")))
+            }
+            DataType::Binary => {
+                let val = series
+                    .binary()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                let hex: String = val.iter().map(|byte| format!("{:02x}", byte)).collect();
+                Ok(format!("X'{}'", hex))
+            }
+            _ => {
+                let s = series
+                    .cast(&DataType::String)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                match s
+                    .str()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                {
+                    Some(val) => Ok(format!("'{}'", val.replace('\'', "''"))),
+                    None => Ok("NULL".to_string()),
+                }
+            }
+        }
+    }
+
     /// Convert a SQLite row to QueryValue vector
     fn row_to_values(row: &SqliteRow) -> Result<Vec<QueryValue>> {
         let mut values = Vec::new();
@@ -593,48 +771,207 @@ impl DbAdapter for SqliteAdapter {
 
     async fn export_dataframe(
         &self,
-        _df: &DataFrame,
-        _table_name: &str,
+        df: &DataFrame,
+        table_name: &str,
         _schema: Option<&str>,
-        _replace: bool,
+        replace: bool,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "export_dataframe not yet implemented for SQLite".to_string(),
-        ))
+        {
+            let pool_guard = self.pool.read().await;
+            if pool_guard.is_none() {
+                return Err(DataError::Connection(
+                    "Not connected - call connect() first".to_string(),
+                ));
+            }
+        }
+
+        if replace {
+            let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
+            self.execute_statement(&drop_sql).await?;
+
+            let column_defs: Vec<String> = df
+                .get_columns()
+                .iter()
+                .map(|col| {
+                    format!(
+                        "{} {}",
+                        col.name(),
+                        Self::polars_dtype_to_sqlite_type(col.dtype())
+                    )
+                })
+                .collect();
+            let create_sql = format!(
+                "CREATE TABLE {} ({})",
+                table_name,
+                column_defs.join(", ")
+            );
+            self.execute_statement(&create_sql).await?;
+        }
+
+        let column_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        if column_names.is_empty() || df.height() == 0 {
+            return Ok(0);
+        }
+
+        let cols_clause = column_names.join(", ");
+        let mut rows_inserted = 0u64;
+
+        for row_idx in 0..df.height() {
+            let mut literals = Vec::with_capacity(column_names.len());
+            for col_name in &column_names {
+                let col = df.column(col_name).map_err(|e| {
+                    DataError::DataFrame(format!("Column '{}' not found: {}", col_name, e))
+                })?;
+                let series = col.as_materialized_series();
+                literals.push(Self::series_value_to_sql_literal(series, row_idx)?);
+            }
+            let insert_sql = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                table_name,
+                cols_clause,
+                literals.join(", ")
+            );
+            self.execute_statement(&insert_sql).await?;
+            rows_inserted += 1;
+        }
+
+        Ok(rows_inserted)
     }
 
     async fn bulk_insert(
         &self,
-        _table_name: &str,
-        _columns: &[String],
-        _rows: &[Vec<QueryValue>],
+        table_name: &str,
+        columns: &[String],
+        rows: &[Vec<QueryValue>],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_insert not yet implemented for SQLite".to_string(),
-        ))
+        if columns.is_empty() {
+            return Err(DataError::Config("Column list cannot be empty".to_string()));
+        }
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        {
+            let pool_guard = self.pool.read().await;
+            if pool_guard.is_none() {
+                return Err(DataError::Connection(
+                    "Not connected - call connect() first".to_string(),
+                ));
+            }
+        }
+
+        for (idx, row) in rows.iter().enumerate() {
+            if row.len() != columns.len() {
+                return Err(DataError::Config(format!(
+                    "Row {} has {} values but expected {} columns",
+                    idx,
+                    row.len(),
+                    columns.len()
+                )));
+            }
+        }
+
+        let cols_clause = columns.join(", ");
+        let mut total_inserted = 0u64;
+
+        const BATCH_SIZE: usize = 500;
+        for chunk in rows.chunks(BATCH_SIZE) {
+            let value_rows: Vec<String> = chunk
+                .iter()
+                .map(|row| {
+                    let literals: Vec<String> = row
+                        .iter()
+                        .map(Self::query_value_to_sql_literal)
+                        .collect();
+                    format!("({})", literals.join(", "))
+                })
+                .collect();
+            let insert_sql = format!(
+                "INSERT INTO {} ({}) VALUES {}",
+                table_name,
+                cols_clause,
+                value_rows.join(", ")
+            );
+            let rows_affected = self.execute_statement(&insert_sql).await?;
+            total_inserted += rows_affected;
+        }
+
+        Ok(total_inserted)
     }
 
     async fn bulk_update(
         &self,
-        _table_name: &str,
-        _updates: &[(HashMap<String, QueryValue>, String)],
+        table_name: &str,
+        updates: &[(HashMap<String, QueryValue>, String)],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_update not yet implemented for SQLite".to_string(),
-        ))
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        {
+            let pool_guard = self.pool.read().await;
+            if pool_guard.is_none() {
+                return Err(DataError::Connection(
+                    "Not connected - call connect() first".to_string(),
+                ));
+            }
+        }
+
+        let mut total_affected = 0u64;
+
+        for (set_values, where_clause) in updates {
+            if set_values.is_empty() || where_clause.trim().is_empty() {
+                continue;
+            }
+            let set_clause: String = set_values
+                .iter()
+                .map(|(col, val)| format!("{} = {}", col, Self::query_value_to_sql_literal(val)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let update_sql =
+                format!("UPDATE {} SET {} WHERE {}", table_name, set_clause, where_clause);
+            let rows_affected = self.execute_statement(&update_sql).await?;
+            total_affected += rows_affected;
+        }
+
+        Ok(total_affected)
     }
 
     async fn bulk_delete(
         &self,
-        _table_name: &str,
-        _where_clauses: &[String],
+        table_name: &str,
+        where_clauses: &[String],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_delete not yet implemented for SQLite".to_string(),
-        ))
+        if where_clauses.is_empty() {
+            return Ok(0);
+        }
+        {
+            let pool_guard = self.pool.read().await;
+            if pool_guard.is_none() {
+                return Err(DataError::Connection(
+                    "Not connected - call connect() first".to_string(),
+                ));
+            }
+        }
+
+        let mut total_affected = 0u64;
+
+        for where_clause in where_clauses {
+            if where_clause.trim().is_empty() {
+                continue;
+            }
+            let delete_sql = format!("DELETE FROM {} WHERE {}", table_name, where_clause);
+            let rows_affected = self.execute_statement(&delete_sql).await?;
+            total_affected += rows_affected;
+        }
+
+        Ok(total_affected)
     }
 }
 

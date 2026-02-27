@@ -137,6 +137,187 @@ impl OracleAdapter {
         Ok(values)
     }
 
+    /// Convert a [`QueryValue`] to an Oracle SQL literal
+    fn query_value_to_sql_literal(value: &QueryValue) -> String {
+        match value {
+            QueryValue::Null => "NULL".to_string(),
+            QueryValue::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
+            QueryValue::Int(n) => n.to_string(),
+            QueryValue::Float(f) => {
+                if f.is_nan() || f.is_infinite() {
+                    "NULL".to_string()
+                } else {
+                    f.to_string()
+                }
+            }
+            QueryValue::Text(s) => {
+                let escaped = s.replace('\'', "''");
+                format!("'{}'", escaped)
+            }
+            QueryValue::Bytes(b) => {
+                let hex: String = b.iter().map(|byte| format!("{:02X}", byte)).collect();
+                if hex.is_empty() {
+                    "NULL".to_string()
+                } else {
+                    format!("HEXTORAW('{}')", hex)
+                }
+            }
+        }
+    }
+
+    /// Map a Polars [`DataType`] to an Oracle SQL type string
+    fn polars_dtype_to_oracle_type(dtype: &DataType) -> &'static str {
+        match dtype {
+            DataType::Boolean => "NUMBER(1)",
+            DataType::Int8 | DataType::Int16 | DataType::Int32 => "NUMBER(10)",
+            DataType::Int64 => "NUMBER(19)",
+            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => "NUMBER(10)",
+            DataType::UInt64 => "NUMBER(20)",
+            DataType::Float32 => "BINARY_FLOAT",
+            DataType::Float64 => "BINARY_DOUBLE",
+            DataType::String => "VARCHAR2(4000)",
+            DataType::Binary => "BLOB",
+            _ => "VARCHAR2(4000)",
+        }
+    }
+
+    /// Extract a value from a Series at `row_idx` as an Oracle SQL literal
+    fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
+        if series.is_null().get(row_idx).unwrap_or(false) {
+            return Ok("NULL".to_string());
+        }
+        let lit = match series.dtype() {
+            DataType::Boolean => {
+                let v = series
+                    .bool()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or(false);
+                if v { "1".to_string() } else { "0".to_string() }
+            }
+            DataType::Int8 => series
+                .i8()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::Int16 => series
+                .i16()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::Int32 => series
+                .i32()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::Int64 => series
+                .i64()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::UInt8 => series
+                .u8()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::UInt16 => series
+                .u16()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::UInt32 => series
+                .u32()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::UInt64 => series
+                .u64()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::Float32 => {
+                let v = series
+                    .f32()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or(0.0);
+                if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
+            }
+            DataType::Float64 => {
+                let v = series
+                    .f64()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or(0.0);
+                if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
+            }
+            DataType::String => {
+                let v = series
+                    .str()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or("");
+                format!("'{}'", v.replace('\'', "''"))
+            }
+            DataType::Binary => {
+                let v = series
+                    .binary()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or(&[]);
+                let hex: String = v.iter().map(|b| format!("{:02X}", b)).collect();
+                if hex.is_empty() { "NULL".to_string() } else { format!("HEXTORAW('{}')", hex) }
+            }
+            _ => {
+                let cast = series
+                    .cast(&DataType::String)
+                    .map_err(|e| DataError::Query(e.to_string()))?;
+                match cast
+                    .str()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                {
+                    Some(s) => format!("'{}'", s.replace('\'', "''")),
+                    None => "NULL".to_string(),
+                }
+            }
+        };
+        Ok(lit)
+    }
+
+    /// Execute a DML or DDL statement in blocking context, returning rows affected
+    async fn execute_statement_blocking(&self, sql: String) -> Result<u64> {
+        let connection = self.connection.clone();
+        tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+            let conn_guard = handle.block_on(connection.read());
+            let conn = conn_guard.as_ref().ok_or_else(|| {
+                DataError::Connection("Not connected".to_string())
+            })?;
+            let mut stmt = conn.statement(&sql).build().map_err(|e| {
+                DataError::Query(format!("Failed to prepare statement: {}", e))
+            })?;
+            stmt.execute(&[]).map_err(|e| {
+                DataError::Query(format!("Statement execution failed: {}", e))
+            })?;
+            // row_count is valid for DML; DDL returns 0 or an error (ignored)
+            let count = stmt.row_count().unwrap_or(0);
+            // commit DML changes; DDL auto-commits in Oracle
+            let _ = conn.commit();
+            Ok(count)
+        })
+        .await
+        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?
+    }
+
     /// Execute a query in blocking context
     #[instrument(skip(self, query), fields(adapter = "oracle", query_length = query.len()))]
     async fn execute_query_blocking(&self, query: String) -> Result<QueryResult> {
@@ -377,14 +558,77 @@ impl DbAdapter for OracleAdapter {
 
     async fn export_dataframe(
         &self,
-        _df: &DataFrame,
-        _table_name: &str,
+        df: &DataFrame,
+        table_name: &str,
         _schema: Option<&str>,
-        _replace: bool,
+        replace: bool,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "DataFrame export not yet implemented for Oracle".to_string(),
-        ))
+        if !*self.connected.read().await {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let table_upper = table_name.to_uppercase();
+
+        if replace {
+            // Oracle has no DROP TABLE IF EXISTS — use PL/SQL to suppress ORA-00942
+            let drop_sql = format!(
+                "BEGIN EXECUTE IMMEDIATE 'DROP TABLE {}'; \
+                 EXCEPTION WHEN OTHERS THEN \
+                 IF SQLCODE != -942 THEN RAISE; END IF; END;",
+                table_upper
+            );
+            self.execute_statement_blocking(drop_sql).await?;
+
+            let col_defs: Vec<String> = df
+                .get_columns()
+                .iter()
+                .map(|col| {
+                    format!(
+                        "{} {}",
+                        col.name().to_uppercase(),
+                        Self::polars_dtype_to_oracle_type(col.dtype())
+                    )
+                })
+                .collect();
+            let create_sql =
+                format!("CREATE TABLE {} ({})", table_upper, col_defs.join(", "));
+            self.execute_statement_blocking(create_sql).await?;
+        }
+
+        let nrows = df.height();
+        if nrows == 0 {
+            return Ok(0);
+        }
+
+        let column_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|n| n.to_uppercase())
+            .collect();
+        let cols_str = column_names.join(", ");
+        let mut total: u64 = 0;
+
+        for row_idx in 0..nrows {
+            let mut literals = Vec::with_capacity(column_names.len());
+            for col_name in &column_names {
+                let series = df
+                    .column(col_name)
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .as_materialized_series();
+                literals.push(Self::series_value_to_sql_literal(series, row_idx)?);
+            }
+            let insert_sql = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                table_upper,
+                cols_str,
+                literals.join(", ")
+            );
+            total += self.execute_statement_blocking(insert_sql).await?;
+        }
+
+        Ok(total)
     }
 
     async fn list_databases(&self) -> Result<Vec<String>> {
@@ -782,43 +1026,109 @@ impl DbAdapter for OracleAdapter {
 
     async fn bulk_insert(
         &self,
-        _table_name: &str,
-        _columns: &[String],
-        _rows: &[Vec<QueryValue>],
+        table_name: &str,
+        columns: &[String],
+        rows: &[Vec<QueryValue>],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_insert not yet implemented for Oracle".to_string(),
-        ))
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        if columns.is_empty() {
+            return Err(DataError::Query("No columns specified".to_string()));
+        }
+        for (i, row) in rows.iter().enumerate() {
+            if row.len() != columns.len() {
+                return Err(DataError::Query(format!(
+                    "Row {} has {} values but {} columns specified",
+                    i,
+                    row.len(),
+                    columns.len()
+                )));
+            }
+        }
+
+        let table_upper = table_name.to_uppercase();
+        let cols_str = columns
+            .iter()
+            .map(|c| c.to_uppercase())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let mut total: u64 = 0;
+        for row in rows {
+            let literals: Vec<String> =
+                row.iter().map(Self::query_value_to_sql_literal).collect();
+            let sql = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                table_upper,
+                cols_str,
+                literals.join(", ")
+            );
+            total += self.execute_statement_blocking(sql).await?;
+        }
+        Ok(total)
     }
 
     async fn bulk_update(
         &self,
-        _table_name: &str,
-        _updates: &[(HashMap<String, QueryValue>, String)],
+        table_name: &str,
+        updates: &[(HashMap<String, QueryValue>, String)],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_update not yet implemented for Oracle".to_string(),
-        ))
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        let table_upper = table_name.to_uppercase();
+        let mut total: u64 = 0;
+        for (set_values, where_clause) in updates {
+            if set_values.is_empty() {
+                continue;
+            }
+            let set_parts: Vec<String> = set_values
+                .iter()
+                .map(|(col, val)| {
+                    format!(
+                        "{} = {}",
+                        col.to_uppercase(),
+                        Self::query_value_to_sql_literal(val)
+                    )
+                })
+                .collect();
+            let sql = format!(
+                "UPDATE {} SET {} WHERE {}",
+                table_upper,
+                set_parts.join(", "),
+                where_clause
+            );
+            total += self.execute_statement_blocking(sql).await?;
+        }
+        Ok(total)
     }
 
     async fn bulk_delete(
         &self,
-        _table_name: &str,
-        _where_clauses: &[String],
+        table_name: &str,
+        where_clauses: &[String],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_delete not yet implemented for Oracle".to_string(),
-        ))
+        if where_clauses.is_empty() {
+            return Ok(0);
+        }
+        let table_upper = table_name.to_uppercase();
+        let mut total: u64 = 0;
+        for where_clause in where_clauses {
+            let sql = format!("DELETE FROM {} WHERE {}", table_upper, where_clause);
+            total += self.execute_statement_blocking(sql).await?;
+        }
+        Ok(total)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
+    use crate::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter, QueryValue};
 
     fn make_config(service_name: &str) -> ConnectionConfig {
         ConnectionConfig {
@@ -873,5 +1183,146 @@ mod tests {
         let adapter = OracleAdapter::new(config.clone());
         assert_eq!(adapter.config().id, config.id);
         assert_eq!(adapter.config().port, Some(1521));
+    }
+
+    // ── SQL literal helpers ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_sql_literal_null() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Null),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bool_true() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Bool(true)),
+            "1"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bool_false() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Bool(false)),
+            "0"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_int() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Int(-42)),
+            "-42"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_float() {
+        let lit = OracleAdapter::query_value_to_sql_literal(&QueryValue::Float(3.14));
+        assert!(lit.starts_with("3.14"), "got: {}", lit);
+    }
+
+    #[test]
+    fn test_sql_literal_float_nan_becomes_null() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Float(f64::NAN)),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_float_inf_becomes_null() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Float(f64::INFINITY)),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_text_plain() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Text("hello".to_string())),
+            "'hello'"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_text_with_single_quote() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Text(
+                "O'Brien".to_string()
+            )),
+            "'O''Brien'"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bytes() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Bytes(vec![0xFF, 0x00])),
+            "HEXTORAW('FF00')"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_empty_bytes_is_null() {
+        assert_eq!(
+            OracleAdapter::query_value_to_sql_literal(&QueryValue::Bytes(vec![])),
+            "NULL"
+        );
+    }
+
+    // ── dtype mapping helpers ────────────────────────────────────────────────
+
+    #[test]
+    fn test_dtype_mapping_int_types() {
+        use polars::prelude::DataType;
+        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int8), "NUMBER(10)");
+        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int16), "NUMBER(10)");
+        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int32), "NUMBER(10)");
+        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::Int64), "NUMBER(19)");
+        assert_eq!(OracleAdapter::polars_dtype_to_oracle_type(&DataType::UInt64), "NUMBER(20)");
+    }
+
+    #[test]
+    fn test_dtype_mapping_float_types() {
+        use polars::prelude::DataType;
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Float32),
+            "BINARY_FLOAT"
+        );
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Float64),
+            "BINARY_DOUBLE"
+        );
+    }
+
+    #[test]
+    fn test_dtype_mapping_string_and_bool() {
+        use polars::prelude::DataType;
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Boolean),
+            "NUMBER(1)"
+        );
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::String),
+            "VARCHAR2(4000)"
+        );
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Binary),
+            "BLOB"
+        );
+    }
+
+    #[test]
+    fn test_dtype_mapping_unknown_falls_back_to_varchar2() {
+        use polars::prelude::DataType;
+        assert_eq!(
+            OracleAdapter::polars_dtype_to_oracle_type(&DataType::Date),
+            "VARCHAR2(4000)"
+        );
     }
 }

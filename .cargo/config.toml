@@ -5,6 +5,10 @@
 # Limits incremental compilation to the workspace crates only. Avoids re-running
 # build scripts for dependencies that haven't changed.
 incremental = true
+# NOTE: Build artifacts grow large (100+ GB) because of DuckDB's bundled C++
+# library and Oracle/MongoDB native libs. Run `cargo clean` periodically, or
+# install cargo-sweep and run `cargo sweep --time 7` to remove old artifacts.
+# Install: cargo install cargo-sweep
 
 [net]
 retry = 2

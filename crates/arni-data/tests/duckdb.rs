@@ -257,4 +257,409 @@ mod duckdb_tests {
             other => panic!("expected QueryValue::Int(42), got {:?}", other),
         }
     }
+
+    // ── export_dataframe ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_duckdb_export_dataframe_not_connected_returns_error() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let adapter = DuckDbAdapter::new(cfg);
+
+        let df = df! {
+            "id" => [1i32, 2, 3],
+            "name" => ["a", "b", "c"],
+        }
+        .unwrap();
+
+        let result =
+            DbAdapter::export_dataframe(&adapter, &df, "test_table", None, true).await;
+        assert!(
+            result.is_err(),
+            "export_dataframe before connect should fail"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_export_dataframe_creates_table_and_inserts() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df = df! {
+            "id" => [1i32, 2, 3],
+            "label" => ["alpha", "beta", "gamma"],
+        }
+        .unwrap();
+
+        let rows = DbAdapter::export_dataframe(&adapter, &df, "export_basic", None, true)
+            .await
+            .expect("export_dataframe should succeed");
+
+        assert_eq!(rows, 3, "should have inserted 3 rows");
+
+        // Verify data is queryable
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM export_basic")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0][0], arni_data::adapter::QueryValue::Int(3));
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_export_dataframe_replace() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df1 = df! { "x" => [1i64, 2, 3, 4, 5] }.unwrap();
+        DbAdapter::export_dataframe(&adapter, &df1, "replace_test", None, true)
+            .await
+            .unwrap();
+
+        // Replace with smaller dataset
+        let df2 = df! { "x" => [10i64, 20] }.unwrap();
+        let rows = DbAdapter::export_dataframe(&adapter, &df2, "replace_test", None, true)
+            .await
+            .expect("replace should succeed");
+
+        assert_eq!(rows, 2, "replaced table should have 2 rows");
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM replace_test")
+                .await
+                .unwrap();
+        assert_eq!(result.rows[0][0], arni_data::adapter::QueryValue::Int(2));
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_export_dataframe_empty_df_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        // Create empty DataFrame with schema
+        let df = DataFrame::new(vec![
+            Column::new("id".into(), &[] as &[i32]),
+        ])
+        .unwrap();
+
+        // Create table first so export has somewhere to write
+        DbAdapter::execute_query(&adapter, "CREATE TABLE empty_test (id INTEGER)")
+            .await
+            .unwrap();
+
+        let rows = DbAdapter::export_dataframe(&adapter, &df, "empty_test", None, false)
+            .await
+            .expect("exporting empty df should succeed");
+
+        assert_eq!(rows, 0, "empty DataFrame should insert 0 rows");
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_export_dataframe_with_nulls() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df = df! {
+            "id" => [Some(1i32), None, Some(3)],
+            "val" => [Some(1.5f64), Some(2.5), None],
+        }
+        .unwrap();
+
+        let rows = DbAdapter::export_dataframe(&adapter, &df, "null_test", None, true)
+            .await
+            .expect("export with nulls should succeed");
+
+        assert_eq!(rows, 3);
+    }
+
+    // ── bulk_insert ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_insert_not_connected_returns_error() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let adapter = DuckDbAdapter::new(cfg);
+
+        let cols = vec!["id".to_string()];
+        let rows = vec![vec![QueryValue::Int(1)]];
+        let result = DbAdapter::bulk_insert(&adapter, "t", &cols, &rows, None).await;
+        assert!(
+            result.is_err(),
+            "bulk_insert before connect should return error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_insert_empty_rows_returns_zero() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bi_empty (id INTEGER)")
+            .await
+            .unwrap();
+
+        let cols = vec!["id".to_string()];
+        let result = DbAdapter::bulk_insert(&adapter, "bi_empty", &cols, &[], None)
+            .await
+            .expect("empty bulk_insert should succeed");
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_insert_empty_columns_returns_error() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let rows = vec![vec![QueryValue::Int(1)]];
+        let result = DbAdapter::bulk_insert(&adapter, "any_table", &[], &rows, None).await;
+        assert!(
+            result.is_err(),
+            "bulk_insert with no columns should return error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_insert_column_count_mismatch_returns_error() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bi_mismatch (a INTEGER, b INTEGER)")
+            .await
+            .unwrap();
+
+        let cols = vec!["a".to_string(), "b".to_string()]; // 2 columns
+        let rows = vec![
+            vec![QueryValue::Int(1)], // only 1 value
+        ];
+        let result = DbAdapter::bulk_insert(&adapter, "bi_mismatch", &cols, &rows, None).await;
+        assert!(
+            result.is_err(),
+            "mismatched column count should return error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_insert_basic() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bi_basic (id INTEGER, name VARCHAR)",
+        )
+        .await
+        .unwrap();
+
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let rows = vec![
+            vec![QueryValue::Int(1), QueryValue::Text("alice".to_string())],
+            vec![QueryValue::Int(2), QueryValue::Text("bob".to_string())],
+            vec![QueryValue::Int(3), QueryValue::Text("charlie".to_string())],
+        ];
+
+        let inserted = DbAdapter::bulk_insert(&adapter, "bi_basic", &cols, &rows, None)
+            .await
+            .expect("bulk_insert should succeed");
+
+        assert_eq!(inserted, 3, "should have inserted 3 rows");
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bi_basic")
+                .await
+                .unwrap();
+        assert_eq!(result.rows[0][0], QueryValue::Int(3));
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_insert_with_nulls() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bi_nulls (id INTEGER, note VARCHAR)")
+            .await
+            .unwrap();
+
+        let cols = vec!["id".to_string(), "note".to_string()];
+        let rows = vec![
+            vec![QueryValue::Int(1), QueryValue::Null],
+            vec![QueryValue::Null, QueryValue::Text("no id".to_string())],
+        ];
+
+        let inserted = DbAdapter::bulk_insert(&adapter, "bi_nulls", &cols, &rows, None)
+            .await
+            .expect("bulk_insert with nulls should succeed");
+
+        assert_eq!(inserted, 2);
+    }
+
+    // ── bulk_update ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_update_empty_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let result = DbAdapter::bulk_update(&adapter, "any_table", &[], None)
+            .await
+            .expect("bulk_update with empty list should return 0");
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_update_basic() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+        use std::collections::HashMap;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bu_basic (id INTEGER, score INTEGER)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO bu_basic VALUES (1, 10), (2, 20), (3, 30)",
+        )
+        .await
+        .unwrap();
+
+        let mut set_vals = HashMap::new();
+        set_vals.insert("score".to_string(), QueryValue::Int(99));
+
+        let updates = vec![(set_vals, "id = 2".to_string())];
+        let affected = DbAdapter::bulk_update(&adapter, "bu_basic", &updates, None)
+            .await
+            .expect("bulk_update should succeed");
+
+        assert_eq!(affected, 1, "one row should have been updated");
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT score FROM bu_basic WHERE id = 2")
+                .await
+                .unwrap();
+        assert_eq!(result.rows[0][0], QueryValue::Int(99));
+    }
+
+    // ── bulk_delete ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_delete_empty_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let result = DbAdapter::bulk_delete(&adapter, "any_table", &[], None)
+            .await
+            .expect("bulk_delete with empty list should return 0");
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_delete_basic() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bd_basic (id INTEGER, active BOOLEAN)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO bd_basic VALUES (1, true), (2, false), (3, true), (4, false)",
+        )
+        .await
+        .unwrap();
+
+        let where_clauses = vec!["active = false".to_string()];
+        let deleted = DbAdapter::bulk_delete(&adapter, "bd_basic", &where_clauses, None)
+            .await
+            .expect("bulk_delete should succeed");
+
+        assert_eq!(deleted, 2, "two inactive rows should have been deleted");
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bd_basic")
+                .await
+                .unwrap();
+        assert_eq!(result.rows[0][0], QueryValue::Int(2));
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_bulk_delete_multiple_clauses() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bd_multi (id INTEGER)")
+            .await
+            .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO bd_multi VALUES (1), (2), (3), (4), (5)",
+        )
+        .await
+        .unwrap();
+
+        // Delete rows 1 and 5 separately
+        let where_clauses = vec!["id = 1".to_string(), "id = 5".to_string()];
+        let deleted = DbAdapter::bulk_delete(&adapter, "bd_multi", &where_clauses, None)
+            .await
+            .expect("bulk_delete should succeed");
+
+        assert_eq!(deleted, 2);
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bd_multi")
+                .await
+                .unwrap();
+        assert_eq!(result.rows[0][0], QueryValue::Int(3));
+    }
 }

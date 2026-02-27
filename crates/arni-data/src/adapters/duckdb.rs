@@ -139,6 +139,201 @@ impl DuckDbAdapter {
         Ok(result)
     }
 
+    /// Execute a DML/DDL statement (INSERT/UPDATE/DELETE/CREATE/DROP) and return rows affected.
+    ///
+    /// Uses `Connection::execute` rather than `prepare` + `query` so it works
+    /// correctly for non-SELECT statements where we want a row count.
+    async fn execute_statement_blocking(&self, sql: String) -> Result<u64> {
+        let connection = self.connection.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn_guard = connection
+                .lock()
+                .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
+            let conn = conn_guard.as_ref().ok_or_else(|| {
+                DataError::Connection("Not connected".to_string())
+            })?;
+            conn.execute(&sql, [])
+                .map(|n| n as u64)
+                .map_err(|e| DataError::Query(format!("Failed to execute statement: {}", e)))
+        })
+        .await
+        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?
+    }
+
+    /// Convert a [`QueryValue`] to a SQL literal suitable for inline DuckDB SQL.
+    ///
+    /// - Strings are single-quoted with `'` escaped as `''`.
+    /// - Binary data is encoded as a DuckDB hex literal `X'...'`.
+    /// - NaN/Infinite floats are mapped to `NULL`.
+    fn query_value_to_sql_literal(value: &QueryValue) -> String {
+        match value {
+            QueryValue::Null => "NULL".to_string(),
+            QueryValue::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
+            QueryValue::Int(i) => i.to_string(),
+            QueryValue::Float(f) => {
+                if f.is_nan() || f.is_infinite() {
+                    "NULL".to_string()
+                } else {
+                    format!("{}", f)
+                }
+            }
+            QueryValue::Text(s) => format!("'{}'", s.replace('\'', "''")),
+            QueryValue::Bytes(b) => {
+                let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+                format!("X'{}'", hex)
+            }
+        }
+    }
+
+    /// Map a Polars [`DataType`] to the corresponding DuckDB SQL type name.
+    fn polars_dtype_to_duckdb_type(dtype: &DataType) -> &'static str {
+        match dtype {
+            DataType::Boolean => "BOOLEAN",
+            DataType::Int8 => "TINYINT",
+            DataType::Int16 => "SMALLINT",
+            DataType::Int32 => "INTEGER",
+            DataType::Int64 => "BIGINT",
+            DataType::UInt8 => "UTINYINT",
+            DataType::UInt16 => "USMALLINT",
+            DataType::UInt32 => "UINTEGER",
+            DataType::UInt64 => "UBIGINT",
+            DataType::Float32 => "FLOAT",
+            DataType::Float64 => "DOUBLE",
+            DataType::String => "VARCHAR",
+            DataType::Binary => "BLOB",
+            _ => "VARCHAR", // Safe fallback for dates, enums, structs, etc.
+        }
+    }
+
+    /// Extract the value at `row_idx` from `series` as a DuckDB SQL literal string.
+    fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
+        // Fast path: NULL
+        if series.is_null().get(row_idx).unwrap_or(false) {
+            return Ok("NULL".to_string());
+        }
+        match series.dtype() {
+            DataType::Boolean => {
+                let val = series
+                    .bool()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(if val { "TRUE" } else { "FALSE" }.to_string())
+            }
+            DataType::Int8 | DataType::Int16 | DataType::Int32 => {
+                let s = series
+                    .cast(&DataType::Int32)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = s
+                    .i32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(val.to_string())
+            }
+            DataType::Int64 => {
+                let val = series
+                    .i64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(val.to_string())
+            }
+            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
+                let s = series
+                    .cast(&DataType::UInt32)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                let val = s
+                    .u32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(val.to_string())
+            }
+            DataType::UInt64 => {
+                let val = series
+                    .u64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(val.to_string())
+            }
+            DataType::Float32 => {
+                let val = series
+                    .f32()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                if val.is_nan() || val.is_infinite() {
+                    Ok("NULL".to_string())
+                } else {
+                    Ok(format!("{}", val))
+                }
+            }
+            DataType::Float64 => {
+                let val = series
+                    .f64()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                if val.is_nan() || val.is_infinite() {
+                    Ok("NULL".to_string())
+                } else {
+                    Ok(format!("{}", val))
+                }
+            }
+            DataType::String => {
+                let val = series
+                    .str()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                Ok(format!("'{}'", val.replace('\'', "''")))
+            }
+            DataType::Binary => {
+                let val = series
+                    .binary()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                    .ok_or_else(|| {
+                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
+                    })?;
+                let hex: String = val.iter().map(|byte| format!("{:02x}", byte)).collect();
+                Ok(format!("X'{}'", hex))
+            }
+            _ => {
+                // Generic fallback: cast to String and single-quote.
+                let s = series
+                    .cast(&DataType::String)
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
+                match s
+                    .str()
+                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
+                    .get(row_idx)
+                {
+                    Some(val) => Ok(format!("'{}'", val.replace('\'', "''"))),
+                    None => Ok("NULL".to_string()),
+                }
+            }
+        }
+    }
+
     /// Get a value from a DuckDB row
     fn get_value(row: &duckdb::Row, idx: usize) -> std::result::Result<QueryValue, duckdb::Error> {
         use duckdb::types::ValueRef;
@@ -310,14 +505,73 @@ impl DbAdapter for DuckDbAdapter {
 
     async fn export_dataframe(
         &self,
-        _df: &DataFrame,
-        _table_name: &str,
+        df: &DataFrame,
+        table_name: &str,
         _schema: Option<&str>,
-        _replace: bool,
+        replace: bool,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "export_dataframe not yet implemented for DuckDB".to_string(),
-        ))
+        if !ConnectionTrait::is_connected(self) {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        if replace {
+            let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
+            self.execute_statement_blocking(drop_sql).await?;
+
+            let column_defs: Vec<String> = df
+                .get_columns()
+                .iter()
+                .map(|col| {
+                    format!(
+                        "{} {}",
+                        col.name(),
+                        Self::polars_dtype_to_duckdb_type(col.dtype())
+                    )
+                })
+                .collect();
+            let create_sql = format!(
+                "CREATE TABLE {} ({})",
+                table_name,
+                column_defs.join(", ")
+            );
+            self.execute_statement_blocking(create_sql).await?;
+        }
+
+        let column_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        if column_names.is_empty() || df.height() == 0 {
+            return Ok(0);
+        }
+
+        let cols_clause = column_names.join(", ");
+        let mut rows_inserted = 0u64;
+
+        for row_idx in 0..df.height() {
+            let mut literals = Vec::with_capacity(column_names.len());
+            for col_name in &column_names {
+                let col = df.column(col_name).map_err(|e| {
+                    DataError::DataFrame(format!("Column '{}' not found: {}", col_name, e))
+                })?;
+                let series = col.as_materialized_series();
+                literals.push(Self::series_value_to_sql_literal(series, row_idx)?);
+            }
+            let insert_sql = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                table_name,
+                cols_clause,
+                literals.join(", ")
+            );
+            self.execute_statement_blocking(insert_sql).await?;
+            rows_inserted += 1;
+        }
+
+        Ok(rows_inserted)
     }
 
     async fn read_table(&self, table_name: &str, _schema: Option<&str>) -> Result<DataFrame> {
@@ -337,36 +591,125 @@ impl DbAdapter for DuckDbAdapter {
 
     async fn bulk_insert(
         &self,
-        _table_name: &str,
-        _columns: &[String],
-        _rows: &[Vec<QueryValue>],
+        table_name: &str,
+        columns: &[String],
+        rows: &[Vec<QueryValue>],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_insert not yet implemented for DuckDB".to_string(),
-        ))
+        if columns.is_empty() {
+            return Err(DataError::Config("Column list cannot be empty".to_string()));
+        }
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        if !ConnectionTrait::is_connected(self) {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        for (idx, row) in rows.iter().enumerate() {
+            if row.len() != columns.len() {
+                return Err(DataError::Config(format!(
+                    "Row {} has {} values but expected {} columns",
+                    idx,
+                    row.len(),
+                    columns.len()
+                )));
+            }
+        }
+
+        let cols_clause = columns.join(", ");
+        let mut total_inserted = 0u64;
+
+        // Batch rows to avoid excessively long individual SQL statements.
+        const BATCH_SIZE: usize = 500;
+        for chunk in rows.chunks(BATCH_SIZE) {
+            let value_rows: Vec<String> = chunk
+                .iter()
+                .map(|row| {
+                    let literals: Vec<String> = row
+                        .iter()
+                        .map(Self::query_value_to_sql_literal)
+                        .collect();
+                    format!("({})", literals.join(", "))
+                })
+                .collect();
+            let insert_sql = format!(
+                "INSERT INTO {} ({}) VALUES {}",
+                table_name,
+                cols_clause,
+                value_rows.join(", ")
+            );
+            let rows_affected = self.execute_statement_blocking(insert_sql).await?;
+            total_inserted += rows_affected;
+        }
+
+        Ok(total_inserted)
     }
 
     async fn bulk_update(
         &self,
-        _table_name: &str,
-        _updates: &[(HashMap<String, QueryValue>, String)],
+        table_name: &str,
+        updates: &[(HashMap<String, QueryValue>, String)],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_update not yet implemented for DuckDB".to_string(),
-        ))
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        if !ConnectionTrait::is_connected(self) {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let mut total_affected = 0u64;
+
+        for (set_values, where_clause) in updates {
+            if set_values.is_empty() || where_clause.trim().is_empty() {
+                continue;
+            }
+            let set_clause: String = set_values
+                .iter()
+                .map(|(col, val)| format!("{} = {}", col, Self::query_value_to_sql_literal(val)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let update_sql =
+                format!("UPDATE {} SET {} WHERE {}", table_name, set_clause, where_clause);
+            let rows_affected = self.execute_statement_blocking(update_sql).await?;
+            total_affected += rows_affected;
+        }
+
+        Ok(total_affected)
     }
 
     async fn bulk_delete(
         &self,
-        _table_name: &str,
-        _where_clauses: &[String],
+        table_name: &str,
+        where_clauses: &[String],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_delete not yet implemented for DuckDB".to_string(),
-        ))
+        if where_clauses.is_empty() {
+            return Ok(0);
+        }
+        if !ConnectionTrait::is_connected(self) {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        let mut total_affected = 0u64;
+
+        for where_clause in where_clauses {
+            if where_clause.trim().is_empty() {
+                continue;
+            }
+            let delete_sql = format!("DELETE FROM {} WHERE {}", table_name, where_clause);
+            let rows_affected = self.execute_statement_blocking(delete_sql).await?;
+            total_affected += rows_affected;
+        }
+
+        Ok(total_affected)
     }
 
     async fn get_server_info(&self) -> Result<ServerInfo> {
@@ -578,7 +921,7 @@ impl DbAdapter for DuckDbAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::{Connection as ConnectionTrait, DatabaseType};
+    use crate::adapter::{Connection as ConnectionTrait, DatabaseType, QueryValue};
 
     fn make_config(database: &str) -> ConnectionConfig {
         ConnectionConfig {
@@ -638,5 +981,145 @@ mod tests {
         let adapter = DuckDbAdapter::new(config.clone());
         assert_eq!(adapter.config().id, config.id);
         assert_eq!(adapter.config().database, "/tmp/test.duckdb");
+    }
+
+    // ── query_value_to_sql_literal ──────────────────────────────────────────
+
+    #[test]
+    fn test_sql_literal_null() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Null),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bool_true() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Bool(true)),
+            "TRUE"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bool_false() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Bool(false)),
+            "FALSE"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_int() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Int(42)),
+            "42"
+        );
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Int(-7)),
+            "-7"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_float() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Float(3.14)),
+            "3.14"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_float_nan_becomes_null() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Float(f64::NAN)),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_float_inf_becomes_null() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Float(f64::INFINITY)),
+            "NULL"
+        );
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Float(f64::NEG_INFINITY)),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_text_plain() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Text("hello".to_string())),
+            "'hello'"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_text_with_single_quote() {
+        // Single quotes in strings are escaped as ''
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Text("it's".to_string())),
+            "'it''s'"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bytes() {
+        let bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Bytes(bytes)),
+            "X'deadbeef'"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_empty_bytes() {
+        assert_eq!(
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Bytes(vec![])),
+            "X''"
+        );
+    }
+
+    // ── polars_dtype_to_duckdb_type ─────────────────────────────────────────
+
+    #[test]
+    fn test_dtype_mapping_int_types() {
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int8), "TINYINT");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int16), "SMALLINT");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int32), "INTEGER");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int64), "BIGINT");
+    }
+
+    #[test]
+    fn test_dtype_mapping_uint_types() {
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt8), "UTINYINT");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt16), "USMALLINT");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt32), "UINTEGER");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt64), "UBIGINT");
+    }
+
+    #[test]
+    fn test_dtype_mapping_float_types() {
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Float32), "FLOAT");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Float64), "DOUBLE");
+    }
+
+    #[test]
+    fn test_dtype_mapping_string_and_bool() {
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::String), "VARCHAR");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Boolean), "BOOLEAN");
+        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Binary), "BLOB");
+    }
+
+    #[test]
+    fn test_dtype_mapping_unknown_falls_back_to_varchar() {
+        // Date, Datetime, etc. fall back to VARCHAR
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Date),
+            "VARCHAR"
+        );
     }
 }

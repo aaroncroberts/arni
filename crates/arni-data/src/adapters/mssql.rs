@@ -90,6 +90,176 @@ impl SqlServerAdapter {
         Ok(tiberius_config)
     }
 
+    /// Convert a [`QueryValue`] to a SQL Server SQL literal
+    fn query_value_to_sql_literal(value: &QueryValue) -> String {
+        match value {
+            QueryValue::Null => "NULL".to_string(),
+            QueryValue::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
+            QueryValue::Int(n) => n.to_string(),
+            QueryValue::Float(f) => {
+                if f.is_nan() || f.is_infinite() {
+                    "NULL".to_string()
+                } else {
+                    f.to_string()
+                }
+            }
+            QueryValue::Text(s) => {
+                let escaped = s.replace('\'', "''");
+                format!("N'{}'", escaped)
+            }
+            QueryValue::Bytes(b) => {
+                let hex: String = b.iter().map(|byte| format!("{:02X}", byte)).collect();
+                if hex.is_empty() {
+                    "NULL".to_string()
+                } else {
+                    format!("0x{}", hex)
+                }
+            }
+        }
+    }
+
+    /// Map a Polars [`DataType`] to a SQL Server type string
+    fn polars_dtype_to_mssql_type(dtype: &DataType) -> &'static str {
+        match dtype {
+            DataType::Boolean => "BIT",
+            DataType::Int8 | DataType::Int16 => "SMALLINT",
+            DataType::Int32 => "INT",
+            DataType::Int64 => "BIGINT",
+            DataType::UInt8 | DataType::UInt16 => "SMALLINT",
+            DataType::UInt32 => "INT",
+            DataType::UInt64 => "BIGINT",
+            DataType::Float32 => "REAL",
+            DataType::Float64 => "FLOAT",
+            DataType::String => "NVARCHAR(MAX)",
+            DataType::Binary => "VARBINARY(MAX)",
+            _ => "NVARCHAR(MAX)",
+        }
+    }
+
+    /// Extract a value from a Series at `row_idx` as a SQL Server SQL literal
+    fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
+        if series.is_null().get(row_idx).unwrap_or(false) {
+            return Ok("NULL".to_string());
+        }
+        let lit = match series.dtype() {
+            DataType::Boolean => {
+                let v = series
+                    .bool()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or(false);
+                if v { "1".to_string() } else { "0".to_string() }
+            }
+            DataType::Int8 => series
+                .i8()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::Int16 => series
+                .i16()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::Int32 => series
+                .i32()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::Int64 => series
+                .i64()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::UInt8 => series
+                .u8()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::UInt16 => series
+                .u16()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::UInt32 => series
+                .u32()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::UInt64 => series
+                .u64()
+                .map_err(|e| DataError::Query(e.to_string()))?
+                .get(row_idx)
+                .unwrap_or(0)
+                .to_string(),
+            DataType::Float32 => {
+                let v = series
+                    .f32()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or(0.0);
+                if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
+            }
+            DataType::Float64 => {
+                let v = series
+                    .f64()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or(0.0);
+                if v.is_nan() || v.is_infinite() { "NULL".to_string() } else { v.to_string() }
+            }
+            DataType::String => {
+                let v = series
+                    .str()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or("");
+                format!("N'{}'", v.replace('\'', "''"))
+            }
+            DataType::Binary => {
+                let v = series
+                    .binary()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                    .unwrap_or(&[]);
+                let hex: String = v.iter().map(|b| format!("{:02X}", b)).collect();
+                if hex.is_empty() { "NULL".to_string() } else { format!("0x{}", hex) }
+            }
+            _ => {
+                let cast = series
+                    .cast(&DataType::String)
+                    .map_err(|e| DataError::Query(e.to_string()))?;
+                match cast
+                    .str()
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .get(row_idx)
+                {
+                    Some(s) => format!("N'{}'", s.replace('\'', "''")),
+                    None => "NULL".to_string(),
+                }
+            }
+        };
+        Ok(lit)
+    }
+
+    /// Execute a DML or DDL statement, returning rows affected
+    async fn execute_statement(&self, sql: &str) -> Result<u64> {
+        let mut client_guard = self.client.write().await;
+        let client = client_guard.as_mut().ok_or_else(|| {
+            DataError::Connection("Not connected - call connect() first".to_string())
+        })?;
+        let result = client.execute(sql, &[]).await.map_err(|e| {
+            DataError::Query(format!("Statement execution failed: {}", e))
+        })?;
+        Ok(result.rows_affected().iter().sum::<u64>())
+    }
+
     /// Convert a SQL Server row to QueryValue vector
     fn row_to_values(row: &tiberius::Row) -> Result<Vec<QueryValue>> {
         let mut values = Vec::new();
@@ -664,55 +834,163 @@ impl DbAdapter for SqlServerAdapter {
 
     async fn export_dataframe(
         &self,
-        _df: &DataFrame,
-        _table_name: &str,
+        df: &DataFrame,
+        table_name: &str,
         _schema: Option<&str>,
-        _replace: bool,
+        replace: bool,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "export_dataframe not yet implemented for SQL Server".to_string(),
-        ))
+        if self.client.read().await.is_none() {
+            return Err(DataError::Connection(
+                "Not connected - call connect() first".to_string(),
+            ));
+        }
+
+        if replace {
+            let drop_sql = format!(
+                "IF OBJECT_ID(N'{}', N'U') IS NOT NULL DROP TABLE {}",
+                table_name, table_name
+            );
+            self.execute_statement(&drop_sql).await?;
+
+            let col_defs: Vec<String> = df
+                .get_columns()
+                .iter()
+                .map(|col| {
+                    format!("{} {}", col.name(), Self::polars_dtype_to_mssql_type(col.dtype()))
+                })
+                .collect();
+            let create_sql =
+                format!("CREATE TABLE {} ({})", table_name, col_defs.join(", "));
+            self.execute_statement(&create_sql).await?;
+        }
+
+        let nrows = df.height();
+        if nrows == 0 {
+            return Ok(0);
+        }
+
+        let column_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        let cols_str = column_names.join(", ");
+        let mut total: u64 = 0;
+
+        for row_idx in 0..nrows {
+            let mut literals = Vec::with_capacity(column_names.len());
+            for col_name in &column_names {
+                let series = df
+                    .column(col_name)
+                    .map_err(|e| DataError::Query(e.to_string()))?
+                    .as_materialized_series();
+                literals.push(Self::series_value_to_sql_literal(series, row_idx)?);
+            }
+            let insert_sql = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                table_name,
+                cols_str,
+                literals.join(", ")
+            );
+            total += self.execute_statement(&insert_sql).await?;
+        }
+
+        Ok(total)
     }
 
     async fn bulk_insert(
         &self,
-        _table_name: &str,
-        _columns: &[String],
-        _rows: &[Vec<QueryValue>],
+        table_name: &str,
+        columns: &[String],
+        rows: &[Vec<QueryValue>],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_insert not yet implemented for SQL Server".to_string(),
-        ))
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        if columns.is_empty() {
+            return Err(DataError::Query("No columns specified".to_string()));
+        }
+        for (i, row) in rows.iter().enumerate() {
+            if row.len() != columns.len() {
+                return Err(DataError::Query(format!(
+                    "Row {} has {} values but {} columns specified",
+                    i,
+                    row.len(),
+                    columns.len()
+                )));
+            }
+        }
+
+        let cols_str = columns.join(", ");
+        let mut total: u64 = 0;
+        for row in rows {
+            let literals: Vec<String> =
+                row.iter().map(Self::query_value_to_sql_literal).collect();
+            let sql = format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                table_name,
+                cols_str,
+                literals.join(", ")
+            );
+            total += self.execute_statement(&sql).await?;
+        }
+        Ok(total)
     }
 
     async fn bulk_update(
         &self,
-        _table_name: &str,
-        _updates: &[(HashMap<String, QueryValue>, String)],
+        table_name: &str,
+        updates: &[(HashMap<String, QueryValue>, String)],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_update not yet implemented for SQL Server".to_string(),
-        ))
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        let mut total: u64 = 0;
+        for (set_values, where_clause) in updates {
+            if set_values.is_empty() {
+                continue;
+            }
+            let set_parts: Vec<String> = set_values
+                .iter()
+                .map(|(col, val)| {
+                    format!("{} = {}", col, Self::query_value_to_sql_literal(val))
+                })
+                .collect();
+            let sql = format!(
+                "UPDATE {} SET {} WHERE {}",
+                table_name,
+                set_parts.join(", "),
+                where_clause
+            );
+            total += self.execute_statement(&sql).await?;
+        }
+        Ok(total)
     }
 
     async fn bulk_delete(
         &self,
-        _table_name: &str,
-        _where_clauses: &[String],
+        table_name: &str,
+        where_clauses: &[String],
         _schema: Option<&str>,
     ) -> Result<u64> {
-        Err(DataError::NotSupported(
-            "bulk_delete not yet implemented for SQL Server".to_string(),
-        ))
+        if where_clauses.is_empty() {
+            return Ok(0);
+        }
+        let mut total: u64 = 0;
+        for where_clause in where_clauses {
+            let sql = format!("DELETE FROM {} WHERE {}", table_name, where_clause);
+            total += self.execute_statement(&sql).await?;
+        }
+        Ok(total)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::{Connection as ConnectionTrait, DatabaseType};
+    use crate::adapter::{Connection as ConnectionTrait, DatabaseType, QueryValue};
 
     fn make_config(database: &str) -> ConnectionConfig {
         ConnectionConfig {
@@ -773,5 +1051,141 @@ mod tests {
         let config = make_config("test_db");
         let adapter = SqlServerAdapter::new(config.clone());
         assert_eq!(adapter.config().id, config.id);
+    }
+
+    // ── SQL literal helpers ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_sql_literal_null() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Null),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bool_true() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Bool(true)),
+            "1"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bool_false() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Bool(false)),
+            "0"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_int() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Int(100)),
+            "100"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_float() {
+        let lit = SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Float(2.5));
+        assert!(lit.starts_with("2.5"), "got: {}", lit);
+    }
+
+    #[test]
+    fn test_sql_literal_float_nan_becomes_null() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Float(f64::NAN)),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_float_inf_becomes_null() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Float(f64::NEG_INFINITY)),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_text_plain() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Text("hello".to_string())),
+            "N'hello'"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_text_with_single_quote() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Text(
+                "it's".to_string()
+            )),
+            "N'it''s'"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_bytes() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Bytes(vec![0xDE, 0xAD])),
+            "0xDEAD"
+        );
+    }
+
+    #[test]
+    fn test_sql_literal_empty_bytes_is_null() {
+        assert_eq!(
+            SqlServerAdapter::query_value_to_sql_literal(&QueryValue::Bytes(vec![])),
+            "NULL"
+        );
+    }
+
+    // ── dtype mapping helpers ────────────────────────────────────────────────
+
+    #[test]
+    fn test_dtype_mapping_int_types() {
+        use polars::prelude::DataType;
+        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int8), "SMALLINT");
+        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int16), "SMALLINT");
+        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int32), "INT");
+        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Int64), "BIGINT");
+        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::UInt32), "INT");
+        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::UInt64), "BIGINT");
+    }
+
+    #[test]
+    fn test_dtype_mapping_float_types() {
+        use polars::prelude::DataType;
+        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Float32), "REAL");
+        assert_eq!(SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Float64), "FLOAT");
+    }
+
+    #[test]
+    fn test_dtype_mapping_string_and_bool() {
+        use polars::prelude::DataType;
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Boolean),
+            "BIT"
+        );
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::String),
+            "NVARCHAR(MAX)"
+        );
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Binary),
+            "VARBINARY(MAX)"
+        );
+    }
+
+    #[test]
+    fn test_dtype_mapping_unknown_falls_back_to_nvarchar_max() {
+        use polars::prelude::DataType;
+        assert_eq!(
+            SqlServerAdapter::polars_dtype_to_mssql_type(&DataType::Date),
+            "NVARCHAR(MAX)"
+        );
     }
 }
