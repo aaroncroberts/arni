@@ -42,6 +42,13 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! # SSL/TLS Support
+//!
+//! **Note**: TLS/SSL is not yet implemented for the Oracle adapter. The underlying
+//! `oracle` crate does not expose TLS configuration options through its public API.
+//! Setting `use_ssl: true` currently has no effect. Native Oracle Wallet–based
+//! encryption may be configured separately at the Oracle client level.
 
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,

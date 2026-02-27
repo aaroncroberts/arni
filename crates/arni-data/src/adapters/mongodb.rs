@@ -23,6 +23,16 @@ use tracing::{debug, error, info, instrument, warn};
 /// - Fields → Columns
 ///
 /// Schema inference is performed by sampling documents.
+///
+/// # SSL/TLS Support
+///
+/// TLS is controlled by the `use_ssl` configuration option:
+/// - `use_ssl: false` — plain connection (`mongodb://…`)
+/// - `use_ssl: true`  — TLS-encrypted connection (`mongodb://…?tls=true`)
+///
+/// Certificate validation uses the system trust store. To allow self-signed
+/// certificates in development, add `tlsInsecure=true` via `--param
+/// tlsInsecure=true` (passed through the connection URI).
 pub struct MongoDbAdapter {
     config: ConnectionConfig,
     client: Option<Client>,
@@ -95,22 +105,28 @@ impl MongoDbAdapter {
         Ok(())
     }
 
-    /// Build a connection string from configuration
+    /// Build a MongoDB connection URI from configuration.
+    ///
+    /// When `config.use_ssl` is `true` the URI includes `tls=true`, enabling
+    /// TLS with server certificate validation via the system trust store.
     fn build_connection_string(config: &ConnectionConfig, password: Option<&str>) -> String {
         let host = config.host.as_deref().unwrap_or("localhost");
         let port = config.port.unwrap_or(27017);
         let username = config.username.as_deref();
 
+        // Build query-string params (always at least authSource when authed).
+        let tls_param = if config.use_ssl { "&tls=true" } else { "" };
+
         if let (Some(user), Some(pass)) = (username, password) {
-            // Percent-encode userinfo components so that special characters in
-            // usernames or passwords (e.g. '@', '/', '%', ':') do not break URI parsing.
+            // Percent-encode userinfo so special chars (@, /, %) don't break URI parsing.
             let encoded_user = percent_encode_userinfo(user);
             let encoded_pass = percent_encode_userinfo(pass);
-            // Include authSource=admin for root user authentication
             format!(
-                "mongodb://{}:{}@{}:{}/?authSource=admin",
-                encoded_user, encoded_pass, host, port
+                "mongodb://{}:{}@{}:{}/?authSource=admin{}",
+                encoded_user, encoded_pass, host, port, tls_param
             )
+        } else if config.use_ssl {
+            format!("mongodb://{}:{}/?tls=true", host, port)
         } else {
             format!("mongodb://{}:{}", host, port)
         }
@@ -1101,6 +1117,7 @@ mod tests {
         assert!(uri.contains("secret"));
         assert!(uri.contains("db.example.com:27017"));
         assert!(uri.contains("authSource=admin"));
+        assert!(!uri.contains("tls=true"), "use_ssl=false must not add tls param");
     }
 
     #[test]
@@ -1109,6 +1126,37 @@ mod tests {
         config.username = None;
         let uri = MongoDbAdapter::build_connection_string(&config, None);
         assert_eq!(uri, "mongodb://localhost:27017");
+    }
+
+    // ── SSL/TLS ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_build_connection_string_ssl_with_auth() {
+        let mut config = make_config("db.example.com", "mydb");
+        config.use_ssl = true;
+        let uri = MongoDbAdapter::build_connection_string(&config, Some("secret"));
+        assert!(uri.contains("tls=true"), "use_ssl=true must add tls=true");
+        assert!(uri.contains("authSource=admin"), "authSource must still be present");
+    }
+
+    #[test]
+    fn test_build_connection_string_ssl_no_auth() {
+        let mut config = make_config("localhost", "mydb");
+        config.username = None;
+        config.use_ssl = true;
+        let uri = MongoDbAdapter::build_connection_string(&config, None);
+        assert!(uri.contains("tls=true"), "use_ssl=true must add tls=true");
+        assert!(uri.starts_with("mongodb://localhost:27017"), "host unchanged");
+    }
+
+    #[test]
+    fn test_build_connection_string_no_ssl_no_auth() {
+        let mut config = make_config("localhost", "mydb");
+        config.username = None;
+        config.use_ssl = false;
+        let uri = MongoDbAdapter::build_connection_string(&config, None);
+        assert_eq!(uri, "mongodb://localhost:27017");
+        assert!(!uri.contains("tls"), "no tls param when use_ssl=false");
     }
 
     // ── URL special-character encoding ────────────────────────────────────────

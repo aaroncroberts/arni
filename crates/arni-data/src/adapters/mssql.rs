@@ -5,6 +5,23 @@
 //!
 //! Connections are established over TCP using `tokio-util`'s `compat` layer to bridge
 //! `tiberius`'s `AsyncRead`/`AsyncWrite` requirements with Tokio's I/O model.
+//!
+//! # SSL/TLS Support
+//!
+//! TLS is controlled by the `use_ssl` configuration option:
+//! - `use_ssl: false` — plain connection (`EncryptionLevel::NotSupported`). Certificate
+//!   validation is automatically skipped because no TLS handshake occurs.
+//! - `use_ssl: true` — encrypted connection (`EncryptionLevel::Required`). The server
+//!   certificate is validated using the system trust store **unless** the connection
+//!   parameter `trust_server_certificate=true` is set (useful for dev/CI with
+//!   self-signed certificates).
+//!
+//! Example with self-signed cert:
+//! ```text
+//! arni config add dev-sql \
+//!   --type sqlserver --host localhost --database mydb \
+//!   --param use_ssl=true --param trust_server_certificate=true
+//! ```
 
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
@@ -92,8 +109,20 @@ impl SqlServerAdapter {
             tiberius_config.encryption(tiberius::EncryptionLevel::NotSupported);
         }
 
-        // Trust server certificate for development
-        tiberius_config.trust_cert();
+        // trust_server_certificate=true skips TLS certificate validation.
+        // This is safe when use_ssl=false (no TLS at all) and useful for
+        // dev/CI environments with self-signed certs when use_ssl=true.
+        // In production with use_ssl=true, leave this unset (default: false)
+        // so the system trust store validates the server certificate.
+        let trust_cert = !config.use_ssl
+            || config
+                .parameters
+                .get("trust_server_certificate")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(false);
+        if trust_cert {
+            tiberius_config.trust_cert();
+        }
 
         Ok(tiberius_config)
     }
@@ -1302,6 +1331,82 @@ mod tests {
         let config = make_config("master");
         let result = SqlServerAdapter::build_config(&config, Some("password"));
         assert!(result.is_ok());
+    }
+
+    // ── SSL / trust_cert logic ───────────────────────────────────────────────
+
+    #[test]
+    fn test_build_config_no_ssl_builds_ok() {
+        // use_ssl=false: encryption disabled, trust_cert called (harmless, no TLS)
+        let mut config = make_config("master");
+        config.use_ssl = false;
+        assert!(SqlServerAdapter::build_config(&config, Some("pw")).is_ok());
+    }
+
+    #[test]
+    fn test_build_config_ssl_no_trust_param_builds_ok() {
+        // use_ssl=true, no trust param → cert validation ON (trust_cert NOT called)
+        let mut config = make_config("master");
+        config.use_ssl = true;
+        assert!(SqlServerAdapter::build_config(&config, Some("pw")).is_ok());
+    }
+
+    #[test]
+    fn test_build_config_ssl_with_trust_param_true() {
+        // use_ssl=true, trust_server_certificate=true → trust_cert called
+        let mut config = make_config("master");
+        config.use_ssl = true;
+        config
+            .parameters
+            .insert("trust_server_certificate".into(), "true".into());
+        assert!(SqlServerAdapter::build_config(&config, Some("pw")).is_ok());
+    }
+
+    #[test]
+    fn test_build_config_ssl_with_trust_param_one() {
+        // trust_server_certificate=1 also accepted
+        let mut config = make_config("master");
+        config.use_ssl = true;
+        config
+            .parameters
+            .insert("trust_server_certificate".into(), "1".into());
+        assert!(SqlServerAdapter::build_config(&config, Some("pw")).is_ok());
+    }
+
+    #[test]
+    fn test_build_config_ssl_trust_cert_logic() {
+        // When use_ssl=false, trust_cert is always set (no-op, no TLS)
+        let mut config = make_config("master");
+        config.use_ssl = false;
+        let trust = !config.use_ssl
+            || config
+                .parameters
+                .get("trust_server_certificate")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(false);
+        assert!(trust, "use_ssl=false → trust_cert=true (harmless)");
+
+        // When use_ssl=true without param, trust_cert is NOT set
+        config.use_ssl = true;
+        let trust = !config.use_ssl
+            || config
+                .parameters
+                .get("trust_server_certificate")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(false);
+        assert!(!trust, "use_ssl=true without param → trust_cert=false (validates cert)");
+
+        // When use_ssl=true with param=true, trust_cert IS set
+        config
+            .parameters
+            .insert("trust_server_certificate".into(), "true".into());
+        let trust = !config.use_ssl
+            || config
+                .parameters
+                .get("trust_server_certificate")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(false);
+        assert!(trust, "use_ssl=true with param=true → trust_cert=true");
     }
 
     #[test]
