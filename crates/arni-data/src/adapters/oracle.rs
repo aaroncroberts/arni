@@ -814,3 +814,64 @@ impl DbAdapter for OracleAdapter {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
+
+    fn make_config(service_name: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            id: "test-oracle".to_string(),
+            name: "Test Oracle".to_string(),
+            db_type: DatabaseType::Oracle,
+            host: Some("localhost".to_string()),
+            port: Some(1521),
+            database: service_name.to_string(),
+            username: Some("system".to_string()),
+            use_ssl: false,
+            parameters: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_new_adapter_stores_config() {
+        let config = make_config("FREE");
+        let adapter = OracleAdapter::new(config);
+        assert_eq!(adapter.config.database, "FREE");
+        assert_eq!(adapter.config.db_type, DatabaseType::Oracle);
+    }
+
+    #[test]
+    fn test_is_connected_initially_false() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        assert!(!ConnectionTrait::is_connected(&adapter));
+    }
+
+    #[test]
+    fn test_build_connection_params_defaults() {
+        let config = make_config("ORCL");
+        let (user, _pass, connect_str) = OracleAdapter::build_connection_params(&config, Some("pw"));
+        assert_eq!(user, "system");
+        assert!(connect_str.contains("1521"));
+        assert!(connect_str.ends_with("/ORCL"));
+    }
+
+    #[test]
+    fn test_build_connection_params_custom_host_port() {
+        let mut config = make_config("FREE");
+        config.host = Some("db.example.com".to_string());
+        config.port = Some(1522);
+        let (_user, _pass, connect_str) =
+            OracleAdapter::build_connection_params(&config, None);
+        assert!(connect_str.starts_with("db.example.com:1522/"));
+    }
+
+    #[test]
+    fn test_config_accessor() {
+        let config = make_config("FREE");
+        let adapter = OracleAdapter::new(config.clone());
+        assert_eq!(adapter.config().id, config.id);
+        assert_eq!(adapter.config().port, Some(1521));
+    }
+}

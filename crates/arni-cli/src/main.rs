@@ -664,3 +664,141 @@ fn run_compose_command(args: &[&str]) -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_db_type ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_db_type_postgres() {
+        assert_eq!(parse_db_type("postgres").unwrap(), DatabaseType::Postgres);
+    }
+
+    #[test]
+    fn test_parse_db_type_postgresql_alias() {
+        assert_eq!(
+            parse_db_type("postgresql").unwrap(),
+            DatabaseType::Postgres
+        );
+    }
+
+    #[test]
+    fn test_parse_db_type_mysql() {
+        assert_eq!(parse_db_type("mysql").unwrap(), DatabaseType::MySQL);
+    }
+
+    #[test]
+    fn test_parse_db_type_sqlite() {
+        assert_eq!(parse_db_type("sqlite").unwrap(), DatabaseType::SQLite);
+    }
+
+    #[test]
+    fn test_parse_db_type_mongodb() {
+        assert_eq!(parse_db_type("mongodb").unwrap(), DatabaseType::MongoDB);
+    }
+
+    #[test]
+    fn test_parse_db_type_sqlserver() {
+        assert_eq!(
+            parse_db_type("sqlserver").unwrap(),
+            DatabaseType::SQLServer
+        );
+    }
+
+    #[test]
+    fn test_parse_db_type_mssql_alias() {
+        assert_eq!(parse_db_type("mssql").unwrap(), DatabaseType::SQLServer);
+    }
+
+    #[test]
+    fn test_parse_db_type_oracle() {
+        assert_eq!(parse_db_type("oracle").unwrap(), DatabaseType::Oracle);
+    }
+
+    #[test]
+    fn test_parse_db_type_duckdb() {
+        assert_eq!(parse_db_type("duckdb").unwrap(), DatabaseType::DuckDB);
+    }
+
+    #[test]
+    fn test_parse_db_type_case_insensitive() {
+        assert_eq!(parse_db_type("POSTGRES").unwrap(), DatabaseType::Postgres);
+        assert_eq!(parse_db_type("MySQL").unwrap(), DatabaseType::MySQL);
+        assert_eq!(parse_db_type("DuckDB").unwrap(), DatabaseType::DuckDB);
+    }
+
+    #[test]
+    fn test_parse_db_type_unknown_returns_error() {
+        let err = parse_db_type("redis").unwrap_err();
+        assert!(err.to_string().contains("Unknown database type"));
+        assert!(err.to_string().contains("redis"));
+    }
+
+    #[test]
+    fn test_parse_db_type_empty_string_returns_error() {
+        assert!(parse_db_type("").is_err());
+    }
+
+    // ── test_connection (file-based paths only — no TCP) ─────────────────────
+
+    fn make_cfg(db_type: DatabaseType, database: impl Into<String>) -> ConnectionConfig {
+        ConnectionConfig {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            db_type,
+            host: None,
+            port: None,
+            database: database.into(),
+            username: None,
+            use_ssl: false,
+            parameters: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_connection_sqlite_memory() {
+        let result = test_connection(&make_cfg(DatabaseType::SQLite, ":memory:")).unwrap();
+        assert!(result.contains("In-memory"));
+    }
+
+    #[test]
+    fn test_connection_duckdb_memory() {
+        let result = test_connection(&make_cfg(DatabaseType::DuckDB, ":memory:")).unwrap();
+        assert!(result.contains("In-memory"));
+    }
+
+    #[test]
+    fn test_connection_sqlite_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        std::fs::write(&db_path, b"").unwrap();
+
+        let result =
+            test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap())).unwrap();
+        assert!(result.contains("File exists"));
+    }
+
+    #[test]
+    fn test_connection_sqlite_missing_file_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nonexistent.db");
+
+        let err =
+            test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap()))
+                .unwrap_err();
+        assert!(err.to_string().contains("Database file not found"));
+    }
+
+    #[test]
+    fn test_connection_duckdb_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.duckdb");
+        std::fs::write(&db_path, b"").unwrap();
+
+        let result =
+            test_connection(&make_cfg(DatabaseType::DuckDB, db_path.to_str().unwrap())).unwrap();
+        assert!(result.contains("File exists"));
+    }
+}

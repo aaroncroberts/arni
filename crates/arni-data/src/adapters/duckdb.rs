@@ -89,32 +89,32 @@ impl DuckDbAdapter {
                 .prepare(&query)
                 .map_err(|e| DataError::Query(format!("Failed to prepare query: {}", e)))?;
 
-            let column_count = stmt.column_count();
-            let mut columns = Vec::new();
-            for i in 0..column_count {
-                let col_name = stmt
-                    .column_name(i)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|_| "unknown".to_string());
-                columns.push(col_name);
-            }
-
-            let rows_result = stmt
-                .query_map([], |row| {
-                    let mut values = Vec::new();
-                    for i in 0..column_count {
-                        let value = Self::get_value(row, i)?;
-                        values.push(value);
-                    }
-                    Ok(values)
-                })
+            // In duckdb-rs 1.x, column_count()/column_names() require the statement to
+            // have been executed first. Use query() to execute and get a Rows iterator,
+            // then read column names from rows.as_ref() (owned, no extra borrow).
+            let mut rows_iter = stmt
+                .query([])
                 .map_err(|e| DataError::Query(format!("Failed to execute query: {}", e)))?;
 
+            // column_names() is available after query() executes the statement.
+            let columns: Vec<String> = rows_iter
+                .as_ref()
+                .map(|s| s.column_names())
+                .unwrap_or_default();
+
+            let n = columns.len();
             let mut rows = Vec::new();
-            for row_result in rows_result {
-                let row = row_result
-                    .map_err(|e| DataError::Query(format!("Failed to read row: {}", e)))?;
-                rows.push(row);
+            while let Some(row) = rows_iter
+                .next()
+                .map_err(|e| DataError::Query(format!("Failed to read row: {}", e)))?
+            {
+                let mut values = Vec::new();
+                for i in 0..n {
+                    let value = Self::get_value(row, i)
+                        .map_err(|e| DataError::Query(format!("Failed to get column {}: {}", i, e)))?;
+                    values.push(value);
+                }
+                rows.push(values);
             }
 
             Ok::<QueryResult, DataError>(QueryResult {
@@ -141,26 +141,33 @@ impl DuckDbAdapter {
 
     /// Get a value from a DuckDB row
     fn get_value(row: &duckdb::Row, idx: usize) -> std::result::Result<QueryValue, duckdb::Error> {
-        // Try to get the value as different types
-        // DuckDB supports many types, but we'll focus on common ones
-        if let Ok(val) = row.get::<_, Option<bool>>(idx) {
-            return Ok(val.map(QueryValue::Bool).unwrap_or(QueryValue::Null));
-        }
-        if let Ok(val) = row.get::<_, Option<i64>>(idx) {
-            return Ok(val.map(QueryValue::Int).unwrap_or(QueryValue::Null));
-        }
-        if let Ok(val) = row.get::<_, Option<f64>>(idx) {
-            return Ok(val.map(QueryValue::Float).unwrap_or(QueryValue::Null));
-        }
-        if let Ok(val) = row.get::<_, Option<String>>(idx) {
-            return Ok(val.map(QueryValue::Text).unwrap_or(QueryValue::Null));
-        }
-        if let Ok(val) = row.get::<_, Option<Vec<u8>>>(idx) {
-            return Ok(val.map(QueryValue::Bytes).unwrap_or(QueryValue::Null));
-        }
+        use duckdb::types::ValueRef;
 
-        // If all else fails, return null
-        Ok(QueryValue::Null)
+        // Use get_ref() to obtain the actual storage-class value from DuckDB.
+        // This avoids the type-guessing order problem (e.g. every non-zero int
+        // being misread as Bool(true)) by inspecting the value's real type.
+        match row.get_ref(idx)? {
+            ValueRef::Null => Ok(QueryValue::Null),
+            ValueRef::Boolean(b) => Ok(QueryValue::Bool(b)),
+            ValueRef::TinyInt(v) => Ok(QueryValue::Int(v as i64)),
+            ValueRef::SmallInt(v) => Ok(QueryValue::Int(v as i64)),
+            ValueRef::Int(v) => Ok(QueryValue::Int(v as i64)),
+            ValueRef::BigInt(v) => Ok(QueryValue::Int(v)),
+            ValueRef::HugeInt(v) => Ok(QueryValue::Int(v as i64)),
+            ValueRef::UTinyInt(v) => Ok(QueryValue::Int(v as i64)),
+            ValueRef::USmallInt(v) => Ok(QueryValue::Int(v as i64)),
+            ValueRef::UInt(v) => Ok(QueryValue::Int(v as i64)),
+            ValueRef::UBigInt(v) => Ok(QueryValue::Int(v as i64)),
+            ValueRef::Float(v) => Ok(QueryValue::Float(v as f64)),
+            ValueRef::Double(v) => Ok(QueryValue::Float(v)),
+            ValueRef::Text(bytes) => Ok(QueryValue::Text(
+                String::from_utf8_lossy(bytes).into_owned(),
+            )),
+            ValueRef::Blob(bytes) => Ok(QueryValue::Bytes(bytes.to_vec())),
+            // All other DuckDB types (Timestamp, Date, Decimal, etc.)
+            // fall back to a string representation for now.
+            other => Ok(QueryValue::Text(format!("{:?}", other))),
+        }
     }
 }
 
@@ -565,5 +572,71 @@ impl DbAdapter for DuckDbAdapter {
         // DuckDB doesn't have traditional stored procedures
         // It has macros which are similar
         Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::{Connection as ConnectionTrait, DatabaseType};
+
+    fn make_config(database: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            id: "test-duckdb".to_string(),
+            name: "Test DuckDB".to_string(),
+            db_type: DatabaseType::DuckDB,
+            host: None,
+            port: None,
+            database: database.to_string(),
+            username: None,
+            use_ssl: false,
+            parameters: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_new_adapter_stores_config() {
+        let config = make_config(":memory:");
+        let adapter = DuckDbAdapter::new(config);
+        assert_eq!(adapter.config.database, ":memory:");
+        assert_eq!(adapter.config.db_type, DatabaseType::DuckDB);
+    }
+
+    #[test]
+    fn test_is_connected_initially_false() {
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        assert!(!ConnectionTrait::is_connected(&adapter));
+    }
+
+    #[test]
+    fn test_validate_database_path_memory() {
+        assert!(DuckDbAdapter::validate_database_path(":memory:").is_ok());
+    }
+
+    #[test]
+    fn test_validate_database_path_empty_fails() {
+        let err = DuckDbAdapter::validate_database_path("").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_validate_database_path_too_long_fails() {
+        let long_path = "a".repeat(4097);
+        let err = DuckDbAdapter::validate_database_path(&long_path).unwrap_err();
+        assert!(err.to_string().contains("too long"));
+    }
+
+    #[test]
+    fn test_validate_database_path_valid_file() {
+        assert!(DuckDbAdapter::validate_database_path("/tmp/test.duckdb").is_ok());
+        assert!(DuckDbAdapter::validate_database_path("relative/path.db").is_ok());
+    }
+
+    #[test]
+    fn test_config_accessor() {
+        let config = make_config("/tmp/test.duckdb");
+        let adapter = DuckDbAdapter::new(config.clone());
+        assert_eq!(adapter.config().id, config.id);
+        assert_eq!(adapter.config().database, "/tmp/test.duckdb");
     }
 }

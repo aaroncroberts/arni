@@ -981,6 +981,208 @@ mod tests {
         assert_eq!(df.width(), 4);
     }
 
+    // ===== Metadata Info Struct Tests =====
+
+    #[test]
+    fn test_table_info_construction() {
+        let col = ColumnInfo {
+            name: "id".to_string(),
+            data_type: "INTEGER".to_string(),
+            nullable: false,
+            default_value: None,
+            is_primary_key: true,
+        };
+        let table = TableInfo {
+            name: "users".to_string(),
+            schema: Some("public".to_string()),
+            columns: vec![col.clone()],
+        };
+        assert_eq!(table.name, "users");
+        assert_eq!(table.schema.as_deref(), Some("public"));
+        assert_eq!(table.columns.len(), 1);
+        assert_eq!(table.columns[0].name, "id");
+        assert!(table.columns[0].is_primary_key);
+        // Verify Clone and Debug work
+        let cloned = table.clone();
+        assert_eq!(cloned.name, table.name);
+        assert!(!format!("{:?}", table).is_empty());
+    }
+
+    #[test]
+    fn test_column_info_defaults() {
+        let col = ColumnInfo {
+            name: "email".to_string(),
+            data_type: "TEXT".to_string(),
+            nullable: true,
+            default_value: Some("''".to_string()),
+            is_primary_key: false,
+        };
+        assert_eq!(col.name, "email");
+        assert!(col.nullable);
+        assert_eq!(col.default_value.as_deref(), Some("''"));
+        assert!(!col.is_primary_key);
+        let cloned = col.clone();
+        assert_eq!(cloned.data_type, col.data_type);
+    }
+
+    #[test]
+    fn test_server_info_construction() {
+        let mut extra = HashMap::new();
+        extra.insert("max_connections".to_string(), "100".to_string());
+        let info = ServerInfo {
+            version: "16.0".to_string(),
+            server_type: "PostgreSQL".to_string(),
+            extra_info: extra,
+        };
+        assert_eq!(info.version, "16.0");
+        assert_eq!(info.extra_info.get("max_connections").unwrap(), "100");
+        let cloned = info.clone();
+        assert_eq!(cloned.server_type, info.server_type);
+    }
+
+    #[test]
+    fn test_database_metadata_construction() {
+        let meta = DatabaseMetadata {
+            name: "test_db".to_string(),
+            size_bytes: Some(1024 * 1024),
+            owner: Some("admin".to_string()),
+            encoding: Some("UTF8".to_string()),
+            created_at: None,
+            extra_info: HashMap::new(),
+        };
+        assert_eq!(meta.name, "test_db");
+        assert_eq!(meta.size_bytes, Some(1048576));
+        assert!(meta.created_at.is_none());
+        assert!(!format!("{:?}", meta).is_empty());
+    }
+
+    #[test]
+    fn test_index_info_construction() {
+        let idx = IndexInfo {
+            name: "idx_users_email".to_string(),
+            table_name: "users".to_string(),
+            schema: Some("public".to_string()),
+            columns: vec!["email".to_string()],
+            is_unique: true,
+            is_primary: false,
+            index_type: Some("BTREE".to_string()),
+        };
+        assert_eq!(idx.name, "idx_users_email");
+        assert!(idx.is_unique);
+        assert!(!idx.is_primary);
+        assert_eq!(idx.columns.len(), 1);
+        let cloned = idx.clone();
+        assert_eq!(cloned.table_name, idx.table_name);
+    }
+
+    #[test]
+    fn test_foreign_key_info_construction() {
+        let fk = ForeignKeyInfo {
+            name: "fk_orders_user".to_string(),
+            table_name: "orders".to_string(),
+            schema: None,
+            columns: vec!["user_id".to_string()],
+            referenced_table: "users".to_string(),
+            referenced_schema: None,
+            referenced_columns: vec!["id".to_string()],
+            on_delete: Some("CASCADE".to_string()),
+            on_update: None,
+        };
+        assert_eq!(fk.referenced_table, "users");
+        assert_eq!(fk.on_delete.as_deref(), Some("CASCADE"));
+        assert!(fk.on_update.is_none());
+        assert!(!format!("{:?}", fk).is_empty());
+    }
+
+    #[test]
+    fn test_view_info_construction() {
+        let view = ViewInfo {
+            name: "active_users".to_string(),
+            schema: Some("public".to_string()),
+            definition: Some("SELECT * FROM users WHERE active = true".to_string()),
+        };
+        assert_eq!(view.name, "active_users");
+        assert!(view.definition.is_some());
+        let cloned = view.clone();
+        assert_eq!(cloned.schema, view.schema);
+    }
+
+    #[test]
+    fn test_procedure_info_construction() {
+        let proc = ProcedureInfo {
+            name: "get_user_count".to_string(),
+            schema: Some("public".to_string()),
+            return_type: Some("INTEGER".to_string()),
+            language: Some("plpgsql".to_string()),
+        };
+        assert_eq!(proc.name, "get_user_count");
+        assert_eq!(proc.language.as_deref(), Some("plpgsql"));
+        assert!(!format!("{:?}", proc).is_empty());
+    }
+
+    #[test]
+    fn test_table_metadata_construction() {
+        let meta = TableMetadata {
+            name: "users".to_string(),
+            schema: Some("public".to_string()),
+            size_bytes: Some(8192),
+            row_count: Some(100),
+            created_at: Some("2024-01-01".to_string()),
+            table_type: Some("BASE TABLE".to_string()),
+        };
+        assert_eq!(meta.name, "users");
+        assert_eq!(meta.row_count, Some(100));
+        let cloned = meta.clone();
+        assert_eq!(cloned.size_bytes, meta.size_bytes);
+    }
+
+    #[test]
+    fn test_connection_config_clone_and_debug() {
+        let config = ConnectionConfig {
+            id: "pg-dev".to_string(),
+            name: "Dev Postgres".to_string(),
+            db_type: DatabaseType::Postgres,
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            database: "mydb".to_string(),
+            username: Some("user".to_string()),
+            use_ssl: true,
+            parameters: HashMap::new(),
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned.id, config.id);
+        assert_eq!(cloned.use_ssl, config.use_ssl);
+        assert!(!format!("{:?}", config).is_empty());
+    }
+
+    #[test]
+    fn test_query_result_rows_affected() {
+        let result = QueryResult {
+            columns: vec!["id".to_string()],
+            rows: vec![],
+            rows_affected: Some(5),
+        };
+        assert_eq!(result.rows_affected, Some(5));
+        assert!(result.rows.is_empty());
+    }
+
+    #[test]
+    fn test_query_value_clone_and_debug() {
+        let values = vec![
+            QueryValue::Null,
+            QueryValue::Bool(false),
+            QueryValue::Int(-1),
+            QueryValue::Float(0.0),
+            QueryValue::Text(String::new()),
+            QueryValue::Bytes(vec![]),
+        ];
+        for v in &values {
+            let cloned = v.clone();
+            assert_eq!(&cloned, v);
+            assert!(!format!("{:?}", v).is_empty());
+        }
+    }
+
     // ===== Connection Trait Tests =====
 
     /// Mock connection for testing the Connection trait

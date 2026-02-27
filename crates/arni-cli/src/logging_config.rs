@@ -333,4 +333,62 @@ log_dir: /var/log/arni
         let expanded = expand_tilde("/absolute/path");
         assert_eq!(expanded, PathBuf::from("/absolute/path"));
     }
+
+    // ── load_logging_config edge cases ───────────────────────────────────────
+
+    #[test]
+    fn test_load_logging_config_missing_file_returns_default() {
+        let dir = tempfile::tempdir().unwrap();
+        // No logging.yml written — should silently return default.
+        let cfg = load_logging_config(dir.path()).unwrap();
+        assert_eq!(cfg.level, "info");
+        assert_eq!(cfg.rolling.strategy, RollingStrategy::Daily);
+    }
+
+    #[test]
+    fn test_load_logging_config_invalid_yaml_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logging.yml");
+        std::fs::write(&path, b": this is: not: valid yaml :::").unwrap();
+        let result = load_logging_config(dir.path());
+        assert!(result.is_err(), "Expected error for invalid YAML");
+    }
+
+    #[test]
+    fn test_load_logging_config_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logging.yml");
+        std::fs::write(
+            &path,
+            b"level: debug\nrolling:\n  strategy: never\n",
+        )
+        .unwrap();
+        let cfg = load_logging_config(dir.path()).unwrap();
+        assert_eq!(cfg.level, "debug");
+        assert_eq!(cfg.rolling.strategy, RollingStrategy::Never);
+    }
+
+    // ── write_default_logging_config ─────────────────────────────────────────
+
+    #[test]
+    fn test_write_default_logging_config_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_default_logging_config(dir.path()).unwrap();
+        let path = dir.path().join("logging.yml");
+        assert!(path.exists(), "logging.yml should be created");
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("level:"));
+    }
+
+    #[test]
+    fn test_write_default_logging_config_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        // Write custom content first.
+        let path = dir.path().join("logging.yml");
+        std::fs::write(&path, b"level: trace\n").unwrap();
+        // Second call should not overwrite the existing file.
+        write_default_logging_config(dir.path()).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "level: trace\n", "Existing file must not be overwritten");
+    }
 }

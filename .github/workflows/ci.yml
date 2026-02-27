@@ -44,20 +44,10 @@ jobs:
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-clippy-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
@@ -84,20 +74,10 @@ jobs:
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: ${{ matrix.os }}-${{ matrix.rust }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ matrix.os }}-${{ matrix.rust }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ matrix.os }}-${{ matrix.rust }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ matrix.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check compilation
         run: cargo check --verbose
@@ -108,8 +88,120 @@ jobs:
       - name: Run unit tests
         run: cargo test --lib --verbose
 
-      - name: Run integration tests
-        run: cargo test --test '*' --verbose
+      - name: Run integration tests (file-based)
+        # SQLite and DuckDB use in-memory databases; no containers needed.
+        # Network adapter tests (postgres, mysql, etc.) are in the separate
+        # integration-tests job below.
+        run: cargo test -p arni-data --features sqlite,duckdb --test '*' --verbose
+
+  # Network adapter integration tests (podman-compose, ubuntu-only)
+  integration-tests:
+    name: Integration Tests (Network Adapters)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: integration-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install podman-compose
+        run: pip install podman-compose
+
+      - name: Create data directories
+        run: mkdir -p ~/.arni/data/postgres ~/.arni/data/mysql ~/.arni/data/mssql ~/.arni/data/mongodb
+
+      - name: Start database containers
+        # Oracle excluded: requires 2 GB shm_size and ~60 s startup time
+        run: podman-compose up -d postgres mysql mssql mongodb
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in $(seq 1 30); do
+            podman exec arni-dev-postgres pg_isready -U test_user -d test_db && break
+            echo "Waiting for postgres ($i/30)..."
+            sleep 3
+          done
+
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            podman exec arni-dev-mysql mysqladmin ping -h localhost -u test_user -ptest_password --silent && break
+            echo "Waiting for mysql ($i/30)..."
+            sleep 3
+          done
+
+      - name: Wait for SQL Server
+        run: |
+          for i in $(seq 1 40); do
+            podman exec arni-dev-mssql /opt/mssql-tools/bin/sqlcmd \
+              -S localhost -U sa -P 'Test_Password123!' -Q 'SELECT 1' \
+              > /dev/null 2>&1 && break
+            echo "Waiting for mssql ($i/40)..."
+            sleep 3
+          done
+
+      - name: Wait for MongoDB
+        run: |
+          for i in $(seq 1 30); do
+            podman exec arni-dev-mongodb mongosh --eval "db.adminCommand('ping')" \
+              > /dev/null 2>&1 && break
+            echo "Waiting for mongodb ($i/30)..."
+            sleep 3
+          done
+
+      - name: Run network adapter integration tests
+        env:
+          # Availability flags (checked by skip_if_unavailable)
+          TEST_POSTGRES_AVAILABLE: "true"
+          TEST_MYSQL_AVAILABLE: "true"
+          TEST_MSSQL_AVAILABLE: "true"
+          TEST_MONGODB_AVAILABLE: "true"
+          # PostgreSQL connection (profile: pg-dev → TEST_PG_DEV_*)
+          TEST_PG_DEV_TYPE: postgres
+          TEST_PG_DEV_HOST: localhost
+          TEST_PG_DEV_PORT: "5432"
+          TEST_PG_DEV_DATABASE: test_db
+          TEST_PG_DEV_USER: test_user
+          TEST_PG_DEV_PASSWORD: test_password
+          # MySQL connection (profile: mysql-dev → TEST_MYSQL_DEV_*)
+          TEST_MYSQL_DEV_TYPE: mysql
+          TEST_MYSQL_DEV_HOST: localhost
+          TEST_MYSQL_DEV_PORT: "3306"
+          TEST_MYSQL_DEV_DATABASE: test_db
+          TEST_MYSQL_DEV_USER: test_user
+          TEST_MYSQL_DEV_PASSWORD: test_password
+          # SQL Server connection (profile: mssql-dev → TEST_MSSQL_DEV_*)
+          TEST_MSSQL_DEV_TYPE: sqlserver
+          TEST_MSSQL_DEV_HOST: localhost
+          TEST_MSSQL_DEV_PORT: "1433"
+          TEST_MSSQL_DEV_DATABASE: test_db
+          TEST_MSSQL_DEV_USER: sa
+          TEST_MSSQL_DEV_PASSWORD: "Test_Password123!"
+          # MongoDB connection (profile: mongo-dev → TEST_MONGO_DEV_*)
+          TEST_MONGO_DEV_TYPE: mongodb
+          TEST_MONGO_DEV_HOST: localhost
+          TEST_MONGO_DEV_PORT: "27017"
+          TEST_MONGO_DEV_DATABASE: test_db
+          TEST_MONGO_DEV_USER: test_user
+          TEST_MONGO_DEV_PASSWORD: test_password
+        run: |
+          cargo test -p arni-data \
+            --features postgres,mysql,mongodb,mssql \
+            --test '*' \
+            --verbose
+
+      - name: Stop database containers
+        if: always()
+        run: podman-compose down --volumes
 
   # Build release (Linux only for now)
   build-release:
@@ -125,30 +217,13 @@ jobs:
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: release-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: release-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: release-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build release
         run: cargo build --release --verbose
-
-      - name: Upload release binary (Linux)
-        uses: actions/upload-artifact@v4
-        with:
-          name: arni-linux-release
-          path: target/release/arni
-          retention-days: 7
 
   # Check that tests pass with minimal versions
   minimal-versions:
@@ -164,8 +239,10 @@ jobs:
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: minimal-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: minimal-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Update to minimal versions
         run: cargo +nightly update -Z minimal-versions

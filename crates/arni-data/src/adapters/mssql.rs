@@ -708,3 +708,70 @@ impl DbAdapter for SqlServerAdapter {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::{Connection as ConnectionTrait, DatabaseType};
+
+    fn make_config(database: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            id: "test-mssql".to_string(),
+            name: "Test SQL Server".to_string(),
+            db_type: DatabaseType::SQLServer,
+            host: Some("localhost".to_string()),
+            port: Some(1433),
+            database: database.to_string(),
+            username: Some("sa".to_string()),
+            use_ssl: false,
+            parameters: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_new_adapter_stores_config() {
+        let config = make_config("test_db");
+        let adapter = SqlServerAdapter::new(config);
+        assert_eq!(adapter.config.database, "test_db");
+        assert_eq!(adapter.config.db_type, DatabaseType::SQLServer);
+    }
+
+    #[test]
+    fn test_is_connected_initially_false() {
+        let adapter = SqlServerAdapter::new(make_config("test_db"));
+        assert!(!ConnectionTrait::is_connected(&adapter));
+    }
+
+    #[test]
+    fn test_validate_database_name_valid() {
+        assert!(SqlServerAdapter::validate_database_name("test_db").is_ok());
+        assert!(SqlServerAdapter::validate_database_name("MyDatabase").is_ok());
+    }
+
+    #[test]
+    fn test_validate_database_name_empty_fails() {
+        let err = SqlServerAdapter::validate_database_name("").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_validate_database_name_too_long_fails() {
+        let long_name = "a".repeat(129);
+        let err = SqlServerAdapter::validate_database_name(&long_name).unwrap_err();
+        assert!(err.to_string().contains("too long"));
+    }
+
+    #[test]
+    fn test_build_config_default_values() {
+        let config = make_config("master");
+        let result = SqlServerAdapter::build_config(&config, Some("password"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_accessor() {
+        let config = make_config("test_db");
+        let adapter = SqlServerAdapter::new(config.clone());
+        assert_eq!(adapter.config().id, config.id);
+    }
+}

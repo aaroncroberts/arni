@@ -60,6 +60,8 @@ pub use config::{
     ConsoleFormat, ConsoleWriter, FileFormat, LoggingConfig, LoggingConfigBuilder, RotationPolicy,
 };
 pub use error::{LoggingError, Result};
+// Re-export WorkerGuard so callers don't need a direct tracing-appender dep.
+pub use tracing_appender::non_blocking::WorkerGuard;
 
 /// Initialize logging with default settings (pretty console output, INFO level)
 ///
@@ -135,6 +137,92 @@ pub fn init_default_with_filter(filter: &str) -> Result<()> {
 /// ```
 pub fn init(config: LoggingConfig) -> Result<()> {
     config.apply()
+}
+
+/// Initialize arni's standard CLI logging.
+///
+/// Sets up two output layers:
+/// - **File** (async, non-blocking): all events at `level` → `log_dir/arni.<date>`
+/// - **Console** (stderr): WARN and above, compact format for interactive output
+///
+/// The returned [`WorkerGuard`] **must be bound to a variable** in the caller and
+/// kept alive until the program exits. Dropping it early flushes and stops the
+/// async file writer.
+///
+/// # Arguments
+///
+/// * `log_dir` — Directory for log files (created if absent)
+/// * `level`   — Minimum log level (e.g. `"info"`, `"debug"`)
+/// * `rotation` — File rotation policy
+///
+/// # Errors
+///
+/// Returns an error if the log directory cannot be created, the level is invalid,
+/// or a global subscriber is already installed.
+///
+/// # Examples
+///
+/// ```no_run
+/// use arni_logging::RotationPolicy;
+/// use std::path::Path;
+///
+/// let _guard = arni_logging::init_arni_logging(
+///     Path::new("/var/log/arni"),
+///     "info",
+///     RotationPolicy::Daily,
+/// ).expect("failed to init logging");
+/// ```
+pub fn init_arni_logging(
+    log_dir: &std::path::Path,
+    level: &str,
+    rotation: RotationPolicy,
+) -> Result<WorkerGuard> {
+    use tracing_appender::non_blocking;
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
+
+    // Ensure the log directory exists.
+    std::fs::create_dir_all(log_dir)?;
+
+    let appender_rotation = match rotation {
+        RotationPolicy::Daily => Rotation::DAILY,
+        RotationPolicy::Hourly => Rotation::HOURLY,
+        RotationPolicy::Minutely => Rotation::MINUTELY,
+        RotationPolicy::Never => Rotation::NEVER,
+    };
+
+    let file_appender = RollingFileAppender::new(appender_rotation, log_dir, "arni");
+    let (non_blocking_writer, guard) = non_blocking(file_appender);
+
+    let file_filter = EnvFilter::try_new(level).map_err(|e| {
+        LoggingError::FilterError(format!("Invalid log level '{}': {}", level, e))
+    })?;
+
+    // Console only shows WARN+ to avoid cluttering interactive output.
+    let console_filter = EnvFilter::try_new("warn")
+        .map_err(|e| LoggingError::FilterError(format!("Cannot build warn filter: {}", e)))?;
+
+    let file_layer = fmt::layer()
+        .with_ansi(false)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_writer(non_blocking_writer)
+        .with_filter(file_filter);
+
+    let console_layer = fmt::layer()
+        .compact()
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_filter(console_filter);
+
+    tracing_subscriber::registry()
+        .with(file_layer)
+        .with(console_layer)
+        .try_init()
+        .map_err(|e| LoggingError::InitError(format!("Failed to install subscriber: {}", e)))?;
+
+    Ok(guard)
 }
 
 #[cfg(test)]

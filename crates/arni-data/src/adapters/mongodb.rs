@@ -763,3 +763,105 @@ impl DbAdapter for MongoDbAdapter {
         Ok(Vec::new())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::{Connection as ConnectionTrait, DatabaseType};
+
+    fn make_config(host: &str, database: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            id: "test-mongodb".to_string(),
+            name: "Test MongoDB".to_string(),
+            db_type: DatabaseType::MongoDB,
+            host: Some(host.to_string()),
+            port: Some(27017),
+            database: database.to_string(),
+            username: Some("test_user".to_string()),
+            use_ssl: false,
+            parameters: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_new_adapter_stores_config() {
+        let config = make_config("localhost", "test_db");
+        let adapter = MongoDbAdapter::new(config);
+        assert_eq!(adapter.config.database, "test_db");
+        assert_eq!(adapter.config.db_type, DatabaseType::MongoDB);
+    }
+
+    #[test]
+    fn test_is_connected_initially_false() {
+        let adapter = MongoDbAdapter::new(make_config("localhost", "test_db"));
+        assert!(!ConnectionTrait::is_connected(&adapter));
+    }
+
+    #[test]
+    fn test_validate_database_name_valid() {
+        assert!(MongoDbAdapter::validate_database_name("test_db").is_ok());
+        assert!(MongoDbAdapter::validate_database_name("my-database").is_ok());
+    }
+
+    #[test]
+    fn test_validate_database_name_empty_fails() {
+        let err = MongoDbAdapter::validate_database_name("").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_validate_database_name_too_long_fails() {
+        let long_name = "a".repeat(65);
+        let err = MongoDbAdapter::validate_database_name(&long_name).unwrap_err();
+        assert!(err.to_string().contains("too long"));
+    }
+
+    #[test]
+    fn test_validate_database_name_invalid_chars() {
+        for ch in ['/', '\\', '.', ' ', '"', '$'] {
+            let name = format!("db{}name", ch);
+            assert!(
+                MongoDbAdapter::validate_database_name(&name).is_err(),
+                "Expected error for char '{}'",
+                ch
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_collection_name_valid() {
+        assert!(MongoDbAdapter::validate_collection_name("users").is_ok());
+        assert!(MongoDbAdapter::validate_collection_name("my_collection").is_ok());
+    }
+
+    #[test]
+    fn test_validate_collection_name_system_prefix_fails() {
+        let err = MongoDbAdapter::validate_collection_name("system.users").unwrap_err();
+        assert!(err.to_string().contains("system."));
+    }
+
+    #[test]
+    fn test_validate_collection_name_dollar_fails() {
+        let err = MongoDbAdapter::validate_collection_name("col$lection").unwrap_err();
+        assert!(err.to_string().contains("$"));
+    }
+
+    #[test]
+    fn test_build_connection_string_with_auth() {
+        let config = make_config("db.example.com", "mydb");
+        let uri = MongoDbAdapter::build_connection_string(&config, Some("secret"));
+        assert!(uri.starts_with("mongodb://"));
+        assert!(uri.contains("test_user"));
+        assert!(uri.contains("secret"));
+        assert!(uri.contains("db.example.com:27017"));
+        assert!(uri.contains("authSource=admin"));
+    }
+
+    #[test]
+    fn test_build_connection_string_without_auth() {
+        let mut config = make_config("localhost", "mydb");
+        config.username = None;
+        let uri = MongoDbAdapter::build_connection_string(&config, None);
+        assert_eq!(uri, "mongodb://localhost:27017");
+    }
+}

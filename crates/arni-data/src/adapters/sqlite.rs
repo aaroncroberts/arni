@@ -140,7 +140,18 @@ impl SqliteAdapter {
                         None => QueryValue::Null,
                     }
                 }
-                "NULL" => QueryValue::Null,
+                "NULL" => {
+                    // sqlx reports undeclared-type columns (e.g. PRAGMA results) as
+                    // type "NULL". The actual SQLite storage class may be INTEGER,
+                    // TEXT, or NULL. Try each in order.
+                    if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(i) {
+                        QueryValue::Int(v)
+                    } else if let Ok(Some(v)) = row.try_get::<Option<String>, _>(i) {
+                        QueryValue::Text(v)
+                    } else {
+                        QueryValue::Null
+                    }
+                }
                 _ => {
                     // For unknown types, try to get as text
                     let val: Option<String> = row.try_get(i).map_err(|e| {
@@ -374,21 +385,34 @@ impl DbAdapter for SqliteAdapter {
 
         for row in result.rows {
             if row.len() >= 6 {
-                if let (
-                    QueryValue::Text(name),
-                    QueryValue::Text(data_type),
-                    QueryValue::Int(notnull),
-                    QueryValue::Int(pk),
-                ) = (&row[1], &row[2], &row[3], &row[5])
-                {
-                    columns.push(ColumnInfo {
-                        name: name.clone(),
-                        data_type: data_type.clone(),
-                        nullable: *notnull == 0,
-                        default_value: None,
-                        is_primary_key: *pk > 0,
-                    });
-                }
+                // PRAGMA table_info returns columns without declared types in SQLite's
+                // schema, so sqlx may report them as untyped (falling to catch-all Text).
+                // Accept both Int and Text representations for notnull and pk.
+                let name = match &row[1] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => continue,
+                };
+                let data_type = match &row[2] {
+                    QueryValue::Text(s) => s.clone(),
+                    _ => String::new(),
+                };
+                let nullable = match &row[3] {
+                    QueryValue::Int(i) => *i == 0,
+                    QueryValue::Text(s) => s == "0",
+                    _ => true,
+                };
+                let is_primary_key = match &row[5] {
+                    QueryValue::Int(i) => *i > 0,
+                    QueryValue::Text(s) => s != "0",
+                    _ => false,
+                };
+                columns.push(ColumnInfo {
+                    name,
+                    data_type,
+                    nullable,
+                    default_value: None,
+                    is_primary_key,
+                });
             }
         }
 
@@ -611,5 +635,93 @@ impl DbAdapter for SqliteAdapter {
         Err(DataError::NotSupported(
             "bulk_delete not yet implemented for SQLite".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::{Connection as ConnectionTrait, DatabaseType};
+
+    fn make_config(database: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            id: "test-sqlite".to_string(),
+            name: "Test SQLite".to_string(),
+            db_type: DatabaseType::SQLite,
+            host: None,
+            port: None,
+            database: database.to_string(),
+            username: None,
+            use_ssl: false,
+            parameters: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_new_adapter_stores_config() {
+        let config = make_config(":memory:");
+        let adapter = SqliteAdapter::new(config);
+        assert_eq!(adapter.config.database, ":memory:");
+        assert_eq!(adapter.config.db_type, DatabaseType::SQLite);
+    }
+
+    #[test]
+    fn test_is_connected_initially_false() {
+        let adapter = SqliteAdapter::new(make_config(":memory:"));
+        assert!(!ConnectionTrait::is_connected(&adapter));
+    }
+
+    #[test]
+    fn test_validate_database_path_memory() {
+        assert!(SqliteAdapter::validate_database_path(":memory:").is_ok());
+    }
+
+    #[test]
+    fn test_validate_database_path_empty_fails() {
+        let err = SqliteAdapter::validate_database_path("").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_validate_database_path_too_long_fails() {
+        let long_path = "a".repeat(4097);
+        let err = SqliteAdapter::validate_database_path(&long_path).unwrap_err();
+        assert!(err.to_string().contains("too long"));
+    }
+
+    #[test]
+    fn test_validate_database_path_valid_file() {
+        assert!(SqliteAdapter::validate_database_path("/tmp/test.db").is_ok());
+        assert!(SqliteAdapter::validate_database_path("relative/path.db").is_ok());
+    }
+
+    #[test]
+    fn test_build_connection_string_memory() {
+        let config = make_config(":memory:");
+        let conn_str = SqliteAdapter::build_connection_string(&config);
+        assert_eq!(conn_str, "sqlite::memory:");
+    }
+
+    #[test]
+    fn test_build_connection_string_absolute_path() {
+        let config = make_config("/tmp/mydb.db");
+        let conn_str = SqliteAdapter::build_connection_string(&config);
+        assert!(conn_str.starts_with("sqlite://"));
+        assert!(conn_str.contains("/tmp/mydb.db"));
+    }
+
+    #[test]
+    fn test_build_connection_string_relative_path() {
+        let config = make_config("./mydb.db");
+        let conn_str = SqliteAdapter::build_connection_string(&config);
+        assert!(conn_str.starts_with("sqlite://"));
+    }
+
+    #[test]
+    fn test_config_accessor() {
+        let config = make_config(":memory:");
+        let adapter = SqliteAdapter::new(config.clone());
+        assert_eq!(adapter.config().id, config.id);
+        assert_eq!(adapter.config().database, ":memory:");
     }
 }
