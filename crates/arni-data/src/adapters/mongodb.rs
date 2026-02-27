@@ -323,9 +323,9 @@ impl DbAdapter for MongoDbAdapter {
 
         let db = client.database(db_name);
 
-        let collection_name = command.get_str("collection").map_err(|_| {
-            DataError::Query("Missing 'collection' field in query".to_string())
-        })?;
+        let collection_name = command
+            .get_str("collection")
+            .map_err(|_| DataError::Query("Missing 'collection' field in query".to_string()))?;
 
         Self::validate_collection_name(collection_name)?;
 
@@ -391,7 +391,11 @@ impl DbAdapter for MongoDbAdapter {
         })
     }
 
-    async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<(), DataError> {
+    async fn connect(
+        &mut self,
+        config: &ConnectionConfig,
+        password: Option<&str>,
+    ) -> Result<(), DataError> {
         self.config = config.clone();
         self.password = password.map(|s| s.to_string());
         ConnectionTrait::connect(self).await
@@ -520,7 +524,10 @@ impl DbAdapter for MongoDbAdapter {
         let mut extra_info = HashMap::new();
         extra_info.insert(
             "host".to_string(),
-            self.config.host.clone().unwrap_or_else(|| "localhost".to_string()),
+            self.config
+                .host
+                .clone()
+                .unwrap_or_else(|| "localhost".to_string()),
         );
         extra_info.insert(
             "port".to_string(),
@@ -610,9 +617,7 @@ impl DbAdapter for MongoDbAdapter {
                     sample_count += 1;
                 }
                 Ok(false) => break,
-                Err(e) => {
-                    return Err(DataError::Query(format!("Failed to fetch document: {}", e)))
-                }
+                Err(e) => return Err(DataError::Query(format!("Failed to fetch document: {}", e))),
             }
         }
 
