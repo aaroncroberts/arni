@@ -2,9 +2,11 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use figlet_rs::FIGfont;
 use std::error::Error;
+use std::process::Command;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const TAGLINE: &str = "Unified database access for Rust";
+const COMPOSE_FILE: &str = "compose.yml";
 
 #[derive(Parser)]
 #[command(name = "arni")]
@@ -187,40 +189,79 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 async fn handle_dev_command(action: DevAction) -> Result<(), Box<dyn Error>> {
+    // Check if podman-compose is available
+    if !is_podman_compose_available() {
+        eprintln!("{}", "Error: podman-compose is not installed or not in PATH".red());
+        eprintln!("{}", "Install with: brew install podman-compose (macOS) or pip install podman-compose".yellow());
+        return Err("podman-compose not found".into());
+    }
+
     match action {
         DevAction::Start => {
             println!("{}", "Starting development containers...".green());
-            println!("{}", "Not yet implemented".yellow());
-            println!("{}", "Hint: This will run 'podman-compose -f compose.yml up -d'".bright_black());
+            run_compose_command(&["up", "-d"])?;
+            println!("{}", "✓ Containers started successfully".bright_green());
         }
         DevAction::Stop => {
             println!("{}", "Stopping development containers...".green());
-            println!("{}", "Not yet implemented".yellow());
-            println!("{}", "Hint: This will run 'podman-compose -f compose.yml down'".bright_black());
+            run_compose_command(&["down"])?;
+            println!("{}", "✓ Containers stopped successfully".bright_green());
         }
         DevAction::Status => {
             println!("{}", "Container status:".green());
-            println!("{}", "Not yet implemented".yellow());
-            println!("{}", "Hint: This will run 'podman-compose -f compose.yml ps'".bright_black());
+            run_compose_command(&["ps"])?;
         }
         DevAction::Logs { service } => {
             if let Some(svc) = service {
                 println!("{} {}", "Showing logs for".green(), svc.bright_white());
+                run_compose_command(&["logs", "--tail=50", &svc])?;
             } else {
                 println!("{}", "Showing logs for all containers".green());
+                run_compose_command(&["logs", "--tail=50"])?;
             }
-            println!("{}", "Not yet implemented".yellow());
-            println!("{}", "Hint: This will run 'podman-compose -f compose.yml logs'".bright_black());
         }
         DevAction::Clean { volumes } => {
             println!("{}", "Cleaning up containers...".green());
             if volumes {
                 println!("{}", "  • Removing volumes".cyan());
+                run_compose_command(&["down", "-v"])?;
+            } else {
+                run_compose_command(&["down"])?;
             }
-            println!("{}", "Not yet implemented".yellow());
-            println!("{}", "Hint: This will run 'podman-compose -f compose.yml down -v'".bright_black());
+            println!("{}", "✓ Cleanup completed".bright_green());
         }
     }
     
+    Ok(())
+}
+
+fn is_podman_compose_available() -> bool {
+    Command::new("podman-compose")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+fn run_compose_command(args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let output = Command::new("podman-compose")
+        .arg("-f")
+        .arg(COMPOSE_FILE)
+        .args(args)
+        .output()?;
+
+    // Print stdout
+    if !output.stdout.is_empty() {
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+
+    // Print stderr
+    if !output.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    if !output.status.success() {
+        return Err(format!("Command failed with exit code: {:?}", output.status.code()).into());
+    }
+
     Ok(())
 }
