@@ -1,4 +1,12 @@
 # arni
+
+> [!IMPORTANT]
+> **For Contributors & AI Agents**: All development follows a mandatory two-phase workflow:
+> 1. **Planning**: [`.claude/commands/task-generate.md`](.claude/commands/task-generate.md) - Create structured WBS
+> 2. **Execution**: [`.claude/commands/task-execute.md`](.claude/commands/task-execute.md) - Implement with context
+> 
+> **See [`WORKFLOW.md`](WORKFLOW.md) for complete details.**
+
 A Rust library for everything named for Árni Magnússon (1663–1730) who established the largest collection of Norse manuscripts.
 
 ## Overview
