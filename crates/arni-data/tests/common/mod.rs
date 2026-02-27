@@ -14,6 +14,8 @@
 
 #![allow(dead_code)]
 
+pub mod containers;
+
 use arni_data::adapter::{ConnectionConfig, DatabaseType};
 use serde::Deserialize;
 use std::collections::HashMap;

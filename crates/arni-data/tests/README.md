@@ -132,35 +132,62 @@ cargo test -p arni-data --features postgres -- --ignored
 
 ## Writing Adapter Tests
 
-Use the helpers from `tests/common/mod.rs` in every adapter test file.
+Use the helpers from `tests/common/` in every adapter test file.
+
+### Using `common::containers` (recommended)
+
+The `containers` sub-module provides ready-built `ConnectionConfig` values that
+match the dev containers in `compose.yml`, with automatic env-var override:
 
 ```rust
 // tests/postgres.rs
 mod common;
 
-#[test]
-fn test_postgres_connect() {
-    if common::skip_if_unavailable("postgres") {
-        return;
-    }
+#[tokio::test]
+async fn test_postgres_connect() {
+    if !common::containers::is_running("postgres") { return; }
+    let cfg = common::containers::postgres_config();
+    // cfg matches compose.yml defaults; overridden by TEST_PG_DEV_* env vars
+}
+```
+
+Available factories:
+
+| Function                            | Database   | Container required |
+|-------------------------------------|------------|--------------------|
+| `containers::postgres_config()`     | PostgreSQL | Yes                |
+| `containers::mysql_config()`        | MySQL      | Yes                |
+| `containers::mssql_config()`        | SQL Server | Yes                |
+| `containers::mongodb_config()`      | MongoDB    | Yes                |
+| `containers::oracle_config()`       | Oracle     | Local only (2 GB)  |
+| `containers::sqlite_memory_config()`| SQLite     | No                 |
+| `containers::duckdb_memory_config()`| DuckDB     | No                 |
+
+### Using `common` directly (lower-level)
+
+```rust
+mod common;
+
+#[tokio::test]
+async fn test_postgres_connect() {
+    if common::skip_if_unavailable("postgres") { return; }
     let cfg = common::load_test_config("pg-dev")
         .expect("pg-dev profile required for postgres tests");
-
-    // ... test body using cfg
+    // ...
 }
 ```
 
 ### Profile name conventions
 
-| Adapter    | Recommended profile | Availability var            |
-|------------|---------------------|-----------------------------|
-| PostgreSQL | `pg-dev`            | `TEST_POSTGRES_AVAILABLE`   |
-| MySQL      | `mysql-dev`         | `TEST_MYSQL_AVAILABLE`      |
-| SQLite     | `sqlite-mem`        | `TEST_SQLITE_AVAILABLE`     |
-| DuckDB     | `duckdb-mem`        | `TEST_DUCKDB_AVAILABLE`     |
-| MongoDB    | `mongo-dev`         | `TEST_MONGODB_AVAILABLE`    |
-| SQL Server | `mssql-dev`         | `TEST_SQLSERVER_AVAILABLE`  |
-| Oracle     | `oracle-dev`        | `TEST_ORACLE_AVAILABLE`     |
+| Adapter    | Recommended profile | Availability var          |
+|------------|---------------------|---------------------------|
+| PostgreSQL | `pg-dev`            | `TEST_POSTGRES_AVAILABLE` |
+| MySQL      | `mysql-dev`         | `TEST_MYSQL_AVAILABLE`    |
+| SQLite     | `sqlite-mem`        | `TEST_SQLITE_AVAILABLE`   |
+| DuckDB     | `duckdb-mem`        | `TEST_DUCKDB_AVAILABLE`   |
+| MongoDB    | `mongo-dev`         | `TEST_MONGODB_AVAILABLE`  |
+| SQL Server | `mssql-dev`         | `TEST_MSSQL_AVAILABLE`    |
+| Oracle     | `oracle-dev`        | `TEST_ORACLE_AVAILABLE`   |
 
 ---
 
