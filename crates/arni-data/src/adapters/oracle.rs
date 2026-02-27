@@ -735,7 +735,7 @@ impl DbAdapter for OracleAdapter {
             self.execute_statement_blocking(drop_sql).await?;
 
             let col_defs: Vec<String> = df
-                .get_columns()
+                .columns()
                 .iter()
                 .map(|col| {
                     format!(

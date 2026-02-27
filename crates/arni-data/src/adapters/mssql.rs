@@ -1132,7 +1132,7 @@ impl DbAdapter for SqlServerAdapter {
             self.execute_statement(&drop_sql).await?;
 
             let col_defs: Vec<String> = df
-                .get_columns()
+                .columns()
                 .iter()
                 .map(|col| {
                     format!(

@@ -1500,7 +1500,7 @@ impl PostgresAdapter {
     fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
         let mut column_defs = Vec::new();
 
-        for (name, dtype) in df.get_columns().iter().map(|s| (s.name(), s.dtype())) {
+        for (name, dtype) in df.columns().iter().map(|s| (s.name(), s.dtype())) {
             let pg_type = match dtype {
                 DataType::Boolean => "BOOLEAN",
                 DataType::Int8 | DataType::Int16 | DataType::Int32 => "INTEGER",
@@ -1761,7 +1761,7 @@ mod tests {
         .unwrap();
 
         // Create test DataFrame with various types
-        let df = DataFrame::new(vec![
+        let df = DataFrame::new(3, vec![
             Series::new("id".into(), &[1i32, 2, 3]).into(),
             Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
             Series::new("score".into(), &[95.5f64, 87.3, 92.1]).into(),
@@ -1814,7 +1814,7 @@ mod tests {
             Series::new("name".into(), &[Some("Alice"), None, Some("Charlie")]).into();
         let score_series = Series::new("score".into(), &[Some(95.5f64), Some(87.3), None]).into();
 
-        let df = DataFrame::new(vec![id_series, name_series, score_series]).unwrap();
+        let df = DataFrame::new(3, vec![id_series, name_series, score_series]).unwrap();
 
         // Export with NULL values
         let result =
@@ -1858,14 +1858,14 @@ mod tests {
         .unwrap();
 
         // First export
-        let df1 = DataFrame::new(vec![Series::new("value".into(), &[1i32, 2, 3]).into()]).unwrap();
+        let df1 = DataFrame::new(3, vec![Series::new("value".into(), &[1i32, 2, 3]).into()]).unwrap();
 
         DbAdapter::export_dataframe(&adapter, &df1, "test_replace", None, true)
             .await
             .unwrap();
 
         // Second export with replace=true (should drop and recreate)
-        let df2 = DataFrame::new(vec![Series::new("value".into(), &[10i32, 20]).into()]).unwrap();
+        let df2 = DataFrame::new(2, vec![Series::new("value".into(), &[10i32, 20]).into()]).unwrap();
 
         let result = DbAdapter::export_dataframe(&adapter, &df2, "test_replace", None, true).await;
         assert!(result.is_ok());
@@ -1892,7 +1892,7 @@ mod tests {
         let config = create_test_config();
         let adapter = PostgresAdapter::new(config);
 
-        let df = DataFrame::new(vec![Series::new("id".into(), &[1i32, 2, 3]).into()]).unwrap();
+        let df = DataFrame::new(3, vec![Series::new("id".into(), &[1i32, 2, 3]).into()]).unwrap();
 
         let result = DbAdapter::export_dataframe(&adapter, &df, "test_table", None, false).await;
         assert!(result.is_err());
@@ -2124,7 +2124,7 @@ mod tests {
         let config = create_test_config();
         let adapter = PostgresAdapter::new(config);
 
-        let df = DataFrame::new(vec![
+        let df = DataFrame::new(3, vec![
             Series::new("id".into(), &[1, 2, 3]).into(),
             Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
             Series::new("score".into(), &[95.5, 87.3, 92.1]).into(),

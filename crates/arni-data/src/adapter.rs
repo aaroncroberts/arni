@@ -290,7 +290,7 @@ impl QueryResult {
                 .map(|name| Series::new(name.as_str().into(), Vec::<i64>::new()))
                 .collect();
             let columns: Vec<_> = series.into_iter().map(|s| s.into()).collect();
-            return Ok(DataFrame::new(columns)?);
+            return Ok(DataFrame::new(0, columns)?);
         }
 
         // Build series for each column
@@ -305,8 +305,9 @@ impl QueryResult {
             series_vec.push(series);
         }
 
+        let height = self.rows.len();
         let columns: Vec<_> = series_vec.into_iter().map(|s| s.into()).collect();
-        Ok(DataFrame::new(columns)?)
+        Ok(DataFrame::new(height, columns)?)
     }
 
     /// Helper to convert a column of QueryValues to a Series

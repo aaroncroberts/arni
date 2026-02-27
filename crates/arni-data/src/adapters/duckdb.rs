@@ -524,7 +524,7 @@ impl DbAdapter for DuckDbAdapter {
             self.execute_statement_blocking(drop_sql).await?;
 
             let column_defs: Vec<String> = df
-                .get_columns()
+                .columns()
                 .iter()
                 .map(|col| {
                     format!(

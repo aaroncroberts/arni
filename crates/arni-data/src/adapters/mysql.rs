@@ -1444,7 +1444,7 @@ impl MySqlAdapter {
     fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
         let mut column_defs = Vec::new();
 
-        for column in df.get_columns() {
+        for column in df.columns() {
             let name = column.name();
             let dtype = column.dtype();
 
@@ -1935,7 +1935,7 @@ mod tests {
         let config = create_test_config();
         let adapter = MySqlAdapter::new(config);
 
-        let df = DataFrame::new(vec![
+        let df = DataFrame::new(3, vec![
             Series::new("id".into(), &[1, 2, 3]).into(),
             Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
             Series::new("active".into(), &[true, false, true]).into(),
@@ -1969,7 +1969,7 @@ mod tests {
         .await
         .expect("Failed to connect");
 
-        let df = DataFrame::new(vec![
+        let df = DataFrame::new(3, vec![
             Series::new("id".into(), &[1, 2, 3]).into(),
             Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
         ])

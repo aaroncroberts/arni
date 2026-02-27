@@ -850,7 +850,7 @@ impl DbAdapter for SqliteAdapter {
             self.execute_statement(&drop_sql).await?;
 
             let column_defs: Vec<String> = df
-                .get_columns()
+                .columns()
                 .iter()
                 .map(|col| {
                     format!(

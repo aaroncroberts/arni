@@ -149,7 +149,7 @@ fn write_xml<W: std::io::Write>(df: &mut DataFrame, sink: &mut W) -> Result<()> 
         .write_event(Event::Start(BytesStart::new("dataframe")))
         .map_err(xml_err)?;
 
-    let columns = df.get_columns();
+    let columns = df.columns();
     let n_rows = df.height();
 
     for row_idx in 0..n_rows {
@@ -240,7 +240,7 @@ fn write_excel_bytes(df: &mut DataFrame) -> Result<Vec<u8>> {
             .map_err(xlsx_err)?;
     }
 
-    let columns = df.get_columns();
+    let columns = df.columns();
     let n_rows = df.height();
 
     for row_idx in 0..n_rows {
@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn excel_with_mixed_types() {
         // Exercises the numeric, boolean, and string match arms
-        let mut df = DataFrame::new(vec![
+        let mut df = DataFrame::new(3, vec![
             Column::new("id".into(), &[1i32, 2, 3]),
             Column::new("active".into(), &[true, false, true]),
             Column::new("name".into(), &["Alice", "Bob", "Carol"]),
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn excel_empty_df_does_not_panic() {
         let mut df =
-            DataFrame::new(vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
+            DataFrame::new(0, vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
         let bytes = to_bytes(&mut df, DataFormat::Excel).unwrap();
         // Should produce a valid (header-only) workbook without panicking
         assert_eq!(&bytes[..2], b"PK");
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn csv_empty_df_has_header_only() {
-        let mut df = DataFrame::new(vec![
+        let mut df = DataFrame::new(0, vec![
             Column::new("id".into(), &[] as &[i32]),
             Column::new("val".into(), &[] as &[f64]),
         ])
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn xml_empty_df_has_no_row_elements() {
         let mut df =
-            DataFrame::new(vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
+            DataFrame::new(0, vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
         let bytes = to_bytes(&mut df, DataFormat::Xml).unwrap();
         let text = String::from_utf8(bytes).unwrap();
         assert!(!text.contains("<row>"), "empty df should have no <row>: {text}");
