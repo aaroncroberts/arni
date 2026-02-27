@@ -181,8 +181,8 @@ mod oracle_tests {
     #[test]
     fn test_oracle_database_type() {
         use arni_data::adapter::DatabaseType;
-        use arni_data::adapters::oracle::OracleAdapter;
         use arni_data::adapter::{ConnectionConfig, DbAdapter};
+        use arni_data::adapters::oracle::OracleAdapter;
         use std::collections::HashMap;
 
         let config = ConnectionConfig {
@@ -234,12 +234,10 @@ mod oracle_tests {
             .await
             .unwrap();
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            "SELECT 1 AS a, 'hello' AS b, 3.14 AS c FROM DUAL",
-        )
-        .await
-        .expect("multi-column SELECT FROM DUAL should succeed");
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT 1 AS a, 'hello' AS b, 3.14 AS c FROM DUAL")
+                .await
+                .expect("multi-column SELECT FROM DUAL should succeed");
         assert_eq!(result.columns.len(), 3, "should have 3 columns");
         assert_eq!(result.rows.len(), 1, "should have 1 row");
     }
@@ -338,7 +336,10 @@ mod oracle_tests {
         // UPDATE
         DbAdapter::execute_query(
             &adapter,
-            &format!("UPDATE {t} SET label = 'updated' WHERE label = 'hello'", t = table),
+            &format!(
+                "UPDATE {t} SET label = 'updated' WHERE label = 'hello'",
+                t = table
+            ),
         )
         .await
         .expect("UPDATE should succeed");
@@ -482,11 +483,7 @@ mod oracle_tests {
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
         // Oracle schema = uppercase username; default test user is SYSTEM
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -506,11 +503,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -558,11 +551,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -631,22 +620,14 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
             .unwrap();
 
-        let result = DbAdapter::describe_table(
-            &adapter,
-            "ARNI_ORA_DOES_NOT_EXIST_XYZ",
-            Some(&schema),
-        )
-        .await;
+        let result =
+            DbAdapter::describe_table(&adapter, "ARNI_ORA_DOES_NOT_EXIST_XYZ", Some(&schema)).await;
         assert!(
             result.is_err(),
             "describe_table on non-existent table should return an error"
@@ -662,11 +643,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -686,11 +663,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -765,11 +738,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -802,10 +771,7 @@ mod oracle_tests {
         // Create an explicit index on CODE
         DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "CREATE INDEX IDX_ARNI_ORA_CODE ON {t} (code)",
-                t = table
-            ),
+            &format!("CREATE INDEX IDX_ARNI_ORA_CODE ON {t} (code)", t = table),
         )
         .await
         .expect("CREATE INDEX should succeed");
@@ -833,11 +799,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -912,11 +874,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -963,11 +921,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -987,11 +941,7 @@ mod oracle_tests {
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
-        let schema = cfg
-            .username
-            .as_deref()
-            .unwrap_or("SYSTEM")
-            .to_uppercase();
+        let schema = cfg.username.as_deref().unwrap_or("SYSTEM").to_uppercase();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
             .await
@@ -999,11 +949,8 @@ mod oracle_tests {
 
         // Create a simple PL/SQL procedure so we have something to find
         let proc_name = "ARNI_ORA_PROC1";
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            &format!("DROP PROCEDURE {p}", p = proc_name),
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP PROCEDURE {p}", p = proc_name)).await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -1033,12 +980,9 @@ mod oracle_tests {
             }
         }
 
-        DbAdapter::execute_query(
-            &adapter,
-            &format!("DROP PROCEDURE {p}", p = proc_name),
-        )
-        .await
-        .expect("DROP PROCEDURE should succeed");
+        DbAdapter::execute_query(&adapter, &format!("DROP PROCEDURE {p}", p = proc_name))
+            .await
+            .expect("DROP PROCEDURE should succeed");
     }
 
     // ── 15. DataFrame operations ─────────────────────────────────────────────
@@ -1118,9 +1062,12 @@ mod oracle_tests {
         .await
         .expect("INSERT 3 should succeed");
 
-        let df = DbAdapter::query_df(&adapter, &format!("SELECT * FROM {t} ORDER BY id", t = table))
-            .await
-            .expect("query_df should succeed for multi-row table");
+        let df = DbAdapter::query_df(
+            &adapter,
+            &format!("SELECT * FROM {t} ORDER BY id", t = table),
+        )
+        .await
+        .expect("query_df should succeed for multi-row table");
 
         assert_eq!(df.height(), 3, "DataFrame should have 3 rows");
         assert!(df.width() >= 2, "DataFrame should have at least 2 columns");
@@ -1135,8 +1082,8 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_number_type() {
-        use arni_data::adapters::oracle::OracleAdapter;
         use arni_data::adapter::QueryValue;
+        use arni_data::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1191,7 +1138,10 @@ mod oracle_tests {
         // The value should come back as a numeric type
         let int_val = &result.rows[0][0];
         assert!(
-            matches!(int_val, QueryValue::Int(_) | QueryValue::Float(_) | QueryValue::Text(_)),
+            matches!(
+                int_val,
+                QueryValue::Int(_) | QueryValue::Float(_) | QueryValue::Text(_)
+            ),
             "NUMBER column should be a numeric or text QueryValue, got: {:?}",
             int_val
         );
@@ -1204,8 +1154,8 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_varchar2_type() {
-        use arni_data::adapters::oracle::OracleAdapter;
         use arni_data::adapter::QueryValue;
+        use arni_data::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1235,17 +1185,17 @@ mod oracle_tests {
 
         DbAdapter::execute_query(
             &adapter,
-            &format!("INSERT INTO {t} (txt) VALUES ('Oracle VARCHAR2 test')", t = table),
+            &format!(
+                "INSERT INTO {t} (txt) VALUES ('Oracle VARCHAR2 test')",
+                t = table
+            ),
         )
         .await
         .expect("INSERT should succeed");
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            &format!("SELECT txt FROM {t}", t = table),
-        )
-        .await
-        .expect("SELECT should succeed");
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT txt FROM {t}", t = table))
+            .await
+            .expect("SELECT should succeed");
 
         assert_eq!(result.rows.len(), 1);
         assert!(
@@ -1283,12 +1233,9 @@ mod oracle_tests {
         )
         .await;
 
-        DbAdapter::execute_query(
-            &adapter,
-            &format!("CREATE TABLE {t} (dt DATE)", t = table),
-        )
-        .await
-        .expect("CREATE TABLE should succeed");
+        DbAdapter::execute_query(&adapter, &format!("CREATE TABLE {t} (dt DATE)", t = table))
+            .await
+            .expect("CREATE TABLE should succeed");
 
         // Use SYSDATE for Oracle date
         DbAdapter::execute_query(
@@ -1298,12 +1245,9 @@ mod oracle_tests {
         .await
         .expect("INSERT with SYSDATE should succeed");
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            &format!("SELECT dt FROM {t}", t = table),
-        )
-        .await
-        .expect("SELECT DATE column should succeed");
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT dt FROM {t}", t = table))
+            .await
+            .expect("SELECT DATE column should succeed");
 
         assert_eq!(result.rows.len(), 1, "should have 1 row");
         assert!(
@@ -1316,5 +1260,147 @@ mod oracle_tests {
         DbAdapter::execute_query(&adapter, &format!("DROP TABLE {t}", t = table))
             .await
             .expect("DROP TABLE should succeed");
+    }
+
+    // ── Metadata: get_server_info ────────────────────────────────────────────
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_get_server_info() {
+        use arni_data::adapters::oracle::OracleAdapter;
+
+        let cfg = oracle_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = OracleAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        assert!(
+            !info.version.is_empty(),
+            "server version should not be empty; got: {:?}",
+            info.version
+        );
+        assert_eq!(
+            info.server_type, "Oracle",
+            "server_type should be 'Oracle'; got: {:?}",
+            info.server_type
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_server_info_version_contains_oracle() {
+        use arni_data::adapters::oracle::OracleAdapter;
+
+        let cfg = oracle_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = OracleAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        // v$version banner contains "Oracle Database" or "Oracle"
+        let version_lower = info.version.to_lowercase();
+        assert!(
+            version_lower.contains("oracle"),
+            "version string should contain 'Oracle'; got: {}",
+            info.version
+        );
+    }
+
+    // ── Metadata: get_view_definition ────────────────────────────────────────
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_get_view_definition() {
+        use arni_data::adapters::oracle::OracleAdapter;
+
+        let cfg = oracle_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = OracleAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let table = "ARNI_ORA_VDEF_BASE";
+        let view = "ARNI_ORA_VDEF_VIEW";
+
+        // Cleanup from any previous run (ignore errors)
+        let _ = DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "BEGIN EXECUTE IMMEDIATE 'DROP VIEW {}'; EXCEPTION WHEN OTHERS THEN NULL; END;",
+                view
+            ),
+        )
+        .await;
+        let _ = DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "BEGIN EXECUTE IMMEDIATE 'DROP TABLE {}'; EXCEPTION WHEN OTHERS THEN NULL; END;",
+                table
+            ),
+        )
+        .await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {} (id NUMBER, val VARCHAR2(255))", table),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE VIEW {} AS SELECT id, val FROM {}", view, table),
+        )
+        .await
+        .expect("CREATE VIEW should succeed");
+
+        let def = DbAdapter::get_view_definition(&adapter, view, None)
+            .await
+            .expect("get_view_definition should succeed");
+
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP VIEW {}", view)).await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE {}", table)).await;
+
+        let def_str = def.expect("view definition should be Some");
+        assert!(
+            def_str.to_lowercase().contains("select"),
+            "definition should contain SELECT; got: {}",
+            def_str
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_get_view_definition_nonexistent() {
+        use arni_data::adapters::oracle::OracleAdapter;
+
+        let cfg = oracle_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = OracleAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let result = DbAdapter::get_view_definition(&adapter, "ARNI_ORA_NO_SUCH_VIEW_XYZZY", None)
+            .await
+            .expect("get_view_definition for nonexistent view should return Ok");
+
+        assert!(
+            result.is_none(),
+            "nonexistent view should return None; got: {:?}",
+            result
+        );
     }
 }

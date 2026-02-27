@@ -134,10 +134,7 @@ mod postgres_tests {
 
         // Before connecting, health_check should either return Ok(false) or Err.
         match ConnectionTrait::health_check(&adapter).await {
-            Ok(healthy) => assert!(
-                !healthy,
-                "health_check before connect should return false"
-            ),
+            Ok(healthy) => assert!(!healthy, "health_check before connect should return false"),
             Err(_) => {
                 // An error is also acceptable when not connected.
             }
@@ -265,12 +262,9 @@ mod postgres_tests {
         let adapter = connected_adapter(&cfg).await;
 
         // pg_class is always present; filter guarantees zero rows.
-        let result = DbAdapter::execute_query(
-            &adapter,
-            "SELECT relname FROM pg_class WHERE FALSE",
-        )
-        .await
-        .expect("empty-result SELECT should succeed");
+        let result = DbAdapter::execute_query(&adapter, "SELECT relname FROM pg_class WHERE FALSE")
+            .await
+            .expect("empty-result SELECT should succeed");
 
         assert_eq!(result.rows.len(), 0, "result set should be empty");
     }
@@ -329,11 +323,7 @@ mod postgres_tests {
             .unwrap();
 
         let table = "arni_pg_test_basic";
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            &format!("DROP TABLE IF EXISTS {table}"),
-        )
-        .await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -389,10 +379,9 @@ mod postgres_tests {
         .await
         .expect("UPDATE should succeed");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT val FROM {table}"))
-                .await
-                .expect("SELECT after UPDATE should succeed");
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT val FROM {table}"))
+            .await
+            .expect("SELECT after UPDATE should succeed");
 
         assert_eq!(result.rows.len(), 1);
         use arni_data::adapter::QueryValue;
@@ -436,10 +425,9 @@ mod postgres_tests {
         .await
         .expect("DELETE should succeed");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT val FROM {table}"))
-                .await
-                .expect("SELECT after DELETE should succeed");
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT val FROM {table}"))
+            .await
+            .expect("SELECT after DELETE should succeed");
 
         assert_eq!(result.rows.len(), 1, "one row should remain after DELETE");
 
@@ -489,8 +477,7 @@ mod postgres_tests {
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
 
-        let result =
-            DbAdapter::execute_query(&adapter, "INSERT INTO (col1) VALUES ()").await;
+        let result = DbAdapter::execute_query(&adapter, "INSERT INTO (col1) VALUES ()").await;
         assert!(
             result.is_err(),
             "syntactically invalid DML should return an error"
@@ -660,9 +647,7 @@ mod postgres_tests {
 
         DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "CREATE TABLE {table} (required TEXT NOT NULL, optional TEXT)"
-            ),
+            &format!("CREATE TABLE {table} (required TEXT NOT NULL, optional TEXT)"),
         )
         .await
         .expect("CREATE TABLE should succeed");
@@ -715,7 +700,10 @@ mod postgres_tests {
             .await
             .expect("describe_table with explicit schema should succeed");
 
-        assert!(!info.columns.is_empty(), "table must have at least one column");
+        assert!(
+            !info.columns.is_empty(),
+            "table must have at least one column"
+        );
 
         DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
             .await
@@ -869,8 +857,7 @@ mod postgres_tests {
         let child = "arni_pg_test_fk_child";
 
         let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {child}")).await;
-        let _ =
-            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {parent}")).await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {parent}")).await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -901,9 +888,12 @@ mod postgres_tests {
             "child table must have at least one foreign key"
         );
         assert!(
-            fks.iter().any(|fk| fk.referenced_table.eq_ignore_ascii_case(parent)),
+            fks.iter()
+                .any(|fk| fk.referenced_table.eq_ignore_ascii_case(parent)),
             "FK must reference the parent table '{parent}'; got: {:?}",
-            fks.iter().map(|fk| &fk.referenced_table).collect::<Vec<_>>()
+            fks.iter()
+                .map(|fk| &fk.referenced_table)
+                .collect::<Vec<_>>()
         );
 
         DbAdapter::execute_query(&adapter, &format!("DROP TABLE {child}"))
@@ -1030,12 +1020,9 @@ mod postgres_tests {
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
 
-        let df = DbAdapter::query_df(
-            &adapter,
-            "SELECT 1 AS alpha, 2 AS beta, 3 AS gamma",
-        )
-        .await
-        .expect("query_df should succeed");
+        let df = DbAdapter::query_df(&adapter, "SELECT 1 AS alpha, 2 AS beta, 3 AS gamma")
+            .await
+            .expect("query_df should succeed");
 
         let col_names: Vec<String> = df
             .get_column_names()
@@ -1065,7 +1052,11 @@ mod postgres_tests {
             .await
             .expect("query_df with empty result should succeed");
 
-        assert_eq!(df.height(), 0, "DataFrame from empty query must have 0 rows");
+        assert_eq!(
+            df.height(),
+            0,
+            "DataFrame from empty query must have 0 rows"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1077,10 +1068,9 @@ mod postgres_tests {
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT 42::BIGINT AS n")
-                .await
-                .expect("integer SELECT should succeed");
+        let result = DbAdapter::execute_query(&adapter, "SELECT 42::BIGINT AS n")
+            .await
+            .expect("integer SELECT should succeed");
 
         use arni_data::adapter::QueryValue;
         assert_eq!(result.rows[0][0], QueryValue::Int(42));
@@ -1091,10 +1081,9 @@ mod postgres_tests {
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT 3.14::FLOAT8 AS f")
-                .await
-                .expect("float SELECT should succeed");
+        let result = DbAdapter::execute_query(&adapter, "SELECT 3.14::FLOAT8 AS f")
+            .await
+            .expect("float SELECT should succeed");
 
         use arni_data::adapter::QueryValue;
         match &result.rows[0][0] {
@@ -1129,14 +1118,21 @@ mod postgres_tests {
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT TRUE AS t, FALSE AS f")
-                .await
-                .expect("boolean SELECT should succeed");
+        let result = DbAdapter::execute_query(&adapter, "SELECT TRUE AS t, FALSE AS f")
+            .await
+            .expect("boolean SELECT should succeed");
 
         use arni_data::adapter::QueryValue;
-        assert_eq!(result.rows[0][0], QueryValue::Bool(true), "TRUE should map to QueryValue::Bool(true)");
-        assert_eq!(result.rows[0][1], QueryValue::Bool(false), "FALSE should map to QueryValue::Bool(false)");
+        assert_eq!(
+            result.rows[0][0],
+            QueryValue::Bool(true),
+            "TRUE should map to QueryValue::Bool(true)"
+        );
+        assert_eq!(
+            result.rows[0][1],
+            QueryValue::Bool(false),
+            "FALSE should map to QueryValue::Bool(false)"
+        );
     }
 
     #[tokio::test]
@@ -1184,6 +1180,112 @@ mod postgres_tests {
             returned.db_type,
             arni_data::adapter::DatabaseType::Postgres,
             "config() db_type must be Postgres"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 18. get_server_info
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_pg_get_server_info() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        assert!(
+            !info.version.is_empty(),
+            "server version should not be empty; got: {:?}",
+            info.version
+        );
+        assert_eq!(
+            info.server_type, "PostgreSQL",
+            "server_type should be 'PostgreSQL'; got: {:?}",
+            info.server_type
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pg_server_info_version_contains_postgres() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        let version_lower = info.version.to_lowercase();
+        assert!(
+            version_lower.contains("postgresql"),
+            "version string should contain 'PostgreSQL'; got: {}",
+            info.version
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 19. get_view_definition
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_pg_get_view_definition() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_vdef_base";
+        let view = "arni_pg_vdef_view";
+
+        // Cleanup from any previous run
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP VIEW IF EXISTS {}", view)).await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {}", table)).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {} (id BIGINT, val TEXT)", table),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE VIEW {} AS SELECT id, val FROM {}", view, table),
+        )
+        .await
+        .expect("CREATE VIEW should succeed");
+
+        let def = DbAdapter::get_view_definition(&adapter, view, Some("public"))
+            .await
+            .expect("get_view_definition should succeed");
+
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP VIEW IF EXISTS {}", view)).await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {}", table)).await;
+
+        let def_str = def.expect("view definition should be Some");
+        assert!(
+            def_str.to_lowercase().contains("select"),
+            "definition should contain SELECT; got: {}",
+            def_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pg_get_view_definition_nonexistent() {
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let result =
+            DbAdapter::get_view_definition(&adapter, "arni_pg_no_such_view_xyzzy", Some("public"))
+                .await
+                .expect("get_view_definition for nonexistent view should return Ok");
+
+        assert!(
+            result.is_none(),
+            "nonexistent view should return None; got: {:?}",
+            result
         );
     }
 }

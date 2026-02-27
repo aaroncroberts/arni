@@ -44,9 +44,9 @@
 //! ```
 
 use crate::adapter::{
-    AdapterMetadata, Connection, ConnectionConfig, DatabaseType, DbAdapter, FilterExpr,
-    ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo,
-    TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql, query_value_to_sql_literal,
+    escape_like_pattern, filter_to_sql, query_value_to_sql_literal, AdapterMetadata, Connection,
+    ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
+    ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -69,9 +69,10 @@ use tracing::{debug, error, info, instrument, warn};
 ///
 /// # SSL/TLS Support
 ///
-/// SSL is supported via the `use_ssl` configuration option:
-/// - `use_ssl: false` - Plain text connection (default)
-/// - `use_ssl: true` - Encrypted connection using native-tls
+/// **Note**: TLS/SSL is not yet implemented. The adapter always uses an unencrypted
+/// (`NoTls`) connection regardless of the `use_ssl` configuration option. Setting
+/// `use_ssl: true` currently has no effect. TLS support will be added in a future
+/// release.
 ///
 /// # Thread Safety
 ///
@@ -285,7 +286,7 @@ impl DbAdapter for PostgresAdapter {
         // Spawn the connection handler
         tokio::spawn(async move {
             if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
+                error!("connection error: {}", e);
             }
         });
 
@@ -747,7 +748,10 @@ impl DbAdapter for PostgresAdapter {
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = $1 AND c.relname = $2
         ";
-        let stats = client.query(stats_query, &[&schema_name, &table_name]).await.ok();
+        let stats = client
+            .query(stats_query, &[&schema_name, &table_name])
+            .await
+            .ok();
         let (row_count, size_bytes) = stats
             .as_ref()
             .and_then(|rows| rows.first())
@@ -1345,8 +1349,12 @@ impl PostgresAdapter {
             // Return type-appropriate NULL so tokio-postgres serializes with the correct OID
             return match series.dtype() {
                 DataType::Boolean => Ok(Box::new(None::<bool>)),
-                DataType::Int8 | DataType::Int16 | DataType::Int32
-                | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => Ok(Box::new(None::<i32>)),
+                DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32 => Ok(Box::new(None::<i32>)),
                 DataType::Int64 | DataType::UInt64 => Ok(Box::new(None::<i64>)),
                 DataType::Float32 => Ok(Box::new(None::<f32>)),
                 DataType::Float64 => Ok(Box::new(None::<f64>)),
@@ -1525,8 +1533,8 @@ mod tests {
 
     fn create_test_config() -> ConnectionConfig {
         let mut parameters = HashMap::new();
-        let password = std::env::var("TEST_POSTGRES_PASSWORD")
-            .unwrap_or_else(|_| "test_password".to_string());
+        let password =
+            std::env::var("TEST_POSTGRES_PASSWORD").unwrap_or_else(|_| "test_password".to_string());
         parameters.insert("password".to_string(), password);
         ConnectionConfig {
             id: "test-pg".to_string(),
@@ -1544,8 +1552,7 @@ mod tests {
             database: std::env::var("TEST_POSTGRES_DATABASE")
                 .unwrap_or_else(|_| "test_db".to_string()),
             username: Some(
-                std::env::var("TEST_POSTGRES_USERNAME")
-                    .unwrap_or_else(|_| "test_user".to_string()),
+                std::env::var("TEST_POSTGRES_USERNAME").unwrap_or_else(|_| "test_user".to_string()),
             ),
             use_ssl: false,
             parameters,
@@ -1745,9 +1752,13 @@ mod tests {
         let mut adapter = PostgresAdapter::new(config.clone());
 
         // Connect first
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .unwrap();
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .unwrap();
 
         // Create test DataFrame with various types
         let df = DataFrame::new(vec![
@@ -1789,9 +1800,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .unwrap();
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .unwrap();
 
         // Create DataFrame with NULL values
         let id_series = Series::new("id".into(), &[Some(1i32), Some(2), Some(3)]).into();
@@ -1834,9 +1849,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .unwrap();
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .unwrap();
 
         // First export
         let df1 = DataFrame::new(vec![Series::new("value".into(), &[1i32, 2, 3]).into()]).unwrap();
@@ -2139,9 +2158,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .unwrap();
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .unwrap();
 
         // Test SELECT query
         let result = DbAdapter::execute_query(&adapter, "SELECT 1 as num, 'test' as text").await;
@@ -2165,9 +2188,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .unwrap();
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .unwrap();
 
         // Test different PostgreSQL types
         let result = DbAdapter::execute_query(
@@ -2199,9 +2226,13 @@ mod tests {
         let config = create_test_config();
         let mut adapter = PostgresAdapter::new(config.clone());
 
-        DbAdapter::connect(&mut adapter, &config, config.parameters.get("password").map(String::as_str))
-            .await
-            .unwrap();
+        DbAdapter::connect(
+            &mut adapter,
+            &config,
+            config.parameters.get("password").map(String::as_str),
+        )
+        .await
+        .unwrap();
 
         let result =
             DbAdapter::execute_query(&adapter, "SELECT NULL as null_val, 42 as int_val").await;

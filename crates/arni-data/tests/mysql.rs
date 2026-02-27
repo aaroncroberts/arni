@@ -86,10 +86,7 @@ mod mysql_tests {
         // Before connecting, health_check should either return Ok(false) or an Err.
         // Either is acceptable; the key property is it must not return Ok(true).
         match ConnectionTrait::health_check(&adapter).await {
-            Ok(healthy) => assert!(
-                !healthy,
-                "health_check before connect must not return true"
-            ),
+            Ok(healthy) => assert!(!healthy, "health_check before connect must not return true"),
             Err(_) => { /* expected – not connected */ }
         }
     }
@@ -210,12 +207,9 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            "SELECT 1 AS a, 'hello' AS b, 3.14 AS c",
-        )
-        .await
-        .expect("multi-column SELECT should succeed");
+        let result = DbAdapter::execute_query(&adapter, "SELECT 1 AS a, 'hello' AS b, 3.14 AS c")
+            .await
+            .expect("multi-column SELECT should succeed");
 
         assert_eq!(result.columns.len(), 3, "should return three columns");
         assert_eq!(result.rows.len(), 1, "should return one row");
@@ -226,8 +220,8 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_execute_select_null_value() {
-        use arni_data::adapters::mysql::MySqlAdapter;
         use arni_data::adapter::QueryValue;
+        use arni_data::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -261,11 +255,8 @@ mod mysql_tests {
             .unwrap();
 
         let table = "`arni_mysql_empty_result`";
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            &format!("DROP TABLE IF EXISTS {}", table),
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {}", table)).await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -286,11 +277,9 @@ mod mysql_tests {
 
         assert_eq!(result.rows.len(), 0, "empty result should have 0 rows");
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_empty_result`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_empty_result`")
+                .await;
     }
 
     // ── CRUD lifecycle ───────────────────────────────────────────────────────
@@ -307,11 +296,8 @@ mod mysql_tests {
             .unwrap();
 
         let table = "`arni_mysql_basic`";
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            &format!("DROP TABLE IF EXISTS {}", table),
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {}", table)).await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -355,11 +341,8 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_update`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_update`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -382,12 +365,9 @@ mod mysql_tests {
         .await
         .expect("UPDATE should succeed");
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            "SELECT `label` FROM `arni_mysql_update`",
-        )
-        .await
-        .expect("SELECT should succeed");
+        let result = DbAdapter::execute_query(&adapter, "SELECT `label` FROM `arni_mysql_update`")
+            .await
+            .expect("SELECT should succeed");
 
         assert_eq!(result.rows.len(), 1);
 
@@ -407,11 +387,8 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_delete`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_delete`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -434,14 +411,15 @@ mod mysql_tests {
         .await
         .expect("DELETE should succeed");
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            "SELECT `label` FROM `arni_mysql_delete`",
-        )
-        .await
-        .expect("SELECT should succeed");
+        let result = DbAdapter::execute_query(&adapter, "SELECT `label` FROM `arni_mysql_delete`")
+            .await
+            .expect("SELECT should succeed");
 
-        assert_eq!(result.rows.len(), 1, "only one row should remain after DELETE");
+        assert_eq!(
+            result.rows.len(),
+            1,
+            "only one row should remain after DELETE"
+        );
 
         DbAdapter::execute_query(&adapter, "DROP TABLE `arni_mysql_delete`")
             .await
@@ -459,11 +437,9 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_rows_affected`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_rows_affected`")
+                .await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -480,7 +456,10 @@ mod mysql_tests {
         .expect("INSERT should succeed");
 
         if let Some(affected) = result.rows_affected {
-            assert_eq!(affected, 3, "INSERT of 3 rows should report 3 rows affected");
+            assert_eq!(
+                affected, 3,
+                "INSERT of 3 rows should report 3 rows affected"
+            );
         }
 
         DbAdapter::execute_query(&adapter, "DROP TABLE `arni_mysql_rows_affected`")
@@ -591,17 +570,16 @@ mod mysql_tests {
             .expect("list_tables should succeed");
 
         assert!(
-            tables.iter().any(|t| t.eq_ignore_ascii_case("arni_mysql_list_tables_check")),
+            tables
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case("arni_mysql_list_tables_check")),
             "newly created table should appear in list_tables: {:?}",
             tables
         );
 
-        DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE `arni_mysql_list_tables_check`",
-        )
-        .await
-        .expect("DROP TABLE should succeed");
+        DbAdapter::execute_query(&adapter, "DROP TABLE `arni_mysql_list_tables_check`")
+            .await
+            .expect("DROP TABLE should succeed");
     }
 
     // ── Metadata - describe_table ────────────────────────────────────────────
@@ -617,11 +595,8 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_describe`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_describe`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -651,10 +626,22 @@ mod mysql_tests {
             .map(|c| c.name.to_lowercase())
             .collect();
 
-        assert!(col_names.contains(&"id".to_string()), "should have 'id' column");
-        assert!(col_names.contains(&"name".to_string()), "should have 'name' column");
-        assert!(col_names.contains(&"score".to_string()), "should have 'score' column");
-        assert!(col_names.contains(&"active".to_string()), "should have 'active' column");
+        assert!(
+            col_names.contains(&"id".to_string()),
+            "should have 'id' column"
+        );
+        assert!(
+            col_names.contains(&"name".to_string()),
+            "should have 'name' column"
+        );
+        assert!(
+            col_names.contains(&"score".to_string()),
+            "should have 'score' column"
+        );
+        assert!(
+            col_names.contains(&"active".to_string()),
+            "should have 'active' column"
+        );
 
         assert_eq!(
             table_info.columns.len(),
@@ -678,11 +665,8 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_nullable`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_nullable`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -709,8 +693,14 @@ mod mysql_tests {
             .find(|c| c.name.eq_ignore_ascii_case("optional_col"))
             .expect("optional_col should exist");
 
-        assert!(!required.nullable, "NOT NULL column should have nullable=false");
-        assert!(optional.nullable, "nullable column should have nullable=true");
+        assert!(
+            !required.nullable,
+            "NOT NULL column should have nullable=false"
+        );
+        assert!(
+            optional.nullable,
+            "nullable column should have nullable=true"
+        );
 
         DbAdapter::execute_query(&adapter, "DROP TABLE `arni_mysql_nullable`")
             .await
@@ -730,16 +720,10 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP VIEW IF EXISTS `arni_mysql_test_view`",
-        )
-        .await;
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_view_base`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP VIEW IF EXISTS `arni_mysql_test_view`").await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_view_base`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -760,7 +744,9 @@ mod mysql_tests {
             .expect("get_views should succeed");
 
         assert!(
-            views.iter().any(|v| v.name.eq_ignore_ascii_case("arni_mysql_test_view")),
+            views
+                .iter()
+                .any(|v| v.name.eq_ignore_ascii_case("arni_mysql_test_view")),
             "created view should appear in get_views: {:?}",
             views.iter().map(|v| &v.name).collect::<Vec<_>>()
         );
@@ -786,11 +772,8 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_indexes`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_indexes`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -820,7 +803,9 @@ mod mysql_tests {
 
         let idx_names: Vec<String> = indexes.iter().map(|i| i.name.to_lowercase()).collect();
         assert!(
-            idx_names.iter().any(|n| n.contains("email") || n.contains("idx")),
+            idx_names
+                .iter()
+                .any(|n| n.contains("email") || n.contains("idx")),
             "explicit index on email should appear in get_indexes: {:?}",
             idx_names
         );
@@ -841,11 +826,8 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_idx_pk`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_idx_pk`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -884,22 +866,12 @@ mod mysql_tests {
             .unwrap();
 
         // Disable FK checks temporarily so we can drop/recreate in any order.
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "SET foreign_key_checks=0",
-        )
-        .await;
+        let _ = DbAdapter::execute_query(&adapter, "SET foreign_key_checks=0").await;
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_fk_child`",
-        )
-        .await;
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_fk_parent`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_fk_child`").await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_fk_parent`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -937,12 +909,15 @@ mod mysql_tests {
 
         let fk = &fks[0];
         assert!(
-            fk.referenced_table.eq_ignore_ascii_case("arni_mysql_fk_parent"),
+            fk.referenced_table
+                .eq_ignore_ascii_case("arni_mysql_fk_parent"),
             "FK should reference parent table, got: {}",
             fk.referenced_table
         );
         assert!(
-            fk.columns.iter().any(|c| c.eq_ignore_ascii_case("parent_id")),
+            fk.columns
+                .iter()
+                .any(|c| c.eq_ignore_ascii_case("parent_id")),
             "FK should include 'parent_id' column: {:?}",
             fk.columns
         );
@@ -968,11 +943,7 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_no_fk`",
-        )
-        .await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_no_fk`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -1077,11 +1048,7 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_df`",
-        )
-        .await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_df`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -1123,11 +1090,8 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_df_empty`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_df_empty`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -1154,8 +1118,8 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_type_handling_int_varchar_float_bool() {
-        use arni_data::adapters::mysql::MySqlAdapter;
         use arni_data::adapter::QueryValue;
+        use arni_data::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1164,11 +1128,7 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_types`",
-        )
-        .await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_types`").await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -1235,8 +1195,8 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_type_handling_null_fields() {
-        use arni_data::adapters::mysql::MySqlAdapter;
         use arni_data::adapter::QueryValue;
+        use arni_data::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1245,11 +1205,8 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_null_fields`",
-        )
-        .await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_null_fields`")
+            .await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -1309,11 +1266,9 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            "DROP TABLE IF EXISTS `arni_mysql_schema_filter`",
-        )
-        .await;
+        let _ =
+            DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS `arni_mysql_schema_filter`")
+                .await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -1364,5 +1319,134 @@ mod mysql_tests {
             ),
             Err(_) => { /* also acceptable */ }
         }
+    }
+
+    // ── Metadata: get_server_info ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_mysql_get_server_info() {
+        use arni_data::adapters::mysql::MySqlAdapter;
+
+        let cfg = mysql_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = MySqlAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        assert!(
+            !info.version.is_empty(),
+            "server version should not be empty; got: {:?}",
+            info.version
+        );
+        assert_eq!(
+            info.server_type, "MySQL",
+            "server_type should be 'MySQL'; got: {:?}",
+            info.server_type
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mysql_server_info_version_contains_mysql() {
+        use arni_data::adapters::mysql::MySqlAdapter;
+
+        let cfg = mysql_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = MySqlAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        // VERSION() returns something like "8.0.33" or "5.7.44" for MySQL,
+        // or "10.6.14-MariaDB" for MariaDB. Either is acceptable.
+        assert!(
+            !info.version.is_empty(),
+            "MySQL version string should not be empty; got: {}",
+            info.version
+        );
+    }
+
+    // ── Metadata: get_view_definition ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_mysql_get_view_definition() {
+        use arni_data::adapters::mysql::MySqlAdapter;
+
+        let cfg = mysql_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = MySqlAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let table = "arni_mysql_vdef_base";
+        let view = "arni_mysql_vdef_view";
+
+        // Cleanup from any previous run
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP VIEW IF EXISTS `{}`", view)).await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS `{}`", table)).await;
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE `{}` (id BIGINT, val VARCHAR(255))", table),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE VIEW `{}` AS SELECT id, val FROM `{}`", view, table),
+        )
+        .await
+        .expect("CREATE VIEW should succeed");
+
+        let def = DbAdapter::get_view_definition(&adapter, view, None)
+            .await
+            .expect("get_view_definition should succeed");
+
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP VIEW IF EXISTS `{}`", view)).await;
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS `{}`", table)).await;
+
+        let def_str = def.expect("view definition should be Some");
+        assert!(
+            def_str.to_lowercase().contains("select"),
+            "definition should contain SELECT; got: {}",
+            def_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mysql_get_view_definition_nonexistent() {
+        use arni_data::adapters::mysql::MySqlAdapter;
+
+        let cfg = mysql_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = MySqlAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let result =
+            DbAdapter::get_view_definition(&adapter, "arni_mysql_no_such_view_xyzzy", None)
+                .await
+                .expect("get_view_definition for nonexistent view should return Ok");
+
+        assert!(
+            result.is_none(),
+            "nonexistent view should return None; got: {:?}",
+            result
+        );
     }
 }

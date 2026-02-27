@@ -193,7 +193,10 @@ mod tests {
         std::env::remove_var("DUCKDB_LIB_DIR");
 
         let cfg = AppConfig::default();
-        assert_eq!(cfg.resolved_duckdb_lib_dir(), PathBuf::from("/opt/homebrew/lib"));
+        assert_eq!(
+            cfg.resolved_duckdb_lib_dir(),
+            PathBuf::from("/opt/homebrew/lib")
+        );
 
         if let Some(v) = original {
             std::env::set_var("DUCKDB_LIB_DIR", v);
@@ -209,7 +212,10 @@ mod tests {
             duckdb_lib_dir: Some("/usr/local/lib".to_string()),
             ..Default::default()
         };
-        assert_eq!(cfg.resolved_duckdb_lib_dir(), PathBuf::from("/usr/local/lib"));
+        assert_eq!(
+            cfg.resolved_duckdb_lib_dir(),
+            PathBuf::from("/usr/local/lib")
+        );
 
         if let Some(v) = original {
             std::env::set_var("DUCKDB_LIB_DIR", v);

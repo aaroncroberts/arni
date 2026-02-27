@@ -14,6 +14,7 @@ mod common;
 mod duckdb_tests {
     use arni_data::adapter::{Connection as ConnectionTrait, ConnectionConfig, DatabaseType};
     use arni_data::adapters::duckdb::DuckDbAdapter;
+    use arni_data::FilterExpr;
     use std::collections::HashMap;
 
     fn memory_config() -> ConnectionConfig {
@@ -212,6 +213,20 @@ mod duckdb_tests {
         assert!(col_names.contains(&"id"), "should include 'id'");
         assert!(col_names.contains(&"name"), "should include 'name'");
         assert!(col_names.contains(&"score"), "should include 'score'");
+        // Empty table — row_count should be Some(0)
+        assert_eq!(
+            info.row_count,
+            Some(0),
+            "empty table should report row_count = 0"
+        );
+        assert!(
+            info.size_bytes.is_none(),
+            "in-memory DuckDB has no disk size"
+        );
+        assert!(
+            info.created_at.is_none(),
+            "DuckDB does not track creation time"
+        );
     }
 
     // ── DataFrame queries ─────────────────────────────────────────────────────
@@ -224,12 +239,9 @@ mod duckdb_tests {
         let mut adapter = DuckDbAdapter::new(cfg);
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
-        DbAdapter::execute_query(
-            &adapter,
-            "CREATE TABLE rt_tbl (id INTEGER, label VARCHAR)",
-        )
-        .await
-        .unwrap();
+        DbAdapter::execute_query(&adapter, "CREATE TABLE rt_tbl (id INTEGER, label VARCHAR)")
+            .await
+            .unwrap();
         DbAdapter::execute_query(
             &adapter,
             "INSERT INTO rt_tbl VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma')",
@@ -331,8 +343,7 @@ mod duckdb_tests {
         }
         .unwrap();
 
-        let result =
-            DbAdapter::export_dataframe(&adapter, &df, "test_table", None, true).await;
+        let result = DbAdapter::export_dataframe(&adapter, &df, "test_table", None, true).await;
         assert!(
             result.is_err(),
             "export_dataframe before connect should fail"
@@ -389,10 +400,9 @@ mod duckdb_tests {
 
         assert_eq!(rows, 2, "replaced table should have 2 rows");
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM replace_test")
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM replace_test")
+            .await
+            .unwrap();
         assert_eq!(result.rows[0][0], arni_data::adapter::QueryValue::Int(2));
     }
 
@@ -406,10 +416,7 @@ mod duckdb_tests {
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
         // Create empty DataFrame with schema
-        let df = DataFrame::new(vec![
-            Column::new("id".into(), &[] as &[i32]),
-        ])
-        .unwrap();
+        let df = DataFrame::new(vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
 
         // Create table first so export has somewhere to write
         DbAdapter::execute_query(&adapter, "CREATE TABLE empty_test (id INTEGER)")
@@ -465,7 +472,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_insert_empty_rows_returns_zero() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni_data::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -529,12 +536,9 @@ mod duckdb_tests {
         let mut adapter = DuckDbAdapter::new(cfg);
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
-        DbAdapter::execute_query(
-            &adapter,
-            "CREATE TABLE bi_basic (id INTEGER, name VARCHAR)",
-        )
-        .await
-        .unwrap();
+        DbAdapter::execute_query(&adapter, "CREATE TABLE bi_basic (id INTEGER, name VARCHAR)")
+            .await
+            .unwrap();
 
         let cols = vec!["id".to_string(), "name".to_string()];
         let rows = vec![
@@ -549,10 +553,9 @@ mod duckdb_tests {
 
         assert_eq!(inserted, 3, "should have inserted 3 rows");
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bi_basic")
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bi_basic")
+            .await
+            .unwrap();
         assert_eq!(result.rows[0][0], QueryValue::Int(3));
     }
 
@@ -622,17 +625,19 @@ mod duckdb_tests {
         let mut set_vals = HashMap::new();
         set_vals.insert("score".to_string(), QueryValue::Int(99));
 
-        let updates = vec![(set_vals, "id = 2".to_string())];
+        let updates = vec![(
+            set_vals,
+            FilterExpr::Eq("id".to_string(), QueryValue::Int(2)),
+        )];
         let affected = DbAdapter::bulk_update(&adapter, "bu_basic", &updates, None)
             .await
             .expect("bulk_update should succeed");
 
         assert_eq!(affected, 1, "one row should have been updated");
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT score FROM bu_basic WHERE id = 2")
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT score FROM bu_basic WHERE id = 2")
+            .await
+            .unwrap();
         assert_eq!(result.rows[0][0], QueryValue::Int(99));
     }
 
@@ -673,17 +678,19 @@ mod duckdb_tests {
         .await
         .unwrap();
 
-        let where_clauses = vec!["active = false".to_string()];
+        let where_clauses = vec![FilterExpr::Eq(
+            "active".to_string(),
+            QueryValue::Bool(false),
+        )];
         let deleted = DbAdapter::bulk_delete(&adapter, "bd_basic", &where_clauses, None)
             .await
             .expect("bulk_delete should succeed");
 
         assert_eq!(deleted, 2, "two inactive rows should have been deleted");
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bd_basic")
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bd_basic")
+            .await
+            .unwrap();
         assert_eq!(result.rows[0][0], QueryValue::Int(2));
     }
 
@@ -706,17 +713,75 @@ mod duckdb_tests {
         .unwrap();
 
         // Delete rows 1 and 5 separately
-        let where_clauses = vec!["id = 1".to_string(), "id = 5".to_string()];
+        let where_clauses = vec![
+            FilterExpr::Eq("id".to_string(), QueryValue::Int(1)),
+            FilterExpr::Eq("id".to_string(), QueryValue::Int(5)),
+        ];
         let deleted = DbAdapter::bulk_delete(&adapter, "bd_multi", &where_clauses, None)
             .await
             .expect("bulk_delete should succeed");
 
         assert_eq!(deleted, 2);
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bd_multi")
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bd_multi")
+            .await
+            .unwrap();
         assert_eq!(result.rows[0][0], QueryValue::Int(3));
+    }
+
+    // ── Metadata: get_view_definition ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_duckdb_get_view_definition() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE duckdb_vdef_base (id BIGINT, val TEXT)",
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE VIEW duckdb_vdef_view AS SELECT id, val FROM duckdb_vdef_base",
+        )
+        .await
+        .expect("CREATE VIEW should succeed");
+
+        let def = DbAdapter::get_view_definition(&adapter, "duckdb_vdef_view", Some("main"))
+            .await
+            .expect("get_view_definition should succeed");
+
+        let def_str = def.expect("view definition should be Some");
+        assert!(
+            def_str.to_lowercase().contains("select"),
+            "definition should contain SELECT; got: {}",
+            def_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_get_view_definition_nonexistent() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let result =
+            DbAdapter::get_view_definition(&adapter, "duckdb_no_such_view_xyzzy", Some("main"))
+                .await
+                .expect("get_view_definition for nonexistent view should return Ok");
+
+        assert!(
+            result.is_none(),
+            "nonexistent view should return None; got: {:?}",
+            result
+        );
     }
 }

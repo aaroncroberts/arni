@@ -202,12 +202,10 @@ mod mssql_tests {
             .await
             .unwrap();
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            "SELECT 1 AS num, N'hello' AS str, 3.14 AS flt",
-        )
-        .await
-        .expect("multi-column SELECT should succeed");
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT 1 AS num, N'hello' AS str, 3.14 AS flt")
+                .await
+                .expect("multi-column SELECT should succeed");
 
         assert_eq!(result.columns.len(), 3, "expected 3 columns");
         assert_eq!(result.rows.len(), 1, "expected 1 row");
@@ -263,18 +261,20 @@ mod mssql_tests {
         .await
         .expect("CREATE TABLE should succeed");
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            &format!("SELECT id FROM {} WHERE 1 = 0", table),
-        )
-        .await
-        .expect("SELECT with impossible WHERE should succeed");
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT id FROM {} WHERE 1 = 0", table))
+                .await
+                .expect("SELECT with impossible WHERE should succeed");
 
         drop_table_if_exists!(&adapter, table);
 
         // An empty result set may return zero columns and zero rows, or the
         // column list but zero rows — both are valid.
-        assert_eq!(result.rows.len(), 0, "expected zero rows from impossible WHERE");
+        assert_eq!(
+            result.rows.len(),
+            0,
+            "expected zero rows from impossible WHERE"
+        );
     }
 
     // ── CRUD lifecycle ───────────────────────────────────────────────────────
@@ -392,18 +392,19 @@ mod mssql_tests {
         .await
         .expect("DELETE should succeed");
 
-        let after_delete = DbAdapter::execute_query(
-            &adapter,
-            &format!("SELECT id FROM {} ORDER BY id", table),
-        )
-        .await
-        .expect("SELECT after DELETE should succeed");
+        let after_delete =
+            DbAdapter::execute_query(&adapter, &format!("SELECT id FROM {} ORDER BY id", table))
+                .await
+                .expect("SELECT after DELETE should succeed");
         assert_eq!(after_delete.rows.len(), 2, "expected 2 rows after DELETE");
 
         // DROP
         DbAdapter::execute_query(
             &adapter,
-            &format!("IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}", table, table),
+            &format!(
+                "IF OBJECT_ID('{}', 'U') IS NOT NULL DROP TABLE {}",
+                table, table
+            ),
         )
         .await
         .expect("DROP TABLE should succeed");
@@ -549,10 +550,7 @@ mod mssql_tests {
 
         DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "CREATE TABLE {} (id INT IDENTITY(1,1) PRIMARY KEY)",
-                table
-            ),
+            &format!("CREATE TABLE {} (id INT IDENTITY(1,1) PRIMARY KEY)", table),
         )
         .await
         .expect("CREATE TABLE should succeed");
@@ -1080,10 +1078,7 @@ mod mssql_tests {
 
         DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "INSERT INTO {} (val) VALUES ('a'), ('b'), ('c')",
-                table
-            ),
+            &format!("INSERT INTO {} (val) VALUES ('a'), ('b'), ('c')", table),
         )
         .await
         .expect("INSERT should succeed");
@@ -1210,12 +1205,10 @@ mod mssql_tests {
         .await
         .expect("INSERT NULL should succeed");
 
-        let result = DbAdapter::execute_query(
-            &adapter,
-            &format!("SELECT id, nullable_val FROM {}", table),
-        )
-        .await
-        .expect("SELECT with NULL column should succeed");
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT id, nullable_val FROM {}", table))
+                .await
+                .expect("SELECT with NULL column should succeed");
 
         drop_table_if_exists!(&adapter, table);
 
@@ -1292,7 +1285,10 @@ mod mssql_tests {
         // Insert Unicode text using N'' prefix.
         DbAdapter::execute_query(
             &adapter,
-            &format!("INSERT INTO {} (content) VALUES (N'こんにちは'), (N'Привет')", table),
+            &format!(
+                "INSERT INTO {} (content) VALUES (N'こんにちは'), (N'Привет')",
+                table
+            ),
         )
         .await
         .expect("INSERT Unicode NVARCHAR should succeed");
@@ -1307,5 +1303,79 @@ mod mssql_tests {
         drop_table_if_exists!(&adapter, table);
 
         assert_eq!(result.rows.len(), 2, "expected 2 Unicode rows");
+    }
+
+    // ── Metadata: get_view_definition ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_mssql_get_view_definition() {
+        use arni_data::adapters::mssql::SqlServerAdapter;
+
+        let cfg = mssql_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = SqlServerAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let table = "arni_mssql_vdef_base";
+        let view = "arni_mssql_vdef_view";
+
+        drop_view_if_exists!(&adapter, view);
+        drop_table_if_exists!(&adapter, table);
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {} (id INT IDENTITY(1,1) PRIMARY KEY, val NVARCHAR(255))",
+                table
+            ),
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE VIEW {} AS SELECT id, val FROM {}", view, table),
+        )
+        .await
+        .expect("CREATE VIEW should succeed");
+
+        let def = DbAdapter::get_view_definition(&adapter, view, Some("dbo"))
+            .await
+            .expect("get_view_definition should succeed");
+
+        drop_view_if_exists!(&adapter, view);
+        drop_table_if_exists!(&adapter, table);
+
+        let def_str = def.expect("view definition should be Some");
+        assert!(
+            def_str.to_lowercase().contains("select"),
+            "definition should contain SELECT; got: {}",
+            def_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mssql_get_view_definition_nonexistent() {
+        use arni_data::adapters::mssql::SqlServerAdapter;
+
+        let cfg = mssql_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = SqlServerAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        let result =
+            DbAdapter::get_view_definition(&adapter, "arni_mssql_no_such_view_xyzzy", Some("dbo"))
+                .await
+                .expect("get_view_definition for nonexistent view should return Ok");
+
+        assert!(
+            result.is_none(),
+            "nonexistent view should return None; got: {:?}",
+            result
+        );
     }
 }

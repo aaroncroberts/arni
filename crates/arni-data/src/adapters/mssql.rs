@@ -1,3 +1,11 @@
+//! Microsoft SQL Server database adapter implementation.
+//!
+//! This module provides the [`SqlServerAdapter`] which implements both the [`Connection`]
+//! and [`DbAdapter`] traits for SQL Server databases using the `tiberius` async driver.
+//!
+//! Connections are established over TCP using `tokio-util`'s `compat` layer to bridge
+//! `tiberius`'s `AsyncRead`/`AsyncWrite` requirements with Tokio's I/O model.
+
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
@@ -572,13 +580,12 @@ impl DbAdapter for SqlServerAdapter {
 
         let tiberius_config = Self::build_config(config, password)?;
 
-        let tcp_result = TcpStream::connect(tiberius_config.get_addr()).await;
-        if tcp_result.is_err() {
-            return Ok(false);
-        }
+        let tcp = match TcpStream::connect(tiberius_config.get_addr()).await {
+            Ok(tcp) => tcp,
+            Err(_) => return Ok(false),
+        };
 
-        let client_result =
-            Client::connect(tiberius_config, tcp_result.unwrap().compat_write()).await;
+        let client_result = Client::connect(tiberius_config, tcp.compat_write()).await;
         Ok(client_result.is_ok())
     }
 

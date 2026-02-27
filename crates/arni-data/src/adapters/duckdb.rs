@@ -1,7 +1,7 @@
 use crate::adapter::{
-    AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
-    ServerInfo, TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
+    escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
+    ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
+    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -110,8 +110,9 @@ impl DuckDbAdapter {
             {
                 let mut values = Vec::new();
                 for i in 0..n {
-                    let value = Self::get_value(row, i)
-                        .map_err(|e| DataError::Query(format!("Failed to get column {}: {}", i, e)))?;
+                    let value = Self::get_value(row, i).map_err(|e| {
+                        DataError::Query(format!("Failed to get column {}: {}", i, e))
+                    })?;
                     values.push(value);
                 }
                 rows.push(values);
@@ -149,9 +150,9 @@ impl DuckDbAdapter {
             let conn_guard = connection
                 .lock()
                 .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
-            let conn = conn_guard.as_ref().ok_or_else(|| {
-                DataError::Connection("Not connected".to_string())
-            })?;
+            let conn = conn_guard
+                .as_ref()
+                .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
             conn.execute(&sql, [])
                 .map(|n| n as u64)
                 .map_err(|e| DataError::Query(format!("Failed to execute statement: {}", e)))
@@ -533,11 +534,7 @@ impl DbAdapter for DuckDbAdapter {
                     )
                 })
                 .collect();
-            let create_sql = format!(
-                "CREATE TABLE {} ({})",
-                table_name,
-                column_defs.join(", ")
-            );
+            let create_sql = format!("CREATE TABLE {} ({})", table_name, column_defs.join(", "));
             self.execute_statement_blocking(create_sql).await?;
         }
 
@@ -633,10 +630,8 @@ impl DbAdapter for DuckDbAdapter {
             let value_rows: Vec<String> = chunk
                 .iter()
                 .map(|row| {
-                    let literals: Vec<String> = row
-                        .iter()
-                        .map(Self::query_value_to_sql_literal)
-                        .collect();
+                    let literals: Vec<String> =
+                        row.iter().map(Self::query_value_to_sql_literal).collect();
                     format!("({})", literals.join(", "))
                 })
                 .collect();
@@ -714,11 +709,7 @@ impl DbAdapter for DuckDbAdapter {
         let mut total_affected = 0u64;
 
         for filter in filters {
-            let delete_sql = format!(
-                "DELETE FROM {} WHERE {}",
-                table_name,
-                filter_to_sql(filter)
-            );
+            let delete_sql = format!("DELETE FROM {} WHERE {}", table_name, filter_to_sql(filter));
             let rows_affected = self.execute_statement_blocking(delete_sql).await?;
             total_affected += rows_affected;
         }
@@ -735,9 +726,7 @@ impl DbAdapter for DuckDbAdapter {
             if ptr.is_null() {
                 "unknown".to_string()
             } else {
-                std::ffi::CStr::from_ptr(ptr)
-                    .to_string_lossy()
-                    .into_owned()
+                std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
             }
         };
 
@@ -884,7 +873,10 @@ impl DbAdapter for DuckDbAdapter {
             .collect();
 
         // Row count via COUNT(*); size and creation time are not tracked for in-memory tables
-        let count_query = format!("SELECT COUNT(*) FROM \"{}\".\"{}\"", schema_name, table_name);
+        let count_query = format!(
+            "SELECT COUNT(*) FROM \"{}\".\"{}\"",
+            schema_name, table_name
+        );
         let row_count = self
             .execute_query_blocking(count_query)
             .await
@@ -1160,31 +1152,70 @@ mod tests {
 
     #[test]
     fn test_dtype_mapping_int_types() {
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int8), "TINYINT");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int16), "SMALLINT");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int32), "INTEGER");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int64), "BIGINT");
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int8),
+            "TINYINT"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int16),
+            "SMALLINT"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int32),
+            "INTEGER"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Int64),
+            "BIGINT"
+        );
     }
 
     #[test]
     fn test_dtype_mapping_uint_types() {
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt8), "UTINYINT");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt16), "USMALLINT");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt32), "UINTEGER");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt64), "UBIGINT");
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt8),
+            "UTINYINT"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt16),
+            "USMALLINT"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt32),
+            "UINTEGER"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::UInt64),
+            "UBIGINT"
+        );
     }
 
     #[test]
     fn test_dtype_mapping_float_types() {
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Float32), "FLOAT");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Float64), "DOUBLE");
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Float32),
+            "FLOAT"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Float64),
+            "DOUBLE"
+        );
     }
 
     #[test]
     fn test_dtype_mapping_string_and_bool() {
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::String), "VARCHAR");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Boolean), "BOOLEAN");
-        assert_eq!(DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Binary), "BLOB");
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::String),
+            "VARCHAR"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Boolean),
+            "BOOLEAN"
+        );
+        assert_eq!(
+            DuckDbAdapter::polars_dtype_to_duckdb_type(&DataType::Binary),
+            "BLOB"
+        );
     }
 
     #[test]

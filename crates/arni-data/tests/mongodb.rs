@@ -239,9 +239,9 @@ mod mongodb_tests {
         );
 
         // At minimum one of the system databases should be present
-        let has_system_db = databases.iter().any(|db| {
-            matches!(db.as_str(), "admin" | "config" | "local")
-        });
+        let has_system_db = databases
+            .iter()
+            .any(|db| matches!(db.as_str(), "admin" | "config" | "local"));
         assert!(
             has_system_db,
             "list_databases should include at least one of admin/config/local; got: {:?}",
@@ -313,10 +313,7 @@ mod mongodb_tests {
         let result_no_schema = DbAdapter::list_tables(&adapter, None).await;
         let result_with_schema = DbAdapter::list_tables(&adapter, Some("ignored_schema")).await;
 
-        assert!(
-            result_no_schema.is_ok(),
-            "list_tables(None) should succeed"
-        );
+        assert!(result_no_schema.is_ok(), "list_tables(None) should succeed");
         assert!(
             result_with_schema.is_ok(),
             "list_tables(Some(...)) should succeed"
@@ -333,11 +330,8 @@ mod mongodb_tests {
         let adapter = MongoDbAdapter::new(cfg);
 
         // Any query without connect must return an error
-        let result = DbAdapter::execute_query(
-            &adapter,
-            r#"{"collection": "test", "filter": {}}"#,
-        )
-        .await;
+        let result =
+            DbAdapter::execute_query(&adapter, r#"{"collection": "test", "filter": {}}"#).await;
         assert!(
             result.is_err(),
             "execute_query without connect should return an error"
@@ -383,8 +377,7 @@ mod mongodb_tests {
             .unwrap();
 
         // Valid JSON but missing the required "collection" field
-        let result =
-            DbAdapter::execute_query(&adapter, r#"{"filter": {"x": 1}}"#).await;
+        let result = DbAdapter::execute_query(&adapter, r#"{"filter": {"x": 1}}"#).await;
         assert!(
             result.is_err(),
             "JSON without 'collection' field should return an error"
@@ -435,7 +428,10 @@ mod mongodb_tests {
         .await
         .expect("filtered query against non-existent collection should succeed");
 
-        assert!(result.rows.is_empty(), "should return 0 rows for empty collection");
+        assert!(
+            result.rows.is_empty(),
+            "should return 0 rows for empty collection"
+        );
     }
 
     #[tokio::test]
@@ -473,11 +469,9 @@ mod mongodb_tests {
             .unwrap();
 
         // system.* collection names are rejected by validate_collection_name
-        let result = DbAdapter::execute_query(
-            &adapter,
-            r#"{"collection": "system.users", "filter": {}}"#,
-        )
-        .await;
+        let result =
+            DbAdapter::execute_query(&adapter, r#"{"collection": "system.users", "filter": {}}"#)
+                .await;
         assert!(
             result.is_err(),
             "system.* collection name should be rejected"
@@ -586,16 +580,15 @@ mod mongodb_tests {
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
 
-        let err = DbAdapter::execute_query(
-            &adapter,
-            r#"{"collection": "users", "filter": {}}"#,
-        )
-        .await
-        .unwrap_err();
+        let err = DbAdapter::execute_query(&adapter, r#"{"collection": "users", "filter": {}}"#)
+            .await
+            .unwrap_err();
 
         let msg = err.to_string();
         assert!(
-            msg.contains("Not connected") || msg.contains("not connected") || msg.contains("connect"),
+            msg.contains("Not connected")
+                || msg.contains("not connected")
+                || msg.contains("connect"),
             "error message should mention connection state; got: {}",
             msg
         );
@@ -611,7 +604,9 @@ mod mongodb_tests {
         let err = DbAdapter::list_tables(&adapter, None).await.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("Not connected") || msg.contains("not connected") || msg.contains("connect"),
+            msg.contains("Not connected")
+                || msg.contains("not connected")
+                || msg.contains("connect"),
             "error message should mention connection state; got: {}",
             msg
         );
@@ -669,6 +664,31 @@ mod mongodb_tests {
             returned.db_type,
             arni_data::adapter::DatabaseType::MongoDB,
             "config db_type should remain MongoDB"
+        );
+    }
+
+    // ── Metadata: get_view_definition ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_mongodb_get_view_definition() {
+        use arni_data::adapters::mongodb::MongoDbAdapter;
+
+        let cfg = mongo_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = MongoDbAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, &cfg, password.as_deref())
+            .await
+            .unwrap();
+
+        // MongoDB does not support SQL views; the adapter returns Ok(None) by design.
+        let result = DbAdapter::get_view_definition(&adapter, "any_view", None)
+            .await
+            .expect("get_view_definition should return Ok for MongoDB");
+
+        assert!(
+            result.is_none(),
+            "MongoDB get_view_definition should return None (not supported); got: {:?}",
+            result
         );
     }
 }

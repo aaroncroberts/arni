@@ -1501,7 +1501,10 @@ mod tests {
     fn test_query_value_to_sql_literal() {
         assert_eq!(query_value_to_sql_literal(&QueryValue::Null), "NULL");
         assert_eq!(query_value_to_sql_literal(&QueryValue::Bool(true)), "TRUE");
-        assert_eq!(query_value_to_sql_literal(&QueryValue::Bool(false)), "FALSE");
+        assert_eq!(
+            query_value_to_sql_literal(&QueryValue::Bool(false)),
+            "FALSE"
+        );
         assert_eq!(query_value_to_sql_literal(&QueryValue::Int(42)), "42");
         assert_eq!(query_value_to_sql_literal(&QueryValue::Float(3.14)), "3.14");
         assert_eq!(
@@ -1527,7 +1530,10 @@ mod tests {
             "id = 5"
         );
         assert_eq!(
-            filter_to_sql(&FilterExpr::Ne("status".to_string(), QueryValue::Text("x".to_string()))),
+            filter_to_sql(&FilterExpr::Ne(
+                "status".to_string(),
+                QueryValue::Text("x".to_string())
+            )),
             "status <> 'x'"
         );
         assert_eq!(

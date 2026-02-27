@@ -1,7 +1,15 @@
+//! SQLite database adapter implementation.
+//!
+//! This module provides the [`SqliteAdapter`] which implements both the [`Connection`]
+//! and [`DbAdapter`] traits for SQLite databases using the sqlx driver.
+//!
+//! Both file-based databases (`sqlite:///path/to/file.db`) and in-memory databases
+//! (`":memory:"`) are supported.
+
 use crate::adapter::{
-    AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
-    DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
-    ServerInfo, TableInfo, TableSearchMode, ViewInfo, escape_like_pattern, filter_to_sql,
+    escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
+    ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
+    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 use polars::prelude::*;
@@ -76,11 +84,7 @@ impl SqliteAdapter {
         // Special case: ":memory:" for in-memory database
         if config.database == ":memory:" {
             "sqlite::memory:".to_string()
-        } else if config.database.starts_with('/') {
-            // Absolute path - use three slashes
-            format!("sqlite://{}", config.database)
         } else {
-            // Relative path - use two slashes
             format!("sqlite://{}", config.database)
         }
     }
@@ -95,9 +99,10 @@ impl SqliteAdapter {
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
-        let result = sqlx::query(sql).execute(pool).await.map_err(|e| {
-            DataError::Query(format!("Failed to execute statement: {}", e))
-        })?;
+        let result = sqlx::query(sql)
+            .execute(pool)
+            .await
+            .map_err(|e| DataError::Query(format!("Failed to execute statement: {}", e)))?;
 
         Ok(result.rows_affected())
     }
@@ -855,11 +860,7 @@ impl DbAdapter for SqliteAdapter {
                     )
                 })
                 .collect();
-            let create_sql = format!(
-                "CREATE TABLE {} ({})",
-                table_name,
-                column_defs.join(", ")
-            );
+            let create_sql = format!("CREATE TABLE {} ({})", table_name, column_defs.join(", "));
             self.execute_statement(&create_sql).await?;
         }
 
@@ -941,10 +942,8 @@ impl DbAdapter for SqliteAdapter {
             let value_rows: Vec<String> = chunk
                 .iter()
                 .map(|row| {
-                    let literals: Vec<String> = row
-                        .iter()
-                        .map(Self::query_value_to_sql_literal)
-                        .collect();
+                    let literals: Vec<String> =
+                        row.iter().map(Self::query_value_to_sql_literal).collect();
                     format!("({})", literals.join(", "))
                 })
                 .collect();
@@ -1028,11 +1027,7 @@ impl DbAdapter for SqliteAdapter {
         let mut total_affected = 0u64;
 
         for filter in filters {
-            let delete_sql = format!(
-                "DELETE FROM {} WHERE {}",
-                table_name,
-                filter_to_sql(filter)
-            );
+            let delete_sql = format!("DELETE FROM {} WHERE {}", table_name, filter_to_sql(filter));
             let rows_affected = self.execute_statement(&delete_sql).await?;
             total_affected += rows_affected;
         }

@@ -14,6 +14,7 @@ mod common;
 mod sqlite_tests {
     use arni_data::adapter::{Connection as ConnectionTrait, ConnectionConfig, DatabaseType};
     use arni_data::adapters::sqlite::SqliteAdapter;
+    use arni_data::FilterExpr;
     use std::collections::HashMap;
 
     fn memory_config() -> ConnectionConfig {
@@ -120,9 +121,10 @@ mod sqlite_tests {
         .await
         .expect("INSERT should succeed");
 
-        let result = DbAdapter::execute_query(&adapter, "SELECT id, name FROM test_users ORDER BY id")
-            .await
-            .expect("SELECT should succeed");
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT id, name FROM test_users ORDER BY id")
+                .await
+                .expect("SELECT should succeed");
 
         assert_eq!(result.rows.len(), 2);
         assert_eq!(result.columns, vec!["id", "name"]);
@@ -141,7 +143,10 @@ mod sqlite_tests {
         let tables = DbAdapter::list_tables(&adapter, None)
             .await
             .expect("list_tables on empty DB should succeed");
-        assert!(tables.is_empty(), "fresh :memory: DB should have no user tables");
+        assert!(
+            tables.is_empty(),
+            "fresh :memory: DB should have no user tables"
+        );
     }
 
     #[tokio::test]
@@ -188,7 +193,24 @@ mod sqlite_tests {
         assert_eq!(info.name, "sample");
         let col_names: Vec<&str> = info.columns.iter().map(|c| c.name.as_str()).collect();
         assert!(col_names.contains(&"id"), "should include 'id' column");
-        assert!(col_names.contains(&"label"), "should include 'label' column");
+        assert!(
+            col_names.contains(&"label"),
+            "should include 'label' column"
+        );
+        // Empty table — row_count should be Some(0)
+        assert_eq!(
+            info.row_count,
+            Some(0),
+            "empty table should report row_count = 0"
+        );
+        assert!(
+            info.size_bytes.is_none(),
+            "in-memory SQLite has no disk size"
+        );
+        assert!(
+            info.created_at.is_none(),
+            "SQLite does not track creation time"
+        );
     }
 
     // ── DataFrame queries ─────────────────────────────────────────────────────
@@ -201,12 +223,9 @@ mod sqlite_tests {
         let mut adapter = SqliteAdapter::new(cfg);
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
-        DbAdapter::execute_query(
-            &adapter,
-            "CREATE TABLE rt_tbl (id INTEGER, label TEXT)",
-        )
-        .await
-        .unwrap();
+        DbAdapter::execute_query(&adapter, "CREATE TABLE rt_tbl (id INTEGER, label TEXT)")
+            .await
+            .unwrap();
         DbAdapter::execute_query(
             &adapter,
             "INSERT INTO rt_tbl VALUES (1, 'alpha'), (2, 'beta')",
@@ -322,10 +341,9 @@ mod sqlite_tests {
             .expect("export_dataframe should succeed");
         assert_eq!(rows, 3);
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM exp_basic")
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM exp_basic")
+            .await
+            .unwrap();
         assert_eq!(result.rows[0][0], QueryValue::Int(3));
     }
 
@@ -349,10 +367,9 @@ mod sqlite_tests {
             .expect("replace should succeed");
         assert_eq!(rows, 2);
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM repl")
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM repl")
+            .await
+            .unwrap();
         assert_eq!(result.rows[0][0], QueryValue::Int(2));
     }
 
@@ -454,7 +471,10 @@ mod sqlite_tests {
 
         let mut set_vals = HashMap::new();
         set_vals.insert("score".to_string(), QueryValue::Int(99));
-        let updates = vec![(set_vals, "id = 1".to_string())];
+        let updates = vec![(
+            set_vals,
+            FilterExpr::Eq("id".to_string(), QueryValue::Int(1)),
+        )];
 
         let affected = DbAdapter::bulk_update(&adapter, "bu", &updates, None)
             .await
@@ -475,7 +495,9 @@ mod sqlite_tests {
         let mut adapter = SqliteAdapter::new(cfg);
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
-        let n = DbAdapter::bulk_update(&adapter, "t", &[], None).await.unwrap();
+        let n = DbAdapter::bulk_update(&adapter, "t", &[], None)
+            .await
+            .unwrap();
         assert_eq!(n, 0);
     }
 
@@ -496,9 +518,14 @@ mod sqlite_tests {
             .await
             .unwrap();
 
-        let deleted = DbAdapter::bulk_delete(&adapter, "bd", &["id = 2".to_string()], None)
-            .await
-            .expect("bulk_delete should succeed");
+        let deleted = DbAdapter::bulk_delete(
+            &adapter,
+            "bd",
+            &[FilterExpr::Eq("id".to_string(), QueryValue::Int(2))],
+            None,
+        )
+        .await
+        .expect("bulk_delete should succeed");
         assert_eq!(deleted, 1);
 
         let r = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM bd")
@@ -515,7 +542,64 @@ mod sqlite_tests {
         let mut adapter = SqliteAdapter::new(cfg);
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
-        let n = DbAdapter::bulk_delete(&adapter, "t", &[], None).await.unwrap();
+        let n = DbAdapter::bulk_delete(&adapter, "t", &[], None)
+            .await
+            .unwrap();
         assert_eq!(n, 0);
+    }
+
+    // ── Metadata: get_view_definition ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sqlite_get_view_definition() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE arni_vdef_base (id INTEGER, val TEXT)",
+        )
+        .await
+        .expect("CREATE TABLE should succeed");
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE VIEW arni_vdef_view AS SELECT id, val FROM arni_vdef_base",
+        )
+        .await
+        .expect("CREATE VIEW should succeed");
+
+        let def = DbAdapter::get_view_definition(&adapter, "arni_vdef_view", None)
+            .await
+            .expect("get_view_definition should succeed");
+
+        let def_str = def.expect("view definition should be Some");
+        assert!(
+            def_str.to_lowercase().contains("select"),
+            "definition should contain SELECT; got: {}",
+            def_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_get_view_definition_nonexistent() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let result = DbAdapter::get_view_definition(&adapter, "arni_no_such_view_xyzzy", None)
+            .await
+            .expect("get_view_definition for nonexistent view should return Ok");
+
+        assert!(
+            result.is_none(),
+            "nonexistent view should return None; got: {:?}",
+            result
+        );
     }
 }

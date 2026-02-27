@@ -181,7 +181,6 @@ name = "arni-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arni",
  "arni-data",
  "arni-logging",
  "clap",

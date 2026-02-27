@@ -5,13 +5,13 @@ use crate::adapter::{
 };
 use crate::DataError;
 use async_trait::async_trait;
-use regex::Regex;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, Bson, Document},
     options::ClientOptions,
     Client,
 };
 use polars::prelude::*;
+use regex::Regex;
 use std::collections::HashMap;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -102,15 +102,20 @@ impl MongoDbAdapter {
         let username = config.username.as_deref();
 
         if let (Some(user), Some(pass)) = (username, password) {
+            // Percent-encode userinfo components so that special characters in
+            // usernames or passwords (e.g. '@', '/', '%', ':') do not break URI parsing.
+            let encoded_user = percent_encode_userinfo(user);
+            let encoded_pass = percent_encode_userinfo(pass);
             // Include authSource=admin for root user authentication
             format!(
                 "mongodb://{}:{}@{}:{}/?authSource=admin",
-                user, pass, host, port
+                encoded_user, encoded_pass, host, port
             )
         } else {
             format!("mongodb://{}:{}", host, port)
         }
     }
+
 
     /// Convert a BSON value to QueryValue
     fn bson_to_query_value(bson: &Bson) -> QueryValue {
@@ -530,9 +535,7 @@ impl DbAdapter for MongoDbAdapter {
             .as_ref()
             .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
-        let collection = client
-            .database(db_name)
-            .collection::<Document>(table_name);
+        let collection = client.database(db_name).collection::<Document>(table_name);
 
         let docs: Vec<Document> = rows
             .iter()
@@ -568,9 +571,7 @@ impl DbAdapter for MongoDbAdapter {
             .as_ref()
             .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
-        let collection = client
-            .database(db_name)
-            .collection::<Document>(table_name);
+        let collection = client.database(db_name).collection::<Document>(table_name);
 
         let mut total: u64 = 0;
         for (set_values, filter) in updates {
@@ -607,9 +608,7 @@ impl DbAdapter for MongoDbAdapter {
             .as_ref()
             .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
-        let collection = client
-            .database(db_name)
-            .collection::<Document>(table_name);
+        let collection = client.database(db_name).collection::<Document>(table_name);
 
         let mut total: u64 = 0;
         for filter in filters {
@@ -965,6 +964,52 @@ fn mongo_filter_to_bson(expr: &FilterExpr) -> Document {
     }
 }
 
+/// Percent-encode characters disallowed in a URI userinfo component (RFC 3986 §3.2.1).
+///
+/// Encodes everything outside unreserved chars + sub-delims + `:` that are allowed
+/// in userinfo. This ensures special characters in MongoDB passwords (e.g. `@`, `/`, `%`)
+/// do not corrupt the connection URI.
+fn percent_encode_userinfo(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 3);
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'!'
+            | b'$'
+            | b'&'
+            | b'\''
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b';'
+            | b'='
+            | b':' => out.push(byte as char),
+            other => {
+                out.push('%');
+                out.push(
+                    char::from_digit((other >> 4) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+                out.push(
+                    char::from_digit((other & 0xf) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1066,6 +1111,60 @@ mod tests {
         assert_eq!(uri, "mongodb://localhost:27017");
     }
 
+    // ── URL special-character encoding ────────────────────────────────────────
+
+    #[test]
+    fn test_percent_encode_userinfo_plain() {
+        assert_eq!(percent_encode_userinfo("admin"), "admin");
+        assert_eq!(percent_encode_userinfo("user123"), "user123");
+    }
+
+    #[test]
+    fn test_percent_encode_userinfo_at_sign() {
+        // '@' in a password would split the userinfo from host — must be encoded.
+        let encoded = percent_encode_userinfo("p@ssword");
+        assert!(!encoded.contains('@'), "@ must be percent-encoded");
+        assert!(encoded.contains("%40"), "@ must become %40");
+    }
+
+    #[test]
+    fn test_percent_encode_userinfo_slash() {
+        // '/' would terminate the authority component.
+        let encoded = percent_encode_userinfo("p/ss");
+        assert!(!encoded.contains('/'), "/ must be percent-encoded");
+        assert!(encoded.contains("%2F"), "/ must become %2F");
+    }
+
+    #[test]
+    fn test_percent_encode_userinfo_percent() {
+        // A literal '%' must itself be encoded to avoid ambiguous pct-encoded sequences.
+        let encoded = percent_encode_userinfo("100%");
+        assert_eq!(encoded.chars().filter(|&c| c == '%').count(), 1);
+        assert!(encoded.contains("%25"), "% must become %25");
+    }
+
+    #[test]
+    fn test_build_connection_string_password_with_at() {
+        let config = make_config("localhost", "mydb");
+        let uri = MongoDbAdapter::build_connection_string(&config, Some("p@ssw0rd"));
+        assert!(uri.contains("%40"), "@ in password must be percent-encoded");
+        assert!(!uri[10..].contains("p@"), "raw @ must not appear after scheme");
+    }
+
+    #[test]
+    fn test_build_connection_string_password_with_slash() {
+        let config = make_config("localhost", "mydb");
+        let uri = MongoDbAdapter::build_connection_string(&config, Some("p/ss"));
+        assert!(uri.contains("%2F"), "/ in password must be percent-encoded");
+    }
+
+    #[test]
+    fn test_build_connection_string_password_with_percent() {
+        let config = make_config("localhost", "mydb");
+        let uri = MongoDbAdapter::build_connection_string(&config, Some("100%secure"));
+        assert!(uri.contains("%25"), "% in password must be percent-encoded");
+    }
+
     /// Verify that regex::escape treats "PS_" as a literal string (underscore is not special in regex)
     /// but the StartsWith pattern anchors with ^ so "PSA" does NOT match "^PS_".
     #[test]
@@ -1074,7 +1173,10 @@ mod tests {
         let pattern = format!("^{}", escaped);
         let re = Regex::new(&pattern).unwrap();
         // "PS_" as literal: "^PS_" requires the string to start with literal "PS_"
-        assert!(!re.is_match("PSA"), "PSA should not match ^PS_ (underscore is literal)");
+        assert!(
+            !re.is_match("PSA"),
+            "PSA should not match ^PS_ (underscore is literal)"
+        );
         assert!(re.is_match("PS_TABLE"), "PS_TABLE should match ^PS_");
         assert!(re.is_match("PS_"), "PS_ itself should match ^PS_");
     }

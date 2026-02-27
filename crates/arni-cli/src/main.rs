@@ -203,11 +203,12 @@ enum ConfigAction {
 }
 
 fn print_banner() {
-    let standard_font = FIGfont::standard().unwrap();
-    let figure = standard_font.convert("ARNI");
-
-    if let Some(fig) = figure {
-        println!("{}", fig.to_string().bright_cyan());
+    if let Ok(standard_font) = FIGfont::standard() {
+        if let Some(fig) = standard_font.convert("ARNI") {
+            println!("{}", fig.to_string().bright_cyan());
+        }
+    } else {
+        println!("{}", "ARNI".bright_cyan());
     }
 
     println!("{}", TAGLINE.bright_yellow());
@@ -659,7 +660,9 @@ fn run_compose_command(args: &[&str]) -> Result<(), Box<dyn Error>> {
 
 async fn handle_connect_command(profile: String) -> Result<(), Box<dyn Error>> {
     let store = ConfigStore::load(None)?;
-    let cfg = store.get(&profile)?;
+    let cfg = store.get(&profile).map_err(|e| {
+        format!("{}\nhint: run `arni config list` to see available profiles", e)
+    })?;
 
     println!(
         "Connecting to '{}' ({})...",
@@ -703,15 +706,23 @@ async fn handle_query_command(
     profile: String,
     format: String,
 ) -> Result<(), Box<dyn Error>> {
+    // Validate format before connecting (fast fail, no wasted connection).
+    let fmt = format.to_lowercase();
+    if !matches!(fmt.as_str(), "table" | "t" | "json" | "csv") {
+        return Err(format!("Unknown format '{}'. Valid: table, json, csv", format).into());
+    }
+
     let store = ConfigStore::load(None)?;
-    let adapter = db::connect(&store, &profile).await?;
+    let adapter = db::connect(&store, &profile).await.map_err(|e| {
+        format!("{}\nhint: run `arni config list` to see available profiles", e)
+    })?;
 
     let mut df = adapter
         .query_df(&query)
         .await
         .map_err(|e| format!("Query failed: {}", e))?;
 
-    match format.to_lowercase().as_str() {
+    match fmt.as_str() {
         "table" | "t" => {
             println!("{}", df_to_table(&df));
             println!(
@@ -728,9 +739,7 @@ async fn handle_query_command(
             let csv = df_to_csv(&mut df)?;
             print!("{}", csv);
         }
-        other => {
-            return Err(format!("Unknown format '{}'. Valid: table, json, csv", other).into());
-        }
+        _ => unreachable!("format already validated above"),
     }
 
     Ok(())
@@ -750,8 +759,18 @@ async fn handle_metadata_command(
     search: Option<String>,
     search_mode: String,
 ) -> Result<(), Box<dyn Error>> {
+    // Validate --columns / --indexes require --table before connecting.
+    if columns && table.is_none() {
+        return Err("--columns requires --table <table_name>".into());
+    }
+    if indexes && table.is_none() {
+        return Err("--indexes requires --table <table_name>".into());
+    }
+
     let store = ConfigStore::load(None)?;
-    let adapter = db::connect(&store, &profile).await?;
+    let adapter = db::connect(&store, &profile).await.map_err(|e| {
+        format!("{}\nhint: run `arni config list` to see available profiles", e)
+    })?;
     let meta = adapter.metadata();
 
     // --search: find tables by literal name fragment.
@@ -759,7 +778,14 @@ async fn handle_metadata_command(
         let mode = match search_mode.to_lowercase().as_str() {
             "starts" | "starts-with" | "startswith" => TableSearchMode::StartsWith,
             "ends" | "ends-with" | "endswith" => TableSearchMode::EndsWith,
-            _ => TableSearchMode::Contains,
+            "contains" | "contain" => TableSearchMode::Contains,
+            other => {
+                eprintln!(
+                    "warning: unknown --search-mode '{}', falling back to 'contains'",
+                    other
+                );
+                TableSearchMode::Contains
+            }
         };
         let results = meta
             .find_tables(pattern, None, mode.clone())
@@ -896,8 +922,20 @@ async fn handle_export_command(
     format: String,
     output: String,
 ) -> Result<(), Box<dyn Error>> {
+    // Validate format before connecting (fast fail, no wasted connection).
+    let fmt = format.to_lowercase();
+    if !matches!(fmt.as_str(), "json" | "csv" | "parquet") {
+        return Err(format!(
+            "Unknown export format '{}'. Valid: json, csv, parquet",
+            format
+        )
+        .into());
+    }
+
     let store = ConfigStore::load(None)?;
-    let adapter = db::connect(&store, &profile).await?;
+    let adapter = db::connect(&store, &profile).await.map_err(|e| {
+        format!("{}\nhint: run `arni config list` to see available profiles", e)
+    })?;
 
     println!("{}", "Executing query...".dimmed());
     let mut df = adapter
@@ -909,11 +947,11 @@ async fn handle_export_command(
     println!(
         "Fetched {} row(s). Writing {} to '{}'...",
         rows.to_string().bright_white(),
-        format.cyan(),
+        fmt.cyan(),
         output.bright_white()
     );
 
-    match format.to_lowercase().as_str() {
+    match fmt.as_str() {
         "json" => {
             let json = df_to_json(&mut df)?;
             std::fs::write(&output, json)?;
@@ -925,13 +963,7 @@ async fn handle_export_command(
         "parquet" => {
             df_to_parquet(&mut df, &output)?;
         }
-        other => {
-            return Err(format!(
-                "Unknown export format '{}'. Valid: json, csv, parquet",
-                other
-            )
-            .into());
-        }
+        _ => unreachable!("format already validated above"),
     }
 
     println!(

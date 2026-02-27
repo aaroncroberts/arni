@@ -126,69 +126,79 @@ pub fn is_running(name: &str) -> bool {
 /// [`super::load_test_config`]) so that non-default setups work without code
 /// changes. Falls back to the hardcoded dev-container defaults.
 pub fn postgres_config() -> ConnectionConfig {
-    super::load_test_config(pg::PROFILE).unwrap_or_else(|| build_config(
-        DatabaseType::Postgres,
-        pg::PROFILE,
-        pg::HOST,
-        pg::PORT,
-        pg::DATABASE,
-        pg::USER,
-        pg::PASSWORD,
-    ))
+    super::load_test_config(pg::PROFILE).unwrap_or_else(|| {
+        build_config(
+            DatabaseType::Postgres,
+            pg::PROFILE,
+            pg::HOST,
+            pg::PORT,
+            pg::DATABASE,
+            pg::USER,
+            pg::PASSWORD,
+        )
+    })
 }
 
 /// Build a [`ConnectionConfig`] for the MySQL dev-container.
 pub fn mysql_config() -> ConnectionConfig {
-    super::load_test_config(mysql::PROFILE).unwrap_or_else(|| build_config(
-        DatabaseType::MySQL,
-        mysql::PROFILE,
-        mysql::HOST,
-        mysql::PORT,
-        mysql::DATABASE,
-        mysql::USER,
-        mysql::PASSWORD,
-    ))
+    super::load_test_config(mysql::PROFILE).unwrap_or_else(|| {
+        build_config(
+            DatabaseType::MySQL,
+            mysql::PROFILE,
+            mysql::HOST,
+            mysql::PORT,
+            mysql::DATABASE,
+            mysql::USER,
+            mysql::PASSWORD,
+        )
+    })
 }
 
 /// Build a [`ConnectionConfig`] for the SQL Server dev-container.
 pub fn mssql_config() -> ConnectionConfig {
-    super::load_test_config(mssql::PROFILE).unwrap_or_else(|| build_config(
-        DatabaseType::SQLServer,
-        mssql::PROFILE,
-        mssql::HOST,
-        mssql::PORT,
-        mssql::DATABASE,
-        mssql::USER,
-        mssql::PASSWORD,
-    ))
+    super::load_test_config(mssql::PROFILE).unwrap_or_else(|| {
+        build_config(
+            DatabaseType::SQLServer,
+            mssql::PROFILE,
+            mssql::HOST,
+            mssql::PORT,
+            mssql::DATABASE,
+            mssql::USER,
+            mssql::PASSWORD,
+        )
+    })
 }
 
 /// Build a [`ConnectionConfig`] for the MongoDB dev-container.
 pub fn mongodb_config() -> ConnectionConfig {
-    super::load_test_config(mongodb::PROFILE).unwrap_or_else(|| build_config(
-        DatabaseType::MongoDB,
-        mongodb::PROFILE,
-        mongodb::HOST,
-        mongodb::PORT,
-        mongodb::DATABASE,
-        mongodb::USER,
-        mongodb::PASSWORD,
-    ))
+    super::load_test_config(mongodb::PROFILE).unwrap_or_else(|| {
+        build_config(
+            DatabaseType::MongoDB,
+            mongodb::PROFILE,
+            mongodb::HOST,
+            mongodb::PORT,
+            mongodb::DATABASE,
+            mongodb::USER,
+            mongodb::PASSWORD,
+        )
+    })
 }
 
 /// Build a [`ConnectionConfig`] for the Oracle dev-container.
 ///
 /// **NOTE**: Oracle is excluded from CI; use locally after `arni dev start`.
 pub fn oracle_config() -> ConnectionConfig {
-    super::load_test_config(oracle::PROFILE).unwrap_or_else(|| build_config(
-        DatabaseType::Oracle,
-        oracle::PROFILE,
-        oracle::HOST,
-        oracle::PORT,
-        oracle::SERVICE,
-        oracle::USER,
-        oracle::PASSWORD,
-    ))
+    super::load_test_config(oracle::PROFILE).unwrap_or_else(|| {
+        build_config(
+            DatabaseType::Oracle,
+            oracle::PROFILE,
+            oracle::HOST,
+            oracle::PORT,
+            oracle::SERVICE,
+            oracle::USER,
+            oracle::PASSWORD,
+        )
+    })
 }
 
 /// Build an in-memory SQLite [`ConnectionConfig`] (no container needed).

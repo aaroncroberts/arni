@@ -358,11 +358,7 @@ log_dir: /var/log/arni
     fn test_load_logging_config_valid_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("logging.yml");
-        std::fs::write(
-            &path,
-            b"level: debug\nrolling:\n  strategy: never\n",
-        )
-        .unwrap();
+        std::fs::write(&path, b"level: debug\nrolling:\n  strategy: never\n").unwrap();
         let cfg = load_logging_config(dir.path()).unwrap();
         assert_eq!(cfg.level, "debug");
         assert_eq!(cfg.rolling.strategy, RollingStrategy::Never);
@@ -389,6 +385,9 @@ log_dir: /var/log/arni
         // Second call should not overwrite the existing file.
         write_default_logging_config(dir.path()).unwrap();
         let contents = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(contents, "level: trace\n", "Existing file must not be overwritten");
+        assert_eq!(
+            contents, "level: trace\n",
+            "Existing file must not be overwritten"
+        );
     }
 }
