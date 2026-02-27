@@ -28,3 +28,6 @@ pub mod mysql;
 
 #[cfg(feature = "oracle")]
 pub mod oracle;
+
+#[cfg(feature = "sqlite")]
+pub mod sqlite;

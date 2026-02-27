@@ -45,7 +45,7 @@ default = []
 # Database-specific features (to be implemented)
 postgres = ["dep:tokio-postgres", "dep:postgres-native-tls", "dep:native-tls"]
 mysql = ["dep:sqlx", "sqlx?/mysql"]
-sqlite = []
+sqlite = ["dep:sqlx", "sqlx?/sqlite"]
 mongodb = []
 mssql = []
 oracle = ["dep:oracle"]

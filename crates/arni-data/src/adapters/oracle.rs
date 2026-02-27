@@ -95,7 +95,10 @@ impl OracleAdapter {
 
     /// Build a connection string from the configuration
     /// Returns (username, password, connect_string) tuple
-    fn build_connection_params(config: &ConnectionConfig, password: Option<&str>) -> (String, String, String) {
+    fn build_connection_params(
+        config: &ConnectionConfig,
+        password: Option<&str>,
+    ) -> (String, String, String) {
         let host = config.host.as_deref().unwrap_or("localhost");
         let port = config.port.unwrap_or(1521);
         let database = &config.database; // Service name or SID
@@ -195,7 +198,8 @@ impl ConnectionTrait for OracleAdapter {
             )));
         }
 
-        let (username, password, connect_string) = Self::build_connection_params(&self.config, None);
+        let (username, password, connect_string) =
+            Self::build_connection_params(&self.config, None);
         let connection = self.connection.clone();
         let connected = self.connected.clone();
 
@@ -259,7 +263,8 @@ impl DbAdapter for OracleAdapter {
     async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<()> {
         self.config = config.clone();
 
-        let (username, password_str, connect_string) = Self::build_connection_params(config, password);
+        let (username, password_str, connect_string) =
+            Self::build_connection_params(config, password);
         let connection = self.connection.clone();
         let connected = self.connected.clone();
 
@@ -293,7 +298,8 @@ impl DbAdapter for OracleAdapter {
         config: &ConnectionConfig,
         password: Option<&str>,
     ) -> Result<bool> {
-        let (username, password_str, connect_string) = Self::build_connection_params(config, password);
+        let (username, password_str, connect_string) =
+            Self::build_connection_params(config, password);
 
         let result = tokio::task::spawn_blocking(move || {
             oracle::Connection::connect(&username, &password_str, &connect_string)
