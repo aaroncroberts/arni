@@ -32,7 +32,10 @@ serde_yaml.workspace = true
 toml.workspace = true
 
 # Data manipulation
-polars = { workspace = true, features = ["lazy", "dtype-full", "serde"] }
+polars = { workspace = true, features = ["lazy", "dtype-full", "serde", "csv", "json", "parquet"] }
+
+# XML serialization
+quick-xml = "0.36"
 
 # Pattern matching
 regex = "1"
@@ -50,6 +53,7 @@ duckdb = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = { workspace = true }
 # serde_yaml is already a regular dependency — no need to repeat it here
 
 [features]

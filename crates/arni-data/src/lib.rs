@@ -115,6 +115,7 @@ pub mod adapter;
 pub mod adapters;
 pub mod config;
 pub mod error;
+pub mod export;
 
 // Re-export commonly used types
 pub use adapter::{
@@ -123,3 +124,4 @@ pub use adapter::{
 };
 pub use config::{ArniConfig, ConfigProfile};
 pub use error::{DataError, Result};
+pub use export::{to_bytes, to_file, DataFormat};

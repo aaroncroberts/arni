@@ -9,7 +9,8 @@ use colored::*;
 use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as CTable};
 use config::{ConfigStore, ConnectionEntry};
 use figlet_rs::FIGfont;
-use polars::prelude::{CsvWriter, DataFrame, JsonFormat, JsonWriter, ParquetWriter, SerWriter};
+use arni_data::export::{to_bytes, to_file, DataFormat};
+use polars::prelude::DataFrame;
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::TcpStream;
@@ -58,7 +59,7 @@ enum Commands {
         #[arg(short, long)]
         profile: String,
 
-        /// Output format (table, json, csv, parquet)
+        /// Output format: table, json, csv, xml
         #[arg(short, long, default_value = "table")]
         format: String,
     },
@@ -114,7 +115,7 @@ enum Commands {
         #[arg(short, long)]
         profile: String,
 
-        /// Output format (json, csv, parquet)
+        /// Output format: json, csv, xml, parquet
         #[arg(short, long, default_value = "json")]
         format: String,
 
@@ -708,8 +709,8 @@ async fn handle_query_command(
 ) -> Result<(), Box<dyn Error>> {
     // Validate format before connecting (fast fail, no wasted connection).
     let fmt = format.to_lowercase();
-    if !matches!(fmt.as_str(), "table" | "t" | "json" | "csv") {
-        return Err(format!("Unknown format '{}'. Valid: table, json, csv", format).into());
+    if !matches!(fmt.as_str(), "table" | "t" | "json" | "csv" | "xml") {
+        return Err(format!("Unknown format '{}'. Valid: table, json, csv, xml", format).into());
     }
 
     let store = ConfigStore::load(None)?;
@@ -732,12 +733,16 @@ async fn handle_query_command(
             );
         }
         "json" => {
-            let json = df_to_json(&mut df)?;
-            println!("{}", json);
+            let bytes = to_bytes(&mut df, DataFormat::Json)?;
+            println!("{}", String::from_utf8(bytes)?);
         }
         "csv" => {
-            let csv = df_to_csv(&mut df)?;
-            print!("{}", csv);
+            let bytes = to_bytes(&mut df, DataFormat::Csv)?;
+            print!("{}", String::from_utf8(bytes)?);
+        }
+        "xml" => {
+            let bytes = to_bytes(&mut df, DataFormat::Xml)?;
+            println!("{}", String::from_utf8(bytes)?);
         }
         _ => unreachable!("format already validated above"),
     }
@@ -924,9 +929,9 @@ async fn handle_export_command(
 ) -> Result<(), Box<dyn Error>> {
     // Validate format before connecting (fast fail, no wasted connection).
     let fmt = format.to_lowercase();
-    if !matches!(fmt.as_str(), "json" | "csv" | "parquet") {
+    if !matches!(fmt.as_str(), "json" | "csv" | "xml" | "parquet") {
         return Err(format!(
-            "Unknown export format '{}'. Valid: json, csv, parquet",
+            "Unknown export format '{}'. Valid: json, csv, xml, parquet",
             format
         )
         .into());
@@ -953,15 +958,18 @@ async fn handle_export_command(
 
     match fmt.as_str() {
         "json" => {
-            let json = df_to_json(&mut df)?;
-            std::fs::write(&output, json)?;
+            let bytes = to_bytes(&mut df, DataFormat::Json)?;
+            std::fs::write(&output, bytes)?;
         }
         "csv" => {
-            let csv = df_to_csv(&mut df)?;
-            std::fs::write(&output, csv)?;
+            let bytes = to_bytes(&mut df, DataFormat::Csv)?;
+            std::fs::write(&output, bytes)?;
+        }
+        "xml" => {
+            to_file(&mut df, DataFormat::Xml, std::path::Path::new(&output))?;
         }
         "parquet" => {
-            df_to_parquet(&mut df, &output)?;
+            to_file(&mut df, DataFormat::Parquet, std::path::Path::new(&output))?;
         }
         _ => unreachable!("format already validated above"),
     }
@@ -1012,29 +1020,6 @@ fn df_to_table(df: &DataFrame) -> String {
     }
 
     table.to_string()
-}
-
-/// Serialize a DataFrame to a JSON array string.
-fn df_to_json(df: &mut DataFrame) -> Result<String, Box<dyn Error>> {
-    let mut buf: Vec<u8> = Vec::new();
-    JsonWriter::new(&mut buf)
-        .with_json_format(JsonFormat::Json)
-        .finish(df)?;
-    Ok(String::from_utf8(buf)?)
-}
-
-/// Serialize a DataFrame to CSV.
-fn df_to_csv(df: &mut DataFrame) -> Result<String, Box<dyn Error>> {
-    let mut buf: Vec<u8> = Vec::new();
-    CsvWriter::new(&mut buf).finish(df)?;
-    Ok(String::from_utf8(buf)?)
-}
-
-/// Write a DataFrame to a Parquet file at `path`.
-fn df_to_parquet(df: &mut DataFrame, path: &str) -> Result<(), Box<dyn Error>> {
-    let file = std::fs::File::create(path)?;
-    ParquetWriter::new(file).finish(df)?;
-    Ok(())
 }
 
 /// Print a formatted describe-table view.
