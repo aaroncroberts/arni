@@ -26,6 +26,9 @@ pub mod postgres;
 #[cfg(feature = "mysql")]
 pub mod mysql;
 
+#[cfg(feature = "mongodb")]
+pub mod mongodb;
+
 #[cfg(feature = "oracle")]
 pub mod oracle;
 

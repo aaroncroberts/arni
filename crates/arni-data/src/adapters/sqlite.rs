@@ -94,9 +94,9 @@ impl SqliteAdapter {
             // SQLite has a simpler type system: NULL, INTEGER, REAL, TEXT, BLOB
             let value = match type_name {
                 "BOOLEAN" | "BOOL" => {
-                    let val: Option<bool> = row
-                        .try_get(i)
-                        .map_err(|e| DataError::Query(format!("Failed to get bool value: {}", e)))?;
+                    let val: Option<bool> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get bool value: {}", e))
+                    })?;
                     match val {
                         Some(v) => QueryValue::Bool(v),
                         None => QueryValue::Null,
@@ -267,9 +267,9 @@ impl DbAdapter for SqliteAdapter {
 
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         let pool_guard = self.pool.read().await;
-        let pool = pool_guard
-            .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected - call connect() first".to_string()))?;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            DataError::Connection("Not connected - call connect() first".to_string())
+        })?;
 
         let rows = sqlx::query(query)
             .fetch_all(pool)
@@ -327,11 +327,7 @@ impl DbAdapter for SqliteAdapter {
         Ok(tables)
     }
 
-    async fn describe_table(
-        &self,
-        table_name: &str,
-        _schema: Option<&str>,
-    ) -> Result<TableInfo> {
+    async fn describe_table(&self, table_name: &str, _schema: Option<&str>) -> Result<TableInfo> {
         // Get column information
         let pragma_query = format!("PRAGMA table_info({})", table_name);
         let result = self.execute_query(&pragma_query).await?;
@@ -340,8 +336,12 @@ impl DbAdapter for SqliteAdapter {
 
         for row in result.rows {
             if row.len() >= 6 {
-                if let (QueryValue::Text(name), QueryValue::Text(data_type), QueryValue::Int(notnull), QueryValue::Int(pk)) =
-                    (&row[1], &row[2], &row[3], &row[5])
+                if let (
+                    QueryValue::Text(name),
+                    QueryValue::Text(data_type),
+                    QueryValue::Int(notnull),
+                    QueryValue::Int(pk),
+                ) = (&row[1], &row[2], &row[3], &row[5])
                 {
                     columns.push(ColumnInfo {
                         name: name.clone(),
@@ -440,8 +440,12 @@ impl DbAdapter for SqliteAdapter {
 
         for row in result.rows {
             if row.len() >= 4 {
-                if let (QueryValue::Int(id), QueryValue::Text(ref_table), QueryValue::Text(from_col), QueryValue::Text(to_col)) =
-                    (&row[0], &row[2], &row[3], &row[4])
+                if let (
+                    QueryValue::Int(id),
+                    QueryValue::Text(ref_table),
+                    QueryValue::Text(from_col),
+                    QueryValue::Text(to_col),
+                ) = (&row[0], &row[2], &row[3], &row[4])
                 {
                     foreign_keys
                         .entry(*id)
@@ -496,21 +500,26 @@ impl DbAdapter for SqliteAdapter {
         Ok(views)
     }
 
-    async fn get_view_definition(&self, view_name: &str, _schema: Option<&str>) -> Result<Option<String>> {
+    async fn get_view_definition(
+        &self,
+        view_name: &str,
+        _schema: Option<&str>,
+    ) -> Result<Option<String>> {
         let query = format!(
             "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = '{}'",
             view_name
         );
         let result = self.execute_query(&query).await?;
 
-        let definition = result
-            .rows
-            .first()
-            .and_then(|row| row.first())
-            .and_then(|val| match val {
-                QueryValue::Text(s) => Some(s.clone()),
-                _ => None,
-            });
+        let definition =
+            result
+                .rows
+                .first()
+                .and_then(|row| row.first())
+                .and_then(|val| match val {
+                    QueryValue::Text(s) => Some(s.clone()),
+                    _ => None,
+                });
 
         Ok(definition)
     }

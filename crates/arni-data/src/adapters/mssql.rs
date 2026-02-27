@@ -179,7 +179,7 @@ impl ConnectionTrait for SqlServerAdapter {
 impl DbAdapter for SqlServerAdapter {
     async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<()> {
         self.config = config.clone();
-        
+
         Self::validate_database_name(&config.database)?;
 
         let tiberius_config = Self::build_config(config, password)?;
@@ -220,7 +220,8 @@ impl DbAdapter for SqlServerAdapter {
             return Ok(false);
         }
 
-        let client_result = Client::connect(tiberius_config, tcp_result.unwrap().compat_write()).await;
+        let client_result =
+            Client::connect(tiberius_config, tcp_result.unwrap().compat_write()).await;
         Ok(client_result.is_ok())
     }
 
@@ -234,9 +235,9 @@ impl DbAdapter for SqlServerAdapter {
 
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         let mut client_guard = self.client.write().await;
-        let client = client_guard
-            .as_mut()
-            .ok_or_else(|| DataError::Connection("Not connected - call connect() first".to_string()))?;
+        let client = client_guard.as_mut().ok_or_else(|| {
+            DataError::Connection("Not connected - call connect() first".to_string())
+        })?;
 
         let stream = client
             .query(query, &[])
@@ -321,13 +322,9 @@ impl DbAdapter for SqlServerAdapter {
         Ok(tables)
     }
 
-    async fn describe_table(
-        &self,
-        table_name: &str,
-        schema: Option<&str>,
-    ) -> Result<TableInfo> {
+    async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
         let schema_name = schema.unwrap_or("dbo");
-        
+
         let query = format!(
             "SELECT column_name, data_type, is_nullable \
              FROM information_schema.columns \
@@ -348,8 +345,11 @@ impl DbAdapter for SqlServerAdapter {
         let mut columns = Vec::new();
         for row in result.rows {
             if row.len() >= 3 {
-                if let (QueryValue::Text(name), QueryValue::Text(data_type), QueryValue::Text(nullable)) =
-                    (&row[0], &row[1], &row[2])
+                if let (
+                    QueryValue::Text(name),
+                    QueryValue::Text(data_type),
+                    QueryValue::Text(nullable),
+                ) = (&row[0], &row[1], &row[2])
                 {
                     columns.push(ColumnInfo {
                         name: name.clone(),
@@ -392,7 +392,7 @@ impl DbAdapter for SqlServerAdapter {
 
     async fn get_indexes(&self, table_name: &str, schema: Option<&str>) -> Result<Vec<IndexInfo>> {
         let schema_name = schema.unwrap_or("dbo");
-        
+
         let query = format!(
             "SELECT i.name AS index_name, \
                     c.name AS column_name, \
@@ -434,15 +434,17 @@ impl DbAdapter for SqlServerAdapter {
 
         let result_indexes = indexes
             .into_iter()
-            .map(|(name, (columns, is_unique, is_primary, idx_type))| IndexInfo {
-                name,
-                table_name: table_name.to_string(),
-                schema: Some(schema_name.to_string()),
-                columns,
-                is_unique,
-                is_primary,
-                index_type: Some(idx_type),
-            })
+            .map(
+                |(name, (columns, is_unique, is_primary, idx_type))| IndexInfo {
+                    name,
+                    table_name: table_name.to_string(),
+                    schema: Some(schema_name.to_string()),
+                    columns,
+                    is_unique,
+                    is_primary,
+                    index_type: Some(idx_type),
+                },
+            )
             .collect();
 
         Ok(result_indexes)
@@ -454,7 +456,7 @@ impl DbAdapter for SqlServerAdapter {
         schema: Option<&str>,
     ) -> Result<Vec<ForeignKeyInfo>> {
         let schema_name = schema.unwrap_or("dbo");
-        
+
         let query = format!(
             "SELECT fk.name AS fk_name, \
                     c1.name AS column_name, \
@@ -541,7 +543,11 @@ impl DbAdapter for SqlServerAdapter {
         Ok(views)
     }
 
-    async fn get_view_definition(&self, view_name: &str, schema: Option<&str>) -> Result<Option<String>> {
+    async fn get_view_definition(
+        &self,
+        view_name: &str,
+        schema: Option<&str>,
+    ) -> Result<Option<String>> {
         let schema_name = schema.unwrap_or("dbo");
         let query = format!(
             "SELECT view_definition FROM information_schema.views \
@@ -550,14 +556,15 @@ impl DbAdapter for SqlServerAdapter {
         );
         let result = self.execute_query(&query).await?;
 
-        let definition = result
-            .rows
-            .first()
-            .and_then(|row| row.first())
-            .and_then(|val| match val {
-                QueryValue::Text(s) => Some(s.clone()),
-                _ => None,
-            });
+        let definition =
+            result
+                .rows
+                .first()
+                .and_then(|row| row.first())
+                .and_then(|val| match val {
+                    QueryValue::Text(s) => Some(s.clone()),
+                    _ => None,
+                });
 
         Ok(definition)
     }
@@ -578,7 +585,9 @@ impl DbAdapter for SqlServerAdapter {
             .into_iter()
             .filter_map(|row| {
                 if row.len() >= 2 {
-                    if let (QueryValue::Text(name), QueryValue::Text(routine_type)) = (&row[0], &row[1]) {
+                    if let (QueryValue::Text(name), QueryValue::Text(routine_type)) =
+                        (&row[0], &row[1])
+                    {
                         Some(ProcedureInfo {
                             name: name.clone(),
                             schema: Some(schema_filter.to_string()),
