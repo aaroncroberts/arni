@@ -63,10 +63,11 @@ pub mod mysql {
 }
 
 /// SQL Server dev-container defaults (compose.yml: service `mssql`)
+/// Host port 1434 avoids conflict with other local MSSQL instances.
 pub mod mssql {
     pub const HOST: &str = "localhost";
-    pub const PORT: u16 = 1433;
-    pub const DATABASE: &str = "test_db";
+    pub const PORT: u16 = 1434;
+    pub const DATABASE: &str = "master";
     pub const USER: &str = "sa";
     pub const PASSWORD: &str = "Test_Password123!";
     pub const PROFILE: &str = "mssql-dev";
@@ -74,9 +75,10 @@ pub mod mssql {
 }
 
 /// MongoDB dev-container defaults (compose.yml: service `mongodb`)
+/// Host port 27018 avoids conflict with other local MongoDB instances.
 pub mod mongodb {
     pub const HOST: &str = "localhost";
-    pub const PORT: u16 = 27017;
+    pub const PORT: u16 = 27018;
     pub const DATABASE: &str = "test_db";
     pub const USER: &str = "test_user";
     pub const PASSWORD: &str = "test_password";
@@ -88,9 +90,10 @@ pub mod mongodb {
 ///
 /// **NOTE**: Oracle requires ~2 GB shared memory and ~60 s startup time.
 /// It is excluded from CI. Run locally with `arni dev start`.
+/// Host port 1522 avoids conflict with other local Oracle instances.
 pub mod oracle {
     pub const HOST: &str = "localhost";
-    pub const PORT: u16 = 1521;
+    pub const PORT: u16 = 1522;
     /// Oracle service name (used as the "database" in connection strings)
     pub const SERVICE: &str = "FREE";
     pub const USER: &str = "system";
@@ -326,17 +329,23 @@ mod tests {
 
     #[test]
     fn test_postgres_config_env_override() {
-        // When env vars are set they override the hardcoded defaults.
-        std::env::set_var("TEST_PG_DEV_TYPE", "postgres");
-        std::env::set_var("TEST_PG_DEV_DATABASE", "override_db");
-        std::env::set_var("TEST_PG_DEV_HOST", "db.example.com");
+        // load_test_config falls back to env vars when the profile is not in
+        // ~/.arni/connections.yml.  Use a synthetic profile name that cannot
+        // appear in any real connections file.
+        let profile = "__arni_containers_test_pg__";
+        let p = format!("TEST_{}", profile.to_uppercase().replace('-', "_"));
+        std::env::set_var(format!("{p}_TYPE"), "postgres");
+        std::env::set_var(format!("{p}_DATABASE"), "override_db");
+        std::env::set_var(format!("{p}_HOST"), "db.example.com");
 
-        let cfg = postgres_config();
+        let cfg = super::super::load_test_config(profile);
+        assert!(cfg.is_some(), "env-var fallback should produce a config");
+        let cfg = cfg.unwrap();
         assert_eq!(cfg.database, "override_db");
         assert_eq!(cfg.host.as_deref(), Some("db.example.com"));
 
-        std::env::remove_var("TEST_PG_DEV_TYPE");
-        std::env::remove_var("TEST_PG_DEV_DATABASE");
-        std::env::remove_var("TEST_PG_DEV_HOST");
+        std::env::remove_var(format!("{p}_TYPE"));
+        std::env::remove_var(format!("{p}_DATABASE"));
+        std::env::remove_var(format!("{p}_HOST"));
     }
 }
