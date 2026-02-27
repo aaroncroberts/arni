@@ -16,6 +16,10 @@ categories = ["database"]
 thiserror.workspace = true
 anyhow.workspace = true
 
+# Logging and tracing
+arni-logging = { path = "../arni-logging" }
+tracing = "0.1"
+
 # Async
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }

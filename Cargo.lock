@@ -200,6 +200,7 @@ name = "arni-data"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arni-logging",
  "async-trait",
  "duckdb",
  "futures-util",
@@ -218,6 +219,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-util",
  "toml",
+ "tracing",
 ]
 
 [[package]]

@@ -54,6 +54,7 @@ use sqlx::{Column, Executor, Row, TypeInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, instrument, warn};
 
 /// MySQL database adapter
 ///
@@ -314,9 +315,13 @@ impl MySqlAdapter {
     /// let result = adapter.execute_query("SELECT * FROM users").await?;
     /// println!("Found {} rows", result.rows.len());
     /// ```
+    #[instrument(skip(self, query), fields(adapter = "mysql", query_length = query.len()))]
     pub async fn execute_query(&self, query: &str) -> Result<QueryResult> {
+        debug!("Executing query");
+        
         // Check if connected
         if !*self.connected.read().await {
+            error!("Query execution failed: not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -326,10 +331,15 @@ impl MySqlAdapter {
         let pool_guard = self.pool.read().await;
         let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+            .ok_or_else(|| {
+                error!("Pool not available");
+                DataError::Connection("Pool not available".to_string())
+            })?;
 
         // Execute query
+        let start = std::time::Instant::now();
         let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
+            error!(error = %e, "Query execution failed");
             let error_msg = e.to_string();
 
             // Categorize errors for better error messages
@@ -345,9 +355,15 @@ impl MySqlAdapter {
                 DataError::Query(format!("Query failed: {}", e))
             }
         })?;
+        
+        let duration = start.elapsed();
+        let row_count = rows.len();
+        
+        info!(rows = row_count, duration_ms = duration.as_millis(), "Query executed successfully");
 
         // Handle empty results (e.g., from INSERT/UPDATE/DELETE)
         if rows.is_empty() {
+            debug!("Query returned no rows");
             return Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
@@ -361,6 +377,8 @@ impl MySqlAdapter {
             .iter()
             .map(|col| col.name().to_string())
             .collect();
+        
+        debug!(columns = columns.len(), "Extracted column metadata");
 
         // Convert rows to QueryValue vectors
         let mut result_rows = Vec::new();
@@ -381,35 +399,49 @@ impl MySqlAdapter {
 
 #[async_trait::async_trait]
 impl Connection for MySqlAdapter {
+    #[instrument(skip(self), fields(adapter = "mysql", host = ?self.config.host, port = ?self.config.port, database = %self.config.database))]
     async fn connect(&mut self) -> Result<()> {
         // Check if already connected
         if *self.connected.read().await {
+            debug!("Already connected, skipping connection attempt");
             return Ok(());
         }
 
+        info!("Connecting to MySQL database");
+
         // Build connection string (without password for now - will need separate password handling)
-        let conn_str = self.build_connection_string(None)?;
+        let conn_str = self.build_connection_string(None).map_err(|e| {
+            error!(error = ?e, "Failed to build connection string");
+            e
+        })?;
 
         // Create connection pool with sqlx
         let pool = MySqlPoolOptions::new()
             .max_connections(5)
             .connect(&conn_str)
             .await
-            .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "Failed to establish connection");
+                DataError::Connection(format!("Failed to connect: {}", e))
+            })?;
 
         // Store the pool
         *self.pool.write().await = Some(pool);
         *self.connected.write().await = true;
 
+        info!("Successfully connected to MySQL");
         Ok(())
     }
 
+    #[instrument(skip(self), fields(adapter = "mysql"))]
     async fn disconnect(&mut self) -> Result<()> {
+        info!("Disconnecting from MySQL");
         // Close the pool
         if let Some(pool) = self.pool.write().await.take() {
             pool.close().await;
         }
         *self.connected.write().await = false;
+        debug!("MySQL connection closed");
         Ok(())
     }
 
@@ -422,9 +454,12 @@ impl Connection for MySqlAdapter {
             .unwrap_or(false)
     }
 
+    #[instrument(skip(self), fields(adapter = "mysql"))]
     async fn health_check(&self) -> Result<bool> {
+        debug!("Performing health check");
         // Check internal state first
         if !*self.connected.read().await {
+            warn!("Health check failed: not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -434,12 +469,21 @@ impl Connection for MySqlAdapter {
         let pool_guard = self.pool.read().await;
         let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+            .ok_or_else(|| {
+                error!("Pool not available for health check");
+                DataError::Connection("Pool not available".to_string())
+            })?;
 
         // Execute health check query
         match sqlx::query("SELECT 1").fetch_one(pool).await {
-            Ok(_) => Ok(true),
-            Err(e) => Err(DataError::Query(format!("Health check failed: {}", e))),
+            Ok(_) => {
+                debug!("Health check passed");
+                Ok(true)
+            }
+            Err(e) => {
+                error!(error = %e, "Health check query failed");
+                Err(DataError::Query(format!("Health check failed: {}", e)))
+            }
         }
     }
 

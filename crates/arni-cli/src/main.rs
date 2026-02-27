@@ -41,11 +41,11 @@ enum Commands {
     Query {
         /// SQL query to execute
         query: String,
-        
+
         /// Connection profile name
         #[arg(short, long)]
         profile: String,
-        
+
         /// Output format (table, json, csv, parquet)
         #[arg(short, long, default_value = "table")]
         format: String,
@@ -55,23 +55,23 @@ enum Commands {
         /// Connection profile name
         #[arg(short, long)]
         profile: String,
-        
+
         /// Show tables
         #[arg(long)]
         tables: bool,
-        
+
         /// Show columns
         #[arg(long)]
         columns: bool,
-        
+
         /// Show schemas
         #[arg(long)]
         schemas: bool,
-        
+
         /// Show views
         #[arg(long)]
         views: bool,
-        
+
         /// Show indexes
         #[arg(long)]
         indexes: bool,
@@ -80,15 +80,15 @@ enum Commands {
     Export {
         /// SQL query for export
         query: String,
-        
+
         /// Connection profile name
         #[arg(short, long)]
         profile: String,
-        
+
         /// Output format (json, csv, parquet)
         #[arg(short, long, default_value = "json")]
         format: String,
-        
+
         /// Output file path
         #[arg(short, long)]
         output: String,
@@ -120,11 +120,11 @@ enum DevAction {
 fn print_banner() {
     let standard_font = FIGfont::standard().unwrap();
     let figure = standard_font.convert("ARNI");
-    
+
     if let Some(fig) = figure {
         println!("{}", fig.to_string().bright_cyan());
     }
-    
+
     println!("{}", TAGLINE.bright_yellow());
     println!("{} {}\n", "Version".bright_blue(), VERSION.bright_white());
 }
@@ -147,12 +147,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
             handle_dev_command(action).await?;
         }
         Commands::Connect { profile } => {
-            println!("{} {}", "Connecting to profile:".green(), profile.bright_white());
+            println!(
+                "{} {}",
+                "Connecting to profile:".green(),
+                profile.bright_white()
+            );
             println!("{}", "Not yet implemented".yellow());
         }
-        Commands::Query { query, profile, format } => {
-            println!("{} {} {} {}", 
-                "Executing query on".green(), 
+        Commands::Query {
+            query,
+            profile,
+            format,
+        } => {
+            println!(
+                "{} {} {} {}",
+                "Executing query on".green(),
                 profile.bright_white(),
                 "with format".green(),
                 format.bright_white()
@@ -160,19 +169,46 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("{} {}", "Query:".cyan(), query);
             println!("{}", "Not yet implemented".yellow());
         }
-        Commands::Metadata { profile, tables, columns, schemas, views, indexes } => {
-            println!("{} {}", "Fetching metadata from".green(), profile.bright_white());
-            
-            if tables { println!("{}", "  • Tables".cyan()); }
-            if columns { println!("{}", "  • Columns".cyan()); }
-            if schemas { println!("{}", "  • Schemas".cyan()); }
-            if views { println!("{}", "  • Views".cyan()); }
-            if indexes { println!("{}", "  • Indexes".cyan()); }
-            
+        Commands::Metadata {
+            profile,
+            tables,
+            columns,
+            schemas,
+            views,
+            indexes,
+        } => {
+            println!(
+                "{} {}",
+                "Fetching metadata from".green(),
+                profile.bright_white()
+            );
+
+            if tables {
+                println!("{}", "  • Tables".cyan());
+            }
+            if columns {
+                println!("{}", "  • Columns".cyan());
+            }
+            if schemas {
+                println!("{}", "  • Schemas".cyan());
+            }
+            if views {
+                println!("{}", "  • Views".cyan());
+            }
+            if indexes {
+                println!("{}", "  • Indexes".cyan());
+            }
+
             println!("{}", "Not yet implemented".yellow());
         }
-        Commands::Export { query, profile, format, output } => {
-            println!("{} {} {} {} {} {}", 
+        Commands::Export {
+            query,
+            profile,
+            format,
+            output,
+        } => {
+            println!(
+                "{} {} {} {} {} {}",
                 "Exporting from".green(),
                 profile.bright_white(),
                 "to".green(),
@@ -191,8 +227,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 async fn handle_dev_command(action: DevAction) -> Result<(), Box<dyn Error>> {
     // Check if podman-compose is available
     if !is_podman_compose_available() {
-        eprintln!("{}", "Error: podman-compose is not installed or not in PATH".red());
-        eprintln!("{}", "Install with: brew install podman-compose (macOS) or pip install podman-compose".yellow());
+        eprintln!(
+            "{}",
+            "Error: podman-compose is not installed or not in PATH".red()
+        );
+        eprintln!(
+            "{}",
+            "Install with: brew install podman-compose (macOS) or pip install podman-compose"
+                .yellow()
+        );
         return Err("podman-compose not found".into());
     }
 
@@ -231,7 +274,7 @@ async fn handle_dev_command(action: DevAction) -> Result<(), Box<dyn Error>> {
             println!("{}", "✓ Cleanup completed".bright_green());
         }
     }
-    
+
     Ok(())
 }
 
