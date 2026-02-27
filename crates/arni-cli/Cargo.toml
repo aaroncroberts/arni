@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # Local dependencies
 arni = { path = "../arni" }
+arni-logging = { path = "../arni-logging" }
 
 # Workspace dependencies
 tokio = { workspace = true }
@@ -26,3 +27,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 polars = { workspace = true }
+
+# CLI-specific dependencies
+figlet-rs = "0.1"
+colored = "3.1"

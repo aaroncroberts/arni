@@ -1,4 +1,10 @@
 use clap::{Parser, Subcommand};
+use colored::*;
+use figlet_rs::FIGfont;
+use std::error::Error;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const TAGLINE: &str = "Unified database access for Rust";
 
 #[derive(Parser)]
 #[command(name = "arni")]
@@ -6,10 +12,23 @@ use clap::{Parser, Subcommand};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Skip ASCII banner display
+    #[arg(long, global = true)]
+    no_banner: bool,
+
+    /// Enable verbose output
+    #[arg(short, long, global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Manage development containers
+    Dev {
+        #[command(subcommand)]
+        action: DevAction,
+    },
     /// Connect to a database
     Connect {
         /// Connection profile name from config
@@ -20,38 +39,188 @@ enum Commands {
     Query {
         /// SQL query to execute
         query: String,
+        
+        /// Connection profile name
+        #[arg(short, long)]
+        profile: String,
+        
+        /// Output format (table, json, csv, parquet)
+        #[arg(short, long, default_value = "table")]
+        format: String,
     },
     /// Show metadata
     Metadata {
-        /// Show tables
+        /// Connection profile name
         #[arg(short, long)]
+        profile: String,
+        
+        /// Show tables
+        #[arg(long)]
         tables: bool,
+        
+        /// Show columns
+        #[arg(long)]
+        columns: bool,
+        
+        /// Show schemas
+        #[arg(long)]
+        schemas: bool,
+        
+        /// Show views
+        #[arg(long)]
+        views: bool,
+        
+        /// Show indexes
+        #[arg(long)]
+        indexes: bool,
+    },
+    /// Export data
+    Export {
+        /// SQL query for export
+        query: String,
+        
+        /// Connection profile name
+        #[arg(short, long)]
+        profile: String,
+        
+        /// Output format (json, csv, parquet)
+        #[arg(short, long, default_value = "json")]
+        format: String,
+        
+        /// Output file path
+        #[arg(short, long)]
+        output: String,
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+#[derive(Subcommand)]
+enum DevAction {
+    /// Start development containers
+    Start,
+    /// Stop development containers
+    Stop,
+    /// Show container status
+    Status,
+    /// Show container logs
+    Logs {
+        /// Service name (postgres, mysql, mongodb, sqlserver, oracle)
+        #[arg(short, long)]
+        service: Option<String>,
+    },
+    /// Clean up containers and volumes
+    Clean {
+        /// Remove volumes
+        #[arg(short, long)]
+        volumes: bool,
+    },
+}
 
+fn print_banner() {
+    let standard_font = FIGfont::standard().unwrap();
+    let figure = standard_font.convert("ARNI");
+    
+    if let Some(fig) = figure {
+        println!("{}", fig.to_string().bright_cyan());
+    }
+    
+    println!("{}", TAGLINE.bright_yellow());
+    println!("{} {}\n", "Version".bright_blue(), VERSION.bright_white());
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
+    // Initialize arni-logging
+    let log_level = if cli.verbose { "debug" } else { "info" };
+    arni_logging::init_default_with_filter(log_level)?;
+
+    // Show banner unless suppressed
+    if !cli.no_banner {
+        print_banner();
+    }
+
     match cli.command {
+        Commands::Dev { action } => {
+            handle_dev_command(action).await?;
+        }
         Commands::Connect { profile } => {
-            println!("Connecting to profile: {}", profile);
-            println!("Not yet implemented");
+            println!("{} {}", "Connecting to profile:".green(), profile.bright_white());
+            println!("{}", "Not yet implemented".yellow());
         }
-        Commands::Query { query } => {
-            println!("Executing query: {}", query);
-            println!("Not yet implemented");
+        Commands::Query { query, profile, format } => {
+            println!("{} {} {} {}", 
+                "Executing query on".green(), 
+                profile.bright_white(),
+                "with format".green(),
+                format.bright_white()
+            );
+            println!("{} {}", "Query:".cyan(), query);
+            println!("{}", "Not yet implemented".yellow());
         }
-        Commands::Metadata { tables } => {
-            if tables {
-                println!("Listing tables");
-                println!("Not yet implemented");
-            }
+        Commands::Metadata { profile, tables, columns, schemas, views, indexes } => {
+            println!("{} {}", "Fetching metadata from".green(), profile.bright_white());
+            
+            if tables { println!("{}", "  • Tables".cyan()); }
+            if columns { println!("{}", "  • Columns".cyan()); }
+            if schemas { println!("{}", "  • Schemas".cyan()); }
+            if views { println!("{}", "  • Views".cyan()); }
+            if indexes { println!("{}", "  • Indexes".cyan()); }
+            
+            println!("{}", "Not yet implemented".yellow());
+        }
+        Commands::Export { query, profile, format, output } => {
+            println!("{} {} {} {} {} {}", 
+                "Exporting from".green(),
+                profile.bright_white(),
+                "to".green(),
+                output.bright_white(),
+                "as".green(),
+                format.bright_white()
+            );
+            println!("{} {}", "Query:".cyan(), query);
+            println!("{}", "Not yet implemented".yellow());
         }
     }
 
+    Ok(())
+}
+
+async fn handle_dev_command(action: DevAction) -> Result<(), Box<dyn Error>> {
+    match action {
+        DevAction::Start => {
+            println!("{}", "Starting development containers...".green());
+            println!("{}", "Not yet implemented".yellow());
+            println!("{}", "Hint: This will run 'podman-compose -f compose.yml up -d'".bright_black());
+        }
+        DevAction::Stop => {
+            println!("{}", "Stopping development containers...".green());
+            println!("{}", "Not yet implemented".yellow());
+            println!("{}", "Hint: This will run 'podman-compose -f compose.yml down'".bright_black());
+        }
+        DevAction::Status => {
+            println!("{}", "Container status:".green());
+            println!("{}", "Not yet implemented".yellow());
+            println!("{}", "Hint: This will run 'podman-compose -f compose.yml ps'".bright_black());
+        }
+        DevAction::Logs { service } => {
+            if let Some(svc) = service {
+                println!("{} {}", "Showing logs for".green(), svc.bright_white());
+            } else {
+                println!("{}", "Showing logs for all containers".green());
+            }
+            println!("{}", "Not yet implemented".yellow());
+            println!("{}", "Hint: This will run 'podman-compose -f compose.yml logs'".bright_black());
+        }
+        DevAction::Clean { volumes } => {
+            println!("{}", "Cleaning up containers...".green());
+            if volumes {
+                println!("{}", "  • Removing volumes".cyan());
+            }
+            println!("{}", "Not yet implemented".yellow());
+            println!("{}", "Hint: This will run 'podman-compose -f compose.yml down -v'".bright_black());
+        }
+    }
+    
     Ok(())
 }
