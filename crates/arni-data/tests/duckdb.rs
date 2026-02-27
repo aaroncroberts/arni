@@ -214,6 +214,63 @@ mod duckdb_tests {
         assert!(col_names.contains(&"score"), "should include 'score'");
     }
 
+    // ── DataFrame queries ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_duckdb_read_table_returns_dataframe() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE rt_tbl (id INTEGER, label VARCHAR)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO rt_tbl VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma')",
+        )
+        .await
+        .unwrap();
+
+        let df = DbAdapter::read_table(&adapter, "rt_tbl", None)
+            .await
+            .expect("read_table should return a DataFrame");
+        assert_eq!(df.height(), 3, "should have 3 rows");
+        assert!(df.column("id").is_ok(), "id column should exist");
+        assert!(df.column("label").is_ok(), "label column should exist");
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_query_df_returns_dataframe() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df = DbAdapter::query_df(&adapter, "SELECT 42 AS answer, 'world' AS greet")
+            .await
+            .expect("query_df should return a DataFrame");
+        assert_eq!(df.height(), 1);
+        assert!(df.column("answer").is_ok());
+        assert!(df.column("greet").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_read_table_not_connected_returns_error() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let adapter = DuckDbAdapter::new(cfg);
+        let result = DbAdapter::read_table(&adapter, "anything", None).await;
+        assert!(result.is_err(), "read_table before connect should fail");
+    }
+
     // ── Edge cases ───────────────────────────────────────────────────────────
 
     #[tokio::test]

@@ -191,6 +191,63 @@ mod sqlite_tests {
         assert!(col_names.contains(&"label"), "should include 'label' column");
     }
 
+    // ── DataFrame queries ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sqlite_read_table_returns_dataframe() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE rt_tbl (id INTEGER, label TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO rt_tbl VALUES (1, 'alpha'), (2, 'beta')",
+        )
+        .await
+        .unwrap();
+
+        let df = DbAdapter::read_table(&adapter, "rt_tbl", None)
+            .await
+            .expect("read_table should return a DataFrame");
+        assert_eq!(df.height(), 2, "should have 2 rows");
+        assert!(df.column("id").is_ok(), "id column should exist");
+        assert!(df.column("label").is_ok(), "label column should exist");
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_query_df_returns_dataframe() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df = DbAdapter::query_df(&adapter, "SELECT 7 AS n, 'hi' AS msg")
+            .await
+            .expect("query_df should return a DataFrame");
+        assert_eq!(df.height(), 1);
+        assert!(df.column("n").is_ok());
+        assert!(df.column("msg").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_read_table_not_connected_returns_error() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let adapter = SqliteAdapter::new(cfg);
+        let result = DbAdapter::read_table(&adapter, "anything", None).await;
+        assert!(result.is_err(), "read_table before connect should fail");
+    }
+
     // ── Edge cases ───────────────────────────────────────────────────────────
 
     #[tokio::test]
