@@ -52,6 +52,48 @@ Currently supported databases:
 - ⏳ SQL Server (planned)
 - ⏳ DuckDB (planned)
 
+## Local Development with Databases
+
+The project includes a Docker Compose configuration for running **5 database systems** locally for integration testing:
+
+- **PostgreSQL 16** (alpine) - Port 5432
+- **MySQL 8.0** - Port 3306
+- **Azure SQL Edge** (SQL Server) - Port 1433
+- **Oracle 23ai Free** - Ports 1521/5500
+- **MongoDB 7** - Port 27017
+
+Each container includes health checks, persistent data storage, and pre-populated test data.
+
+### Quick Start
+
+```bash
+# Start all databases
+podman-compose up -d
+
+# Verify containers are running
+podman ps
+
+# Run integration tests
+cargo test --test '*' -- --ignored
+
+# Stop databases
+podman-compose down
+```
+
+### Database Initialization Scripts
+
+The `scripts/` directory contains initialization scripts that automatically execute on first container start:
+
+- `init-postgres.sql` - PostgreSQL test schema and sample data
+- `init-mysql.sql` - MySQL test schema and sample data
+- `init-mssql.sql` - SQL Server test database, schema, and sample data
+- `init-oracle.sql` - Oracle test schema with sequences, triggers, and sample data
+- `init-mongodb.js` - MongoDB test collection with indexes and sample data
+
+All scripts create a consistent test schema (`users` table/collection) with 5 sample records and appropriate indexes.
+
+For detailed setup instructions, connection details, troubleshooting, and advanced usage, see the **[Local Databases Guide](docs/local-databases.md)**.
+
 ## Quick Start
 
 ### Development
