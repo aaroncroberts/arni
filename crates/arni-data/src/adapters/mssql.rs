@@ -11,6 +11,7 @@ use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
+use tracing::{debug, error, info, instrument, warn};
 
 type Result<T> = std::result::Result<T, DataError>;
 
@@ -40,6 +41,7 @@ impl SqlServerAdapter {
     /// This does not establish a connection immediately. Call [`connect`](ConnectionTrait::connect)
     /// to establish the connection.
     pub fn new(config: ConnectionConfig) -> Self {
+        debug!(database = %config.database, "Creating SQL Server adapter");
         Self {
             config,
             client: Arc::new(RwLock::new(None)),
@@ -120,35 +122,52 @@ impl SqlServerAdapter {
 
 #[async_trait::async_trait]
 impl ConnectionTrait for SqlServerAdapter {
+    #[instrument(skip(self), fields(adapter = "sqlserver", database = %self.config.database))]
     async fn connect(&mut self) -> Result<()> {
         if self.config.db_type != DatabaseType::SQLServer {
-            return Err(DataError::Config(format!(
+            let err = DataError::Config(format!(
                 "Invalid database type: expected SQLServer, got {:?}",
                 self.config.db_type
-            )));
+            ));
+            error!(error = %err, "Invalid database type");
+            return Err(err);
         }
 
         Self::validate_database_name(&self.config.database)?;
+
+        let host = self.config.host.as_deref().unwrap_or("localhost");
+        let port = self.config.port.unwrap_or(1433);
+        info!(host, port, database = %self.config.database, "Connecting to SQL Server");
 
         let tiberius_config = Self::build_config(&self.config, None)?;
 
         let tcp = TcpStream::connect(tiberius_config.get_addr())
             .await
-            .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "TCP connection failed");
+                DataError::Connection(format!("Failed to connect: {}", e))
+            })?;
 
         let client = Client::connect(tiberius_config, tcp.compat_write())
             .await
-            .map_err(|e| DataError::Connection(format!("Failed to authenticate: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "Authentication failed");
+                DataError::Connection(format!("Failed to authenticate: {}", e))
+            })?;
 
         let mut client_guard = self.client.write().await;
         *client_guard = Some(client);
 
+        info!("Connected to SQL Server successfully");
         Ok(())
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlserver"))]
     async fn disconnect(&mut self) -> Result<()> {
+        debug!("Disconnecting from SQL Server");
         let mut client_guard = self.client.write().await;
         *client_guard = None;
+        info!("Disconnected from SQL Server");
         Ok(())
     }
 
@@ -157,15 +176,24 @@ impl ConnectionTrait for SqlServerAdapter {
         false
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlserver"))]
     async fn health_check(&self) -> Result<bool> {
+        debug!("Performing health check");
         let mut client_guard = self.client.write().await;
         if let Some(client) = client_guard.as_mut() {
             client
                 .query("SELECT 1", &[])
                 .await
-                .map(|_| true)
-                .map_err(|e| DataError::Connection(format!("Health check failed: {}", e)))
+                .map(|_| {
+                    debug!("Health check passed");
+                    true
+                })
+                .map_err(|e| {
+                    warn!(error = %e, "Health check failed");
+                    DataError::Connection(format!("Health check failed: {}", e))
+                })
         } else {
+            warn!("Health check called but not connected");
             Ok(false)
         }
     }
@@ -177,8 +205,13 @@ impl ConnectionTrait for SqlServerAdapter {
 
 #[async_trait::async_trait]
 impl DbAdapter for SqlServerAdapter {
+    #[instrument(skip(self, config, password), fields(adapter = "sqlserver", database = %config.database))]
     async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<()> {
         self.config = config.clone();
+
+        let host = config.host.as_deref().unwrap_or("localhost");
+        let port = config.port.unwrap_or(1433);
+        info!(host, port, database = %config.database, "Connecting to SQL Server");
 
         Self::validate_database_name(&config.database)?;
 
@@ -186,15 +219,22 @@ impl DbAdapter for SqlServerAdapter {
 
         let tcp = TcpStream::connect(tiberius_config.get_addr())
             .await
-            .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "TCP connection failed");
+                DataError::Connection(format!("Failed to connect: {}", e))
+            })?;
 
         let client = Client::connect(tiberius_config, tcp.compat_write())
             .await
-            .map_err(|e| DataError::Connection(format!("Failed to authenticate: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "Authentication failed");
+                DataError::Connection(format!("Failed to authenticate: {}", e))
+            })?;
 
         let mut client_guard = self.client.write().await;
         *client_guard = Some(client);
 
+        info!("Connected to SQL Server successfully");
         Ok(())
     }
 
@@ -233,26 +273,38 @@ impl DbAdapter for SqlServerAdapter {
         AdapterMetadata::new(self)
     }
 
+    #[instrument(skip(self, query), fields(adapter = "sqlserver", query_length = query.len()))]
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
+        debug!("Executing query");
+        let start = std::time::Instant::now();
+
         let mut client_guard = self.client.write().await;
         let client = client_guard.as_mut().ok_or_else(|| {
+            error!("Query attempted while not connected");
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
         let stream = client
             .query(query, &[])
             .await
-            .map_err(|e| DataError::Query(format!("Query failed: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "Query execution failed");
+                DataError::Query(format!("Query failed: {}", e))
+            })?;
 
         let rows: Vec<tiberius::Row> = stream
             .into_results()
             .await
-            .map_err(|e| DataError::Query(format!("Failed to fetch results: {}", e)))?
+            .map_err(|e| {
+                error!(error = %e, "Failed to fetch results");
+                DataError::Query(format!("Failed to fetch results: {}", e))
+            })?
             .into_iter()
             .flatten()
             .collect();
 
         if rows.is_empty() {
+            debug!("Query returned no rows");
             return Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
@@ -270,6 +322,9 @@ impl DbAdapter for SqlServerAdapter {
         for row in &rows {
             result_rows.push(Self::row_to_values(row)?);
         }
+
+        let duration = start.elapsed();
+        info!(rows = result_rows.len(), duration_ms = duration.as_millis(), "Query executed successfully");
 
         Ok(QueryResult {
             columns,

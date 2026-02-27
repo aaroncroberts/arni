@@ -12,6 +12,7 @@ use mongodb::{
 };
 use polars::prelude::*;
 use std::collections::HashMap;
+use tracing::{debug, error, info, instrument, warn};
 
 /// MongoDB database adapter
 ///
@@ -31,6 +32,7 @@ pub struct MongoDbAdapter {
 impl MongoDbAdapter {
     /// Create a new MongoDB adapter with the given configuration
     pub fn new(config: ConnectionConfig) -> Self {
+        debug!(database = %config.database, "Creating MongoDB adapter");
         Self {
             config,
             client: None,
@@ -169,15 +171,22 @@ impl Default for MongoDbAdapter {
 
 #[async_trait]
 impl ConnectionTrait for MongoDbAdapter {
+    #[instrument(skip(self), fields(adapter = "mongodb", database = %self.config.database))]
     async fn connect(&mut self) -> Result<(), DataError> {
         if self.config.db_type != DatabaseType::MongoDB {
-            return Err(DataError::Config(format!(
+            let err = DataError::Config(format!(
                 "Invalid database type: expected MongoDB, got {:?}",
                 self.config.db_type
-            )));
+            ));
+            error!(error = %err, "Invalid database type");
+            return Err(err);
         }
 
         Self::validate_database_name(&self.config.database)?;
+
+        let host = self.config.host.as_deref().unwrap_or("localhost");
+        let port = self.config.port.unwrap_or(27017);
+        info!(host, port, database = %self.config.database, "Connecting to MongoDB");
 
         let password = self.password.as_deref();
         let connection_string = Self::build_connection_string(&self.config, password);
@@ -256,13 +265,19 @@ impl ConnectionTrait for MongoDbAdapter {
 
         self.client = Some(client);
         self.current_database = Some(self.config.database.clone());
+        info!("Connected to MongoDB successfully");
         Ok(())
     }
 
+    #[instrument(skip(self), fields(adapter = "mongodb"))]
     async fn disconnect(&mut self) -> Result<(), DataError> {
+        debug!("Disconnecting from MongoDB");
         if self.client.is_some() {
             self.client = None;
             self.current_database = None;
+            info!("Disconnected from MongoDB");
+        } else {
+            debug!("Disconnect called but no active connection");
         }
         Ok(())
     }
@@ -271,11 +286,16 @@ impl ConnectionTrait for MongoDbAdapter {
         self.client.is_some()
     }
 
+    #[instrument(skip(self), fields(adapter = "mongodb"))]
     async fn health_check(&self) -> Result<bool, DataError> {
+        debug!("Performing health check");
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(|| {
+                warn!("Health check called but not connected");
+                DataError::Connection("Not connected".to_string())
+            })?;
 
         let db_name = self
             .current_database
@@ -286,8 +306,14 @@ impl ConnectionTrait for MongoDbAdapter {
             .database(db_name)
             .run_command(doc! { "ping": 1 }, None)
             .await
-            .map(|_| true)
-            .map_err(|e| DataError::Connection(format!("Health check failed: {}", e)))
+            .map(|_| {
+                debug!("Health check passed");
+                true
+            })
+            .map_err(|e| {
+                warn!(error = %e, "Health check failed");
+                DataError::Connection(format!("Health check failed: {}", e))
+            })
     }
 
     fn config(&self) -> &ConnectionConfig {
@@ -301,11 +327,18 @@ impl DbAdapter for MongoDbAdapter {
         DatabaseType::MongoDB
     }
 
+    #[instrument(skip(self, query), fields(adapter = "mongodb", query_length = query.len()))]
     async fn execute_query(&self, query: &str) -> Result<QueryResult, DataError> {
+        debug!("Executing MongoDB query");
+        let start = std::time::Instant::now();
+
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(|| {
+                error!("Query attempted while not connected");
+                DataError::Connection("Not connected".to_string())
+            })?;
 
         let db_name = self
             .current_database
@@ -383,6 +416,9 @@ impl DbAdapter for MongoDbAdapter {
         } else {
             Vec::new()
         };
+
+        let duration = start.elapsed();
+        info!(rows = results.len(), duration_ms = duration.as_millis(), "Query executed successfully");
 
         Ok(QueryResult {
             columns,

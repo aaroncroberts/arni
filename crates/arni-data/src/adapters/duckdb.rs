@@ -7,6 +7,7 @@ use crate::DataError;
 use polars::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tracing::{debug, error, info, instrument, warn};
 
 type Result<T> = std::result::Result<T, DataError>;
 
@@ -39,6 +40,7 @@ impl DuckDbAdapter {
     /// This does not establish a connection immediately. Call [`connect`](ConnectionTrait::connect)
     /// to establish the connection.
     pub fn new(config: ConnectionConfig) -> Self {
+        debug!(database = %config.database, "Creating DuckDB adapter");
         Self {
             config,
             connection: Arc::new(Mutex::new(None)),
@@ -67,17 +69,23 @@ impl DuckDbAdapter {
     }
 
     /// Execute a query in a blocking context
+    #[instrument(skip(self, query), fields(adapter = "duckdb", query_length = query.len()))]
     async fn execute_query_blocking(&self, query: String) -> Result<QueryResult> {
+        debug!("Executing query in blocking context");
+        let start = std::time::Instant::now();
         let connection = self.connection.clone();
 
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let conn_guard = connection
                 .lock()
                 .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
 
             let conn = conn_guard
                 .as_ref()
-                .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+                .ok_or_else(|| {
+                    error!("Query attempted while not connected");
+                    DataError::Connection("Not connected".to_string())
+                })?;
 
             let mut stmt = conn
                 .prepare(&query)
@@ -111,14 +119,22 @@ impl DuckDbAdapter {
                 rows.push(row);
             }
 
-            Ok(QueryResult {
+            Ok::<QueryResult, DataError>(QueryResult {
                 columns,
                 rows,
                 rows_affected: None,
             })
         })
         .await
-        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?
+        .map_err(|e| {
+            error!(error = %e, "Task join error");
+            DataError::Connection(format!("Task join error: {}", e))
+        })??;
+
+        let duration = start.elapsed();
+        info!(rows = result.rows.len(), duration_ms = duration.as_millis(), "Query executed successfully");
+
+        Ok(result)
     }
 
     /// Get a value from a DuckDB row
@@ -148,15 +164,20 @@ impl DuckDbAdapter {
 
 #[async_trait::async_trait]
 impl ConnectionTrait for DuckDbAdapter {
+    #[instrument(skip(self), fields(adapter = "duckdb", database = %self.config.database))]
     async fn connect(&mut self) -> Result<()> {
         if self.config.db_type != DatabaseType::DuckDB {
-            return Err(DataError::Config(format!(
+            let err = DataError::Config(format!(
                 "Invalid database type: expected DuckDB, got {:?}",
                 self.config.db_type
-            )));
+            ));
+            error!(error = %err, "Invalid database type");
+            return Err(err);
         }
 
         Self::validate_database_path(&self.config.database)?;
+
+        info!(database = %self.config.database, "Connecting to DuckDB");
 
         let path = self.config.database.clone();
         let connection = self.connection.clone();
@@ -167,7 +188,10 @@ impl ConnectionTrait for DuckDbAdapter {
             } else {
                 duckdb::Connection::open(&path)
             }
-            .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "Failed to open DuckDB connection");
+                DataError::Connection(format!("Failed to connect: {}", e))
+            })?;
 
             let mut conn_guard = connection
                 .lock()
@@ -177,15 +201,24 @@ impl ConnectionTrait for DuckDbAdapter {
             Ok(())
         })
         .await
-        .map_err(|e| DataError::Connection(format!("Task join error: {}", e)))?
+        .map_err(|e| {
+            error!(error = %e, "Task join error during connect");
+            DataError::Connection(format!("Task join error: {}", e))
+        })?
+        .map(|()| {
+            info!("Connected to DuckDB successfully");
+        })
     }
 
+    #[instrument(skip(self), fields(adapter = "duckdb"))]
     async fn disconnect(&mut self) -> Result<()> {
+        debug!("Disconnecting from DuckDB");
         let mut conn_guard = self
             .connection
             .lock()
             .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
         *conn_guard = None;
+        info!("Disconnected from DuckDB");
         Ok(())
     }
 
@@ -197,15 +230,24 @@ impl ConnectionTrait for DuckDbAdapter {
         }
     }
 
+    #[instrument(skip(self), fields(adapter = "duckdb"))]
     async fn health_check(&self) -> Result<bool> {
+        debug!("Performing health check");
         if !ConnectionTrait::is_connected(self) {
+            warn!("Health check called but not connected");
             return Ok(false);
         }
 
         // Execute a simple query to verify connection
         match self.execute_query_blocking("SELECT 1".to_string()).await {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
+            Ok(_) => {
+                debug!("Health check passed");
+                Ok(true)
+            }
+            Err(e) => {
+                warn!(error = %e, "Health check failed");
+                Ok(false)
+            }
         }
     }
 

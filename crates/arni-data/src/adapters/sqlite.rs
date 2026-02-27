@@ -10,6 +10,7 @@ use sqlx::{Column, Row, TypeInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, instrument, warn};
 
 type Result<T> = std::result::Result<T, DataError>;
 
@@ -41,6 +42,7 @@ impl SqliteAdapter {
     /// This does not establish a connection immediately. Call [`connect`](ConnectionTrait::connect)
     /// to establish the connection.
     pub fn new(config: ConnectionConfig) -> Self {
+        debug!(database = %config.database, "Creating SQLite adapter");
         Self {
             config,
             pool: Arc::new(RwLock::new(None)),
@@ -163,15 +165,20 @@ impl SqliteAdapter {
 
 #[async_trait::async_trait]
 impl ConnectionTrait for SqliteAdapter {
+    #[instrument(skip(self), fields(adapter = "sqlite", database = %self.config.database))]
     async fn connect(&mut self) -> Result<()> {
         if self.config.db_type != DatabaseType::SQLite {
-            return Err(DataError::Config(format!(
+            let err = DataError::Config(format!(
                 "Invalid database type: expected SQLite, got {:?}",
                 self.config.db_type
-            )));
+            ));
+            error!(error = %err, "Invalid database type");
+            return Err(err);
         }
 
         Self::validate_database_path(&self.config.database)?;
+
+        info!(database = %self.config.database, "Connecting to SQLite");
 
         let conn_str = Self::build_connection_string(&self.config);
 
@@ -179,18 +186,27 @@ impl ConnectionTrait for SqliteAdapter {
             .max_connections(5)
             .connect(&conn_str)
             .await
-            .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "Failed to connect to SQLite");
+                DataError::Connection(format!("Failed to connect: {}", e))
+            })?;
 
         let mut pool_guard = self.pool.write().await;
         *pool_guard = Some(pool);
 
+        info!("Connected to SQLite successfully");
         Ok(())
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlite"))]
     async fn disconnect(&mut self) -> Result<()> {
+        debug!("Disconnecting from SQLite");
         let mut pool_guard = self.pool.write().await;
         if let Some(pool) = pool_guard.take() {
             pool.close().await;
+            info!("Disconnected from SQLite");
+        } else {
+            debug!("Disconnect called but no active pool");
         }
         Ok(())
     }
@@ -201,15 +217,24 @@ impl ConnectionTrait for SqliteAdapter {
         false // Simplified - would need async implementation
     }
 
+    #[instrument(skip(self), fields(adapter = "sqlite"))]
     async fn health_check(&self) -> Result<bool> {
+        debug!("Performing health check");
         let pool_guard = self.pool.read().await;
         if let Some(pool) = pool_guard.as_ref() {
             sqlx::query("SELECT 1")
                 .execute(pool)
                 .await
-                .map(|_| true)
-                .map_err(|e| DataError::Connection(format!("Health check failed: {}", e)))
+                .map(|_| {
+                    debug!("Health check passed");
+                    true
+                })
+                .map_err(|e| {
+                    warn!(error = %e, "Health check failed");
+                    DataError::Connection(format!("Health check failed: {}", e))
+                })
         } else {
+            warn!("Health check called but pool not initialized");
             Ok(false)
         }
     }
@@ -265,18 +290,27 @@ impl DbAdapter for SqliteAdapter {
         AdapterMetadata::new(self)
     }
 
+    #[instrument(skip(self, query), fields(adapter = "sqlite", query_length = query.len()))]
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
+        debug!("Executing query");
+        let start = std::time::Instant::now();
+
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Query attempted while not connected");
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
         let rows = sqlx::query(query)
             .fetch_all(pool)
             .await
-            .map_err(|e| DataError::Query(format!("Query failed: {}", e)))?;
+            .map_err(|e| {
+                error!(error = %e, "Query execution failed");
+                DataError::Query(format!("Query failed: {}", e))
+            })?;
 
         if rows.is_empty() {
+            debug!("Query returned no rows");
             return Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
@@ -294,6 +328,9 @@ impl DbAdapter for SqliteAdapter {
         for row in rows {
             result_rows.push(Self::row_to_values(&row)?);
         }
+
+        let duration = start.elapsed();
+        info!(rows = result_rows.len(), duration_ms = duration.as_millis(), "Query executed successfully");
 
         Ok(QueryResult {
             columns,
