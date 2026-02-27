@@ -115,7 +115,7 @@ enum Commands {
         #[arg(short, long)]
         profile: String,
 
-        /// Output format: json, csv, xml, parquet
+        /// Output format: json, csv, xml, parquet, excel
         #[arg(short, long, default_value = "json")]
         format: String,
 
@@ -709,6 +709,11 @@ async fn handle_query_command(
 ) -> Result<(), Box<dyn Error>> {
     // Validate format before connecting (fast fail, no wasted connection).
     let fmt = format.to_lowercase();
+    if matches!(fmt.as_str(), "excel" | "xlsx") {
+        return Err(
+            "Excel is a binary format; use `arni export --format excel --output file.xlsx` instead".into()
+        );
+    }
     if !matches!(fmt.as_str(), "table" | "t" | "json" | "csv" | "xml") {
         return Err(format!("Unknown format '{}'. Valid: table, json, csv, xml", format).into());
     }
@@ -929,9 +934,9 @@ async fn handle_export_command(
 ) -> Result<(), Box<dyn Error>> {
     // Validate format before connecting (fast fail, no wasted connection).
     let fmt = format.to_lowercase();
-    if !matches!(fmt.as_str(), "json" | "csv" | "xml" | "parquet") {
+    if !matches!(fmt.as_str(), "json" | "csv" | "xml" | "parquet" | "excel" | "xlsx") {
         return Err(format!(
-            "Unknown export format '{}'. Valid: json, csv, xml, parquet",
+            "Unknown export format '{}'. Valid: json, csv, xml, parquet, excel",
             format
         )
         .into());
@@ -970,6 +975,9 @@ async fn handle_export_command(
         }
         "parquet" => {
             to_file(&mut df, DataFormat::Parquet, std::path::Path::new(&output))?;
+        }
+        "excel" | "xlsx" => {
+            to_file(&mut df, DataFormat::Excel, std::path::Path::new(&output))?;
         }
         _ => unreachable!("format already validated above"),
     }

@@ -12,6 +12,7 @@
 //! | [`DataFormat::Json`]    | `application/json`      | JSON array of objects |
 //! | [`DataFormat::Xml`]     | `application/xml`       | `<dataframe><row>…</row></dataframe>` |
 //! | [`DataFormat::Parquet`] | `application/octet-stream` | Apache Parquet binary |
+//! | [`DataFormat::Excel`]   | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | `.xlsx` workbook with bold headers |
 //!
 //! # Examples
 //!
@@ -27,9 +28,10 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use polars::prelude::{CsvWriter, DataFrame, JsonFormat, JsonWriter, ParquetWriter, SerWriter};
+use polars::prelude::{AnyValue, CsvWriter, DataFrame, JsonFormat, JsonWriter, ParquetWriter, SerWriter};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Writer;
+use rust_xlsxwriter::{Format, Workbook, XlsxError};
 
 use crate::error::{DataError, Result};
 
@@ -46,6 +48,10 @@ pub enum DataFormat {
     Xml,
     /// Apache Parquet binary format.
     Parquet,
+    /// Microsoft Excel Open XML workbook (.xlsx).
+    ///
+    /// Column names are written as bold headers in row 0; data starts in row 1.
+    Excel,
 }
 
 impl DataFormat {
@@ -56,6 +62,7 @@ impl DataFormat {
             DataFormat::Json => "json",
             DataFormat::Xml => "xml",
             DataFormat::Parquet => "parquet",
+            DataFormat::Excel => "xlsx",
         }
     }
 }
@@ -86,6 +93,9 @@ pub fn to_bytes(df: &mut DataFrame, format: DataFormat) -> Result<Vec<u8>> {
         DataFormat::Xml => {
             write_xml(df, &mut buf)?;
         }
+        DataFormat::Excel => {
+            return write_excel_bytes(df);
+        }
     }
     Ok(buf.into_inner())
 }
@@ -110,6 +120,11 @@ pub fn to_file(df: &mut DataFrame, format: DataFormat, path: &Path) -> Result<()
         }
         DataFormat::Xml => {
             write_xml(df, &mut file)?;
+        }
+        DataFormat::Excel => {
+            let bytes = write_excel_bytes(df)?;
+            use std::io::Write;
+            file.write_all(&bytes)?;
         }
     }
     Ok(())
@@ -198,6 +213,103 @@ fn sanitize_xml_tag(name: &str) -> String {
         out.push('_');
     }
     out
+}
+
+// ─── Excel implementation ─────────────────────────────────────────────────────
+
+fn xlsx_err(e: XlsxError) -> DataError {
+    DataError::Query(format!("Excel serialization error: {e}"))
+}
+
+/// Serialize `df` to an in-memory `.xlsx` workbook byte buffer.
+///
+/// Row 0 contains bold column headers. Data rows start at row 1.
+/// Values are written with their native Excel types:
+/// integers and floats as numbers, booleans as booleans, everything else as strings.
+fn write_excel_bytes(df: &mut DataFrame) -> Result<Vec<u8>> {
+    let mut workbook = Workbook::new();
+    let bold = Format::new().set_bold();
+    let worksheet = workbook.add_worksheet();
+
+    let col_names = df.get_column_names();
+
+    // Header row (bold)
+    for (col_idx, name) in col_names.iter().enumerate() {
+        worksheet
+            .write_with_format(0, col_idx as u16, name.as_str(), &bold)
+            .map_err(xlsx_err)?;
+    }
+
+    let columns = df.get_columns();
+    let n_rows = df.height();
+
+    for row_idx in 0..n_rows {
+        let xlsx_row = (row_idx + 1) as u32; // offset by 1 for header
+        for (col_idx, col) in columns.iter().enumerate() {
+            let xlsx_col = col_idx as u16;
+            let val = col
+                .get(row_idx)
+                .map_err(|e| DataError::Query(format!("column read error: {e}")))?;
+            write_any_value(worksheet, xlsx_row, xlsx_col, &val)?;
+        }
+    }
+
+    workbook.save_to_buffer().map_err(xlsx_err)
+}
+
+/// Write a single `AnyValue` cell to the worksheet, choosing the most
+/// appropriate Excel type for each Polars variant.
+fn write_any_value(
+    ws: &mut rust_xlsxwriter::Worksheet,
+    row: u32,
+    col: u16,
+    val: &AnyValue<'_>,
+) -> Result<()> {
+    match val {
+        AnyValue::Null => {
+            ws.write_blank(row, col, &Format::new()).map_err(xlsx_err)?;
+        }
+        AnyValue::Boolean(b) => {
+            ws.write_boolean(row, col, *b).map_err(xlsx_err)?;
+        }
+        AnyValue::Int8(n) => {
+            ws.write_number(row, col, *n as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::Int16(n) => {
+            ws.write_number(row, col, *n as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::Int32(n) => {
+            ws.write_number(row, col, *n as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::Int64(n) => {
+            ws.write_number(row, col, *n as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::UInt8(n) => {
+            ws.write_number(row, col, *n as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::UInt16(n) => {
+            ws.write_number(row, col, *n as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::UInt32(n) => {
+            ws.write_number(row, col, *n as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::UInt64(n) => {
+            ws.write_number(row, col, *n as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::Float32(f) => {
+            ws.write_number(row, col, *f as f64).map_err(xlsx_err)?;
+        }
+        AnyValue::Float64(f) => {
+            ws.write_number(row, col, *f).map_err(xlsx_err)?;
+        }
+        // All other variants (strings, dates, categoricals, …) fall back to Display
+        other => {
+            let text = format!("{other}");
+            let text = text.trim_matches('"');
+            ws.write_string(row, col, text).map_err(xlsx_err)?;
+        }
+    }
+    Ok(())
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -376,12 +488,57 @@ mod tests {
         assert_eq!(DataFormat::Json.extension(), "json");
         assert_eq!(DataFormat::Xml.extension(), "xml");
         assert_eq!(DataFormat::Parquet.extension(), "parquet");
+        assert_eq!(DataFormat::Excel.extension(), "xlsx");
     }
 
     #[test]
     fn display_matches_extension() {
         assert_eq!(DataFormat::Csv.to_string(), "csv");
         assert_eq!(DataFormat::Xml.to_string(), "xml");
+        assert_eq!(DataFormat::Excel.to_string(), "xlsx");
+    }
+
+    // ── Excel ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn excel_to_bytes_has_xlsx_magic() {
+        let mut df = sample_df();
+        let bytes = to_bytes(&mut df, DataFormat::Excel).unwrap();
+        // .xlsx files are ZIP archives; ZIP magic bytes are PK\x03\x04
+        assert!(bytes.len() > 4, "xlsx bytes should be non-trivial");
+        assert_eq!(&bytes[..2], b"PK", "expected ZIP/xlsx magic 'PK', got {:?}", &bytes[..4]);
+    }
+
+    #[test]
+    fn excel_to_file_writes_nonempty_file() {
+        let mut df = sample_df();
+        let tmp = NamedTempFile::new().unwrap();
+        to_file(&mut df, DataFormat::Excel, tmp.path()).unwrap();
+        let size = tmp.path().metadata().unwrap().len();
+        assert!(size > 0, "excel file should be non-empty");
+    }
+
+    #[test]
+    fn excel_with_mixed_types() {
+        // Exercises the numeric, boolean, and string match arms
+        let mut df = DataFrame::new(vec![
+            Column::new("id".into(), &[1i32, 2, 3]),
+            Column::new("active".into(), &[true, false, true]),
+            Column::new("name".into(), &["Alice", "Bob", "Carol"]),
+            Column::new("score".into(), &[92.5f64, 87.0, 95.1]),
+        ])
+        .unwrap();
+        let bytes = to_bytes(&mut df, DataFormat::Excel).unwrap();
+        assert_eq!(&bytes[..2], b"PK");
+    }
+
+    #[test]
+    fn excel_empty_df_does_not_panic() {
+        let mut df =
+            DataFrame::new(vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
+        let bytes = to_bytes(&mut df, DataFormat::Excel).unwrap();
+        // Should produce a valid (header-only) workbook without panicking
+        assert_eq!(&bytes[..2], b"PK");
     }
 
     // ── Empty DataFrame edge cases ───────────────────────────────────────────

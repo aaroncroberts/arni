@@ -50,6 +50,7 @@ mongodb = { workspace = true, optional = true }
 tiberius = { workspace = true, optional = true }
 tokio-util = { version = "0.7", features = ["compat"], optional = true }
 duckdb = { workspace = true, optional = true }
+rust_xlsxwriter = "0.92.0"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
