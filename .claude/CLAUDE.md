@@ -1,5 +1,7 @@
 # Arni Development Guide
 
+> **🚨 MANDATORY WORKFLOW**: Before starting ANY work, read [`WORKFLOW.md`](../../WORKFLOW.md). All work MUST follow the two-phase approach: Planning ([`task-generate.md`](commands/task-generate.md)) → Execution ([`task-execute.md`](commands/task-execute.md)).
+
 ## Project Overview
 
 **Arni** is a Rust library and CLI tool for unified database access. It provides a consistent interface for exporting DataFrames to multiple database systems (PostgreSQL, MongoDB, Oracle, SQL Server, DuckDB) with intelligent type inference and adapter patterns.
@@ -10,6 +12,25 @@
 - **Databases:** PostgreSQL, MongoDB, Oracle, SQL Server, DuckDB
 - **Testing:** cargo test, tarpaulin (coverage)
 - **CI/CD:** GitHub Actions
+
+## Workflow (MUST READ)
+
+**See [`WORKFLOW.md`](../../WORKFLOW.md) for complete details.**
+
+### Quick Summary
+
+1. **Planning Phase** (ALWAYS FIRST):
+   - Use `.claude/commands/task-generate.md` to create WBS
+   - Create Epic → Features → Tasks with dependencies
+   - Sync with `bd sync`
+
+2. **Execution Phase** (ONLY AFTER PLANNING):
+   - Use `.claude/commands/task-execute.md` workflows
+   - Follow type-specific execution patterns
+   - Update state frequently with `bd update` and `bd sync`
+   - Test, lint, format before closing
+
+**Never skip planning. Never execute without context.**
 
 ## TDD Workflow
 
