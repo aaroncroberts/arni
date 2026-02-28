@@ -13,7 +13,6 @@ use arni_data::export::{to_bytes, to_file, DataFormat};
 use polars::prelude::DataFrame;
 use std::collections::HashMap;
 use std::error::Error;
-use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
 
@@ -425,7 +424,7 @@ async fn handle_config_command(action: ConfigAction) -> Result<(), Box<dyn Error
                 cfg.db_type.to_string().cyan()
             );
 
-            match test_connection(&cfg) {
+            match test_connection(&cfg).await {
                 Ok(detail) => {
                     println!("  {} {}", "✓ OK:".bright_green(), detail);
                 }
@@ -460,8 +459,9 @@ fn parse_db_type(s: &str) -> Result<DatabaseType, Box<dyn Error>> {
 /// Test reachability for a connection config.
 ///
 /// - File-based (SQLite, DuckDB): checks the database file exists, or accepts `:memory:`.
-/// - Network-based: performs a TCP connect with a 5-second timeout.
-fn test_connection(cfg: &ConnectionConfig) -> Result<String, Box<dyn Error>> {
+/// - Network-based: performs a TCP connect with a 5-second timeout using the async runtime,
+///   avoiding blocking thread-pool starvation under Tokio.
+async fn test_connection(cfg: &ConnectionConfig) -> Result<String, Box<dyn Error>> {
     match cfg.db_type {
         DatabaseType::SQLite | DatabaseType::DuckDB => {
             if cfg.database == ":memory:" {
@@ -491,13 +491,19 @@ fn test_connection(cfg: &ConnectionConfig) -> Result<String, Box<dyn Error>> {
                 return Err(format!("No addresses found for '{}'", host).into());
             }
 
-            let mut last_err: Option<std::io::Error> = None;
+            let mut last_err: Option<String> = None;
             for addr in &addrs {
-                match TcpStream::connect_timeout(addr, Duration::from_secs(5)) {
-                    Ok(_) => {
+                match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    tokio::net::TcpStream::connect(addr),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {
                         return Ok(format!("TCP connection to {}:{} succeeded.", host, port));
                     }
-                    Err(e) => last_err = Some(e),
+                    Ok(Err(e)) => last_err = Some(e.to_string()),
+                    Err(_elapsed) => last_err = Some("timeout after 5s".to_string()),
                 }
             }
 
@@ -505,9 +511,7 @@ fn test_connection(cfg: &ConnectionConfig) -> Result<String, Box<dyn Error>> {
                 "Cannot connect to {}:{} — {}",
                 host,
                 port,
-                last_err
-                    .map(|e| e.to_string())
-                    .unwrap_or_else(|| "connection failed".to_string())
+                last_err.unwrap_or_else(|| "connection failed".to_string())
             )
             .into())
         }
@@ -708,15 +712,27 @@ async fn handle_query_command(
     format: String,
 ) -> Result<(), Box<dyn Error>> {
     // Validate format before connecting (fast fail, no wasted connection).
+    // "table"/"t" is a CLI-only display mode; all other values must be a valid DataFormat.
     let fmt = format.to_lowercase();
-    if matches!(fmt.as_str(), "excel" | "xlsx") {
-        return Err(
-            "Excel is a binary format; use `arni export --format excel --output file.xlsx` instead".into()
-        );
-    }
-    if !matches!(fmt.as_str(), "table" | "t" | "json" | "csv" | "xml") {
-        return Err(format!("Unknown format '{}'. Valid: table, json, csv, xml", format).into());
-    }
+    let is_table = matches!(fmt.as_str(), "table" | "t");
+    let data_fmt: Option<DataFormat> = if is_table {
+        None
+    } else {
+        let parsed: DataFormat = fmt.parse().map_err(|_: String| {
+            format!("Unknown format '{}'. Valid: table, json, csv, xml", format)
+        })?;
+        // Binary formats can only be used with `arni export`.
+        if matches!(parsed, DataFormat::Parquet | DataFormat::Excel) {
+            return Err(format!(
+                "'{}' is a binary format; use `arni export --format {} --output file.{}` instead",
+                fmt,
+                fmt,
+                parsed.extension()
+            )
+            .into());
+        }
+        Some(parsed)
+    };
 
     let store = ConfigStore::load(None)?;
     let adapter = db::connect(&store, &profile).await.map_err(|e| {
@@ -728,8 +744,9 @@ async fn handle_query_command(
         .await
         .map_err(|e| format!("Query failed: {}", e))?;
 
-    match fmt.as_str() {
-        "table" | "t" => {
+    match data_fmt {
+        None => {
+            // "table" / "t"
             println!("{}", df_to_table(&df));
             println!(
                 "\n{} row(s) × {} column(s)",
@@ -737,19 +754,19 @@ async fn handle_query_command(
                 df.width().to_string().bright_white()
             );
         }
-        "json" => {
+        Some(DataFormat::Json) => {
             let bytes = to_bytes(&mut df, DataFormat::Json)?;
             println!("{}", String::from_utf8(bytes)?);
         }
-        "csv" => {
+        Some(DataFormat::Csv) => {
             let bytes = to_bytes(&mut df, DataFormat::Csv)?;
             print!("{}", String::from_utf8(bytes)?);
         }
-        "xml" => {
+        Some(DataFormat::Xml) => {
             let bytes = to_bytes(&mut df, DataFormat::Xml)?;
             println!("{}", String::from_utf8(bytes)?);
         }
-        _ => unreachable!("format already validated above"),
+        Some(_) => unreachable!("binary formats already rejected above"),
     }
 
     Ok(())
@@ -932,15 +949,8 @@ async fn handle_export_command(
     format: String,
     output: String,
 ) -> Result<(), Box<dyn Error>> {
-    // Validate format before connecting (fast fail, no wasted connection).
-    let fmt = format.to_lowercase();
-    if !matches!(fmt.as_str(), "json" | "csv" | "xml" | "parquet" | "excel" | "xlsx") {
-        return Err(format!(
-            "Unknown export format '{}'. Valid: json, csv, xml, parquet, excel",
-            format
-        )
-        .into());
-    }
+    // Parse and validate format before connecting (fast fail, no wasted connection).
+    let data_fmt: DataFormat = format.parse().map_err(|e: String| e)?;
 
     let store = ConfigStore::load(None)?;
     let adapter = db::connect(&store, &profile).await.map_err(|e| {
@@ -957,29 +967,28 @@ async fn handle_export_command(
     println!(
         "Fetched {} row(s). Writing {} to '{}'...",
         rows.to_string().bright_white(),
-        fmt.cyan(),
+        data_fmt.to_string().cyan(),
         output.bright_white()
     );
 
-    match fmt.as_str() {
-        "json" => {
+    match data_fmt {
+        DataFormat::Json => {
             let bytes = to_bytes(&mut df, DataFormat::Json)?;
             std::fs::write(&output, bytes)?;
         }
-        "csv" => {
+        DataFormat::Csv => {
             let bytes = to_bytes(&mut df, DataFormat::Csv)?;
             std::fs::write(&output, bytes)?;
         }
-        "xml" => {
+        DataFormat::Xml => {
             to_file(&mut df, DataFormat::Xml, std::path::Path::new(&output))?;
         }
-        "parquet" => {
+        DataFormat::Parquet => {
             to_file(&mut df, DataFormat::Parquet, std::path::Path::new(&output))?;
         }
-        "excel" | "xlsx" => {
+        DataFormat::Excel => {
             to_file(&mut df, DataFormat::Excel, std::path::Path::new(&output))?;
         }
-        _ => unreachable!("format already validated above"),
     }
 
     println!(
@@ -999,9 +1008,11 @@ fn df_to_table(df: &DataFrame) -> String {
     table.load_preset(presets::UTF8_FULL);
     table.set_content_arrangement(ContentArrangement::Dynamic);
 
+    // Cache column names once — used for both headers and each data row.
+    let col_names = df.get_column_names();
+
     // Bold cyan headers.
-    let headers: Vec<Cell> = df
-        .get_column_names()
+    let headers: Vec<Cell> = col_names
         .iter()
         .map(|name| {
             Cell::new(*name)
@@ -1013,8 +1024,7 @@ fn df_to_table(df: &DataFrame) -> String {
 
     // Data rows.
     for i in 0..df.height() {
-        let cells: Vec<String> = df
-            .get_column_names()
+        let cells: Vec<String> = col_names
             .iter()
             .map(|name| {
                 df.column(name)
@@ -1160,47 +1170,48 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_connection_sqlite_memory() {
-        let result = test_connection(&make_cfg(DatabaseType::SQLite, ":memory:")).unwrap();
+    #[tokio::test]
+    async fn test_connection_sqlite_memory() {
+        let result = test_connection(&make_cfg(DatabaseType::SQLite, ":memory:")).await.unwrap();
         assert!(result.contains("In-memory"));
     }
 
-    #[test]
-    fn test_connection_duckdb_memory() {
-        let result = test_connection(&make_cfg(DatabaseType::DuckDB, ":memory:")).unwrap();
+    #[tokio::test]
+    async fn test_connection_duckdb_memory() {
+        let result = test_connection(&make_cfg(DatabaseType::DuckDB, ":memory:")).await.unwrap();
         assert!(result.contains("In-memory"));
     }
 
-    #[test]
-    fn test_connection_sqlite_existing_file() {
+    #[tokio::test]
+    async fn test_connection_sqlite_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         std::fs::write(&db_path, b"").unwrap();
 
         let result =
-            test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap())).unwrap();
+            test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap())).await.unwrap();
         assert!(result.contains("File exists"));
     }
 
-    #[test]
-    fn test_connection_sqlite_missing_file_returns_error() {
+    #[tokio::test]
+    async fn test_connection_sqlite_missing_file_returns_error() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("nonexistent.db");
 
         let err = test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap()))
+            .await
             .unwrap_err();
         assert!(err.to_string().contains("Database file not found"));
     }
 
-    #[test]
-    fn test_connection_duckdb_existing_file() {
+    #[tokio::test]
+    async fn test_connection_duckdb_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.duckdb");
         std::fs::write(&db_path, b"").unwrap();
 
         let result =
-            test_connection(&make_cfg(DatabaseType::DuckDB, db_path.to_str().unwrap())).unwrap();
+            test_connection(&make_cfg(DatabaseType::DuckDB, db_path.to_str().unwrap())).await.unwrap();
         assert!(result.contains("File exists"));
     }
 }

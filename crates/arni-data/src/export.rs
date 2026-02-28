@@ -73,6 +73,27 @@ impl std::fmt::Display for DataFormat {
     }
 }
 
+impl std::str::FromStr for DataFormat {
+    type Err = String;
+
+    /// Parse a format name (case-insensitive) to a [`DataFormat`].
+    ///
+    /// Accepted aliases: `csv`, `json`, `xml`, `parquet`, `excel`, `xlsx`.
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "csv" => Ok(DataFormat::Csv),
+            "json" => Ok(DataFormat::Json),
+            "xml" => Ok(DataFormat::Xml),
+            "parquet" => Ok(DataFormat::Parquet),
+            "excel" | "xlsx" => Ok(DataFormat::Excel),
+            other => Err(format!(
+                "Unknown format '{}'. Valid: csv, json, xml, parquet, excel",
+                other
+            )),
+        }
+    }
+}
+
 /// Serialize `df` to an in-memory byte buffer in the given `format`.
 ///
 /// The DataFrame may be mutated in place by some Polars writers (e.g. rechunk).
@@ -481,6 +502,23 @@ mod tests {
     }
 
     // ── DataFormat helpers ───────────────────────────────────────────────────
+
+    #[test]
+    fn from_str_parses_all_formats() {
+        assert_eq!("csv".parse::<DataFormat>().unwrap(), DataFormat::Csv);
+        assert_eq!("json".parse::<DataFormat>().unwrap(), DataFormat::Json);
+        assert_eq!("xml".parse::<DataFormat>().unwrap(), DataFormat::Xml);
+        assert_eq!("parquet".parse::<DataFormat>().unwrap(), DataFormat::Parquet);
+        assert_eq!("excel".parse::<DataFormat>().unwrap(), DataFormat::Excel);
+        assert_eq!("xlsx".parse::<DataFormat>().unwrap(), DataFormat::Excel);
+        assert_eq!("CSV".parse::<DataFormat>().unwrap(), DataFormat::Csv);  // case-insensitive
+    }
+
+    #[test]
+    fn from_str_unknown_format_returns_err() {
+        assert!("tsv".parse::<DataFormat>().is_err());
+        assert!("".parse::<DataFormat>().is_err());
+    }
 
     #[test]
     fn extensions_are_correct() {
