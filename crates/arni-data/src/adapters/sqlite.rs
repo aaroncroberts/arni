@@ -16,8 +16,6 @@ use polars::prelude::*;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column, Row, TypeInfo};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, warn};
 
 type Result<T> = std::result::Result<T, DataError>;
@@ -30,18 +28,18 @@ type Result<T> = std::result::Result<T, DataError>;
 ///
 /// # Connection Management
 ///
-/// The adapter maintains a connection pool wrapped in Arc<RwLock> for thread-safe access.
-/// Connections are established when `connect()` is called.
+/// The adapter maintains an optional connection pool. Connections are established
+/// when `connect()` is called.
 ///
 /// # Thread Safety
 ///
-/// The adapter uses internal locking to ensure thread-safe access to the underlying
-/// SQLite connection pool.
+/// `SqlitePool` is internally reference-counted and `Send + Sync`, so no additional
+/// locking is needed.
 pub struct SqliteAdapter {
     /// Connection configuration
     config: ConnectionConfig,
-    /// SQLite connection pool wrapped in Arc<RwLock> for thread-safe access
-    pool: Arc<RwLock<Option<SqlitePool>>>,
+    /// SQLite connection pool (SqlitePool is internally Arc and Send+Sync)
+    pool: Option<SqlitePool>,
 }
 
 impl SqliteAdapter {
@@ -53,7 +51,7 @@ impl SqliteAdapter {
         debug!(database = %config.database, "Creating SQLite adapter");
         Self {
             config,
-            pool: Arc::new(RwLock::new(None)),
+            pool: None,
         }
     }
 
@@ -94,8 +92,7 @@ impl SqliteAdapter {
     /// Uses `sqlx::query::execute` rather than `fetch_all` so DML operations
     /// correctly return the row count instead of an empty result set.
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard.as_ref().ok_or_else(|| {
+        let pool = self.pool.as_ref().ok_or_else(|| {
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
@@ -258,8 +255,7 @@ impl ConnectionTrait for SqliteAdapter {
                 DataError::Connection(format!("Failed to connect: {}", e))
             })?;
 
-        let mut pool_guard = self.pool.write().await;
-        *pool_guard = Some(pool);
+        self.pool = Some(pool);
 
         info!("Connected to SQLite successfully");
         Ok(())
@@ -268,8 +264,7 @@ impl ConnectionTrait for SqliteAdapter {
     #[instrument(skip(self), fields(adapter = "sqlite"))]
     async fn disconnect(&mut self) -> Result<()> {
         debug!("Disconnecting from SQLite");
-        let mut pool_guard = self.pool.write().await;
-        if let Some(pool) = pool_guard.take() {
+        if let Some(pool) = self.pool.take() {
             pool.close().await;
             info!("Disconnected from SQLite");
         } else {
@@ -279,14 +274,13 @@ impl ConnectionTrait for SqliteAdapter {
     }
 
     fn is_connected(&self) -> bool {
-        self.pool.try_read().map(|g| g.is_some()).unwrap_or(false)
+        self.pool.is_some()
     }
 
     #[instrument(skip(self), fields(adapter = "sqlite"))]
     async fn health_check(&self) -> Result<bool> {
         debug!("Performing health check");
-        let pool_guard = self.pool.read().await;
-        if let Some(pool) = pool_guard.as_ref() {
+        if let Some(pool) = self.pool.as_ref() {
             sqlx::query("SELECT 1")
                 .execute(pool)
                 .await
@@ -360,8 +354,7 @@ impl DbAdapter for SqliteAdapter {
         debug!("Executing query");
         let start = std::time::Instant::now();
 
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard.as_ref().ok_or_else(|| {
+        let pool = self.pool.as_ref().ok_or_else(|| {
             error!("Query attempted while not connected");
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
@@ -439,8 +432,7 @@ impl DbAdapter for SqliteAdapter {
         _schema: Option<&str>,
         mode: TableSearchMode,
     ) -> Result<Vec<String>> {
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard.as_ref().ok_or_else(|| {
+        let pool = self.pool.as_ref().ok_or_else(|| {
             error!("Find tables attempted while not connected");
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
@@ -707,8 +699,7 @@ impl DbAdapter for SqliteAdapter {
         replace: bool,
     ) -> Result<u64> {
         {
-            let pool_guard = self.pool.read().await;
-            if pool_guard.is_none() {
+            if self.pool.is_none() {
                 error!("sqlite connection error - not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
@@ -785,8 +776,7 @@ impl DbAdapter for SqliteAdapter {
             return Ok(0);
         }
         {
-            let pool_guard = self.pool.read().await;
-            if pool_guard.is_none() {
+            if self.pool.is_none() {
                 error!("sqlite connection error - not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
@@ -842,8 +832,7 @@ impl DbAdapter for SqliteAdapter {
             return Ok(0);
         }
         {
-            let pool_guard = self.pool.read().await;
-            if pool_guard.is_none() {
+            if self.pool.is_none() {
                 error!("sqlite connection error - not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
@@ -886,8 +875,7 @@ impl DbAdapter for SqliteAdapter {
             return Ok(0);
         }
         {
-            let pool_guard = self.pool.read().await;
-            if pool_guard.is_none() {
+            if self.pool.is_none() {
                 error!("sqlite connection error - not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),

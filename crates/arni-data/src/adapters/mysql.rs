@@ -53,8 +53,6 @@ use polars::prelude::*;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Executor, Row, TypeInfo};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, warn};
 
 /// MySQL database adapter
@@ -81,10 +79,8 @@ use tracing::{debug, error, info, instrument, warn};
 pub struct MySqlAdapter {
     /// Connection configuration
     config: ConnectionConfig,
-    /// MySQL connection pool wrapped in Arc<RwLock> for thread-safe access
-    pool: Arc<RwLock<Option<MySqlPool>>>,
-    /// Connection state flag
-    connected: Arc<RwLock<bool>>,
+    /// MySQL connection pool (MySqlPool is internally Arc and Send+Sync)
+    pool: Option<MySqlPool>,
 }
 
 impl MySqlAdapter {
@@ -113,8 +109,7 @@ impl MySqlAdapter {
     pub fn new(config: ConnectionConfig) -> Self {
         Self {
             config,
-            pool: Arc::new(RwLock::new(None)),
-            connected: Arc::new(RwLock::new(false)),
+            pool: None,
         }
     }
 
@@ -348,7 +343,7 @@ impl MySqlAdapter {
         debug!("Executing query");
 
         // Check if connected
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("Query execution failed: not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -356,8 +351,7 @@ impl MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard.as_ref().ok_or_else(|| {
+        let pool = self.pool.as_ref().ok_or_else(|| {
             error!("Pool not available");
             DataError::Connection("Pool not available".to_string())
         })?;
@@ -446,7 +440,7 @@ impl Connection for MySqlAdapter {
     #[instrument(skip(self), fields(adapter = "mysql", host = ?self.config.host, port = ?self.config.port, database = %self.config.database))]
     async fn connect(&mut self) -> Result<()> {
         // Check if already connected
-        if *self.connected.read().await {
+        if self.pool.is_some() {
             debug!("Already connected, skipping connection attempt");
             return Ok(());
         }
@@ -476,8 +470,7 @@ impl Connection for MySqlAdapter {
             })?;
 
         // Store the pool
-        *self.pool.write().await = Some(pool);
-        *self.connected.write().await = true;
+        self.pool = Some(pool);
 
         info!("Successfully connected to MySQL");
         Ok(())
@@ -487,28 +480,22 @@ impl Connection for MySqlAdapter {
     async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from MySQL");
         // Close the pool
-        if let Some(pool) = self.pool.write().await.take() {
+        if let Some(pool) = self.pool.take() {
             pool.close().await;
         }
-        *self.connected.write().await = false;
         debug!("MySQL connection closed");
         Ok(())
     }
 
     fn is_connected(&self) -> bool {
-        // This needs to be a synchronous check, so we use try_read
-        // Returns false if the lock is held or if not connected
-        self.connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
+        self.pool.is_some()
     }
 
     #[instrument(skip(self), fields(adapter = "mysql"))]
     async fn health_check(&self) -> Result<bool> {
         debug!("Performing health check");
         // Check internal state first
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             warn!("Health check failed: not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -516,8 +503,7 @@ impl Connection for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard.as_ref().ok_or_else(|| {
+        let pool = self.pool.as_ref().ok_or_else(|| {
             error!("Pool not available for health check");
             DataError::Connection("Pool not available".to_string())
         })?;
@@ -559,25 +545,20 @@ impl DbAdapter for MySqlAdapter {
             .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
 
         // Store the pool
-        *self.pool.write().await = Some(pool);
-        *self.connected.write().await = true;
+        self.pool = Some(pool);
 
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        if let Some(pool) = self.pool.write().await.take() {
+        if let Some(pool) = self.pool.take() {
             pool.close().await;
         }
-        *self.connected.write().await = false;
         Ok(())
     }
 
     fn is_connected(&self) -> bool {
-        self.connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
+        self.pool.is_some()
     }
 
     async fn test_connection(
@@ -641,7 +622,7 @@ impl DbAdapter for MySqlAdapter {
         replace: bool,
     ) -> Result<u64> {
         // Check connection
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -649,8 +630,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -725,8 +705,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -753,8 +732,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -811,8 +789,7 @@ impl DbAdapter for MySqlAdapter {
             ));
         }
 
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -862,8 +839,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -952,7 +928,7 @@ impl DbAdapter for MySqlAdapter {
 
     async fn get_indexes(&self, table_name: &str, _schema: Option<&str>) -> Result<Vec<IndexInfo>> {
         // Check connection
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -960,8 +936,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1017,7 +992,7 @@ impl DbAdapter for MySqlAdapter {
         _schema: Option<&str>,
     ) -> Result<Vec<ForeignKeyInfo>> {
         // Check connection
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -1025,8 +1000,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1092,7 +1066,7 @@ impl DbAdapter for MySqlAdapter {
 
     async fn get_views(&self, _schema: Option<&str>) -> Result<Vec<ViewInfo>> {
         // Check connection
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -1100,8 +1074,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1135,7 +1108,7 @@ impl DbAdapter for MySqlAdapter {
         _schema: Option<&str>,
     ) -> Result<Option<String>> {
         // Check connection
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -1143,8 +1116,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1172,7 +1144,7 @@ impl DbAdapter for MySqlAdapter {
 
     async fn list_stored_procedures(&self, _schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         // Check connection
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -1180,8 +1152,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1215,14 +1186,13 @@ impl DbAdapter for MySqlAdapter {
 
     #[instrument(skip(self), fields(adapter = "mysql"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
         let row = sqlx::query("SELECT VERSION() AS version")
@@ -1258,7 +1228,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Check connection
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
@@ -1278,8 +1248,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1336,15 +1305,14 @@ impl DbAdapter for MySqlAdapter {
             return Ok(0);
         }
 
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1406,15 +1374,14 @@ impl DbAdapter for MySqlAdapter {
             return Ok(0);
         }
 
-        if !*self.connected.read().await {
+        if self.pool.is_none() {
             error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
-        let pool_guard = self.pool.read().await;
-        let pool = pool_guard
+        let pool = self.pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
