@@ -195,6 +195,7 @@ mod oracle_tests {
             username: Some("system".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         let adapter = OracleAdapter::new(config);
         assert_eq!(DbAdapter::database_type(&adapter), DatabaseType::Oracle);

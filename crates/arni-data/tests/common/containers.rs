@@ -213,6 +213,7 @@ pub fn sqlite_memory_config() -> ConnectionConfig {
         username: None,
         use_ssl: false,
         parameters: HashMap::new(),
+        pool_config: None,
     }
 }
 
@@ -228,6 +229,7 @@ pub fn duckdb_memory_config() -> ConnectionConfig {
         username: None,
         use_ssl: false,
         parameters: HashMap::new(),
+        pool_config: None,
     }
 }
 
@@ -254,6 +256,7 @@ fn build_config(
         username: Some(username.to_string()),
         use_ssl: false,
         parameters,
+        pool_config: None,
     }
 }
 

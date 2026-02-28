@@ -170,6 +170,7 @@ fn load_from_yaml(profile_name: &str) -> Option<ConnectionConfig> {
         username: entry.username.clone(),
         use_ssl: entry.ssl,
         parameters,
+        pool_config: None,
     })
 }
 
@@ -220,6 +221,7 @@ fn load_from_env(profile_name: &str) -> Option<ConnectionConfig> {
         username,
         use_ssl: ssl,
         parameters,
+        pool_config: None,
     })
 }
 

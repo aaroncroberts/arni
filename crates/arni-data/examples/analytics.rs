@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         username: None,
         use_ssl: false,
         parameters: HashMap::new(),
+        pool_config: None,
     };
 
     let mut adapter = DuckDbAdapter::new(config.clone());

@@ -200,6 +200,7 @@ mod mongodb_tests {
             username: None,
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         let adapter = MongoDbAdapter::new(config);
         assert_eq!(DbAdapter::database_type(&adapter), DatabaseType::MongoDB);
@@ -630,6 +631,7 @@ mod mongodb_tests {
             username: Some("admin".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         let adapter = MongoDbAdapter::new(config.clone());
 

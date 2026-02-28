@@ -51,6 +51,7 @@ async fn main() -> anyhow::Result<()> {
         username: None,
         use_ssl: false,
         parameters: HashMap::new(),
+        pool_config: None,
     };
 
     let mut duck = DuckDbAdapter::new(duck_cfg.clone());
@@ -73,6 +74,7 @@ async fn main() -> anyhow::Result<()> {
         username: None,
         use_ssl: false,
         parameters: HashMap::new(),
+        pool_config: None,
     };
 
     let mut sqlite = SqliteAdapter::new(sqlite_cfg.clone());
