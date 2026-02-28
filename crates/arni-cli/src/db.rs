@@ -5,7 +5,7 @@
 //! `main.rs` free of per-database imports.
 
 use anyhow::{anyhow, Result};
-use arni_data::{ConnectionConfig, DatabaseType, DbAdapter};
+use arni_data::{ConnectionConfig, DatabaseType, DbAdapter, SharedAdapter};
 use std::io::IsTerminal;
 
 use crate::config::ConfigStore;
@@ -16,8 +16,11 @@ use crate::config::ConfigStore;
 ///
 /// The adapter is created but **not yet connected**. Call `adapter.connect()`
 /// afterwards to establish the database connection.
-pub fn create_adapter(config: ConnectionConfig) -> Result<Box<dyn DbAdapter>> {
-    let adapter: Box<dyn DbAdapter> = match config.db_type {
+///
+/// Returns `Box<dyn DbAdapter + Send + Sync + 'static>` so callers can wrap
+/// the result in `Arc::from(adapter)` to obtain a [`SharedAdapter`].
+pub fn create_adapter(config: ConnectionConfig) -> Result<Box<dyn DbAdapter + Send + Sync + 'static>> {
+    let adapter: Box<dyn DbAdapter + Send + Sync + 'static> = match config.db_type {
         DatabaseType::Postgres => {
             Box::new(arni_data::adapters::postgres::PostgresAdapter::new(config))
         }
@@ -43,14 +46,14 @@ fn needs_auth(db_type: &DatabaseType) -> bool {
 }
 
 /// Load a named connection profile, obtain a password (stored or prompted),
-/// create the matching adapter, and connect it.
+/// create the matching adapter, connect it, and return a [`SharedAdapter`].
 ///
 /// # Password resolution
 /// 1. If `parameters["password"]` was injected by [`ConfigStore::get`] → use it.
 /// 2. If no password is stored and the database type requires auth → prompt
 ///    (only when stdin is a TTY; returns a clear error otherwise).
 /// 3. SQLite and DuckDB never need a password → skip prompting.
-pub async fn connect(store: &ConfigStore, profile: &str) -> Result<Box<dyn DbAdapter>> {
+pub async fn connect(store: &ConfigStore, profile: &str) -> Result<SharedAdapter> {
     let config = store.get(profile).map_err(|e| anyhow!("{}", e))?;
 
     let password = match config.parameters.get("password") {
@@ -77,7 +80,7 @@ pub async fn connect(store: &ConfigStore, profile: &str) -> Result<Box<dyn DbAda
         .await
         .map_err(|e| anyhow!("Failed to connect to '{}': {}", profile, e))?;
 
-    Ok(adapter)
+    Ok(std::sync::Arc::from(adapter))
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

@@ -18,9 +18,10 @@ arni-data = { path = "../arni-data", features = ["all-databases"] }
 arni-logging = { path = "../arni-logging" }
 
 # Workspace dependencies
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
 clap = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 serde_yaml = { workspace = true }
 toml = { workspace = true }
 anyhow = { workspace = true }

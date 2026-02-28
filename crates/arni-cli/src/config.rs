@@ -29,7 +29,7 @@
 //! ```
 
 use anyhow::{bail, Context, Result};
-use arni_data::adapter::{ConnectionConfig, DatabaseType};
+use arni_data::adapter::{ConnectionConfig, DatabaseType, PoolConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -99,6 +99,10 @@ pub struct ConnectionEntry {
     /// Additional driver-specific key/value parameters (e.g. `connect_timeout: "10"`).
     #[serde(default)]
     pub parameters: HashMap<String, String>,
+
+    /// Optional connection pool tuning. Omit to accept per-adapter defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_config: Option<PoolConfig>,
 }
 
 // ─── Name validation ──────────────────────────────────────────────────────────
@@ -161,6 +165,7 @@ impl ConnectionEntry {
             username: self.username,
             use_ssl: self.ssl,
             parameters,
+            pool_config: self.pool_config,
         })
     }
 }
@@ -414,6 +419,7 @@ mod tests {
             password: None,
             ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         let cfg = entry.into_connection_config("local-sqlite").unwrap();
         assert_eq!(cfg.id, "local-sqlite");
@@ -433,6 +439,7 @@ mod tests {
             password: None,
             ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         let cfg = entry.into_connection_config("analytics").unwrap();
         assert_eq!(cfg.database, ":memory:");
@@ -449,6 +456,7 @@ mod tests {
             password: None,
             ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         assert!(entry.into_connection_config("dev-pg").is_err());
     }
@@ -464,6 +472,7 @@ mod tests {
             password: Some("s3cret".to_string()),
             ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         let cfg = entry.into_connection_config("test-pg").unwrap();
         assert_eq!(
@@ -483,6 +492,7 @@ mod tests {
             password: None,
             ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         let cfg = entry.into_connection_config("pg").unwrap();
         assert_eq!(cfg.port, Some(5432));
@@ -546,6 +556,7 @@ alpha:
             password: None,
             ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         assert!(file.upsert("bad name".to_string(), entry).is_err());
     }
@@ -562,6 +573,7 @@ alpha:
             password: None,
             ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         }
     }
 

@@ -1,5 +1,6 @@
 mod app_config;
 mod config;
+mod daemon;
 mod db;
 mod logging_config;
 
@@ -121,6 +122,12 @@ enum Commands {
         /// Output file path
         #[arg(short, long)]
         output: String,
+    },
+    /// Start a persistent background daemon on a Unix socket
+    Daemon {
+        /// Path to the Unix domain socket (default: /tmp/arni.sock)
+        #[arg(long)]
+        socket: Option<std::path::PathBuf>,
     },
 }
 
@@ -313,6 +320,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } => {
             handle_export_command(query, profile, format, output).await?;
         }
+        Commands::Daemon { socket } => {
+            let path = socket.unwrap_or_else(|| std::path::PathBuf::from("/tmp/arni.sock"));
+            daemon::run_daemon(path).await?;
+        }
     }
 
     Ok(())
@@ -370,6 +381,7 @@ async fn handle_config_command(action: ConfigAction) -> Result<(), Box<dyn Error
                 password,
                 ssl,
                 parameters,
+                pool_config: None,
             };
 
             let mut store = ConfigStore::load(None)?;
