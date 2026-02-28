@@ -505,7 +505,6 @@ impl Connection for MySqlAdapter {
         // Check internal state first
         if !*self.connected.read().await {
             warn!("Health check failed: not connected");
-            error!("mysql connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));

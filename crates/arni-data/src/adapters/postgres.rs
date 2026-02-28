@@ -232,7 +232,6 @@ impl Connection for PostgresAdapter {
         // Check internal state first
         if !*self.connected.read().await {
             warn!("Health check failed: not connected");
-            error!("postgres connection error - not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));

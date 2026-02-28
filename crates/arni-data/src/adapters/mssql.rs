@@ -520,8 +520,12 @@ impl ConnectionTrait for SqlServerAdapter {
     async fn disconnect(&mut self) -> Result<()> {
         debug!("Disconnecting from SQL Server");
         let mut client_guard = self.client.write().await;
-        *client_guard = None;
-        info!("Disconnected from SQL Server");
+        if client_guard.is_some() {
+            *client_guard = None;
+            info!("Disconnected from SQL Server");
+        } else {
+            debug!("Disconnect called but already disconnected");
+        }
         Ok(())
     }
 
