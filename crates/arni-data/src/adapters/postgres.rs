@@ -1,7 +1,7 @@
 //! PostgreSQL database adapter implementation
 //!
 //! This module provides the [`PostgresAdapter`] which implements both the [`Connection`]
-//! and [`DbAdapter`] traits for PostgreSQL databases using the tokio-postgres driver.
+//! and [`DbAdapter`] traits for PostgreSQL databases using the sqlx driver.
 //!
 //! # Features
 //!
@@ -50,10 +50,11 @@ use crate::adapter::{
 };
 use crate::DataError;
 use polars::prelude::*;
+use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
+use sqlx::{Column, Executor, Row, TypeInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio_postgres::{types::Type, Client, NoTls};
 use tracing::{debug, error, info, instrument, warn};
 
 /// PostgreSQL database adapter
@@ -76,13 +77,13 @@ use tracing::{debug, error, info, instrument, warn};
 ///
 /// # Thread Safety
 ///
-/// The adapter uses internal locking to ensure thread-safe access to the underlying
-/// PostgreSQL connection.
+/// The adapter uses `Arc<RwLock>` internally so it can be cloned and shared across
+/// concurrent tokio tasks.
 pub struct PostgresAdapter {
     /// Connection configuration
     config: ConnectionConfig,
-    /// PostgreSQL client wrapped in Arc<RwLock> for thread-safe access
-    client: Arc<RwLock<Option<Client>>>,
+    /// sqlx connection pool wrapped in Arc<RwLock> for thread-safe access
+    pool: Arc<RwLock<Option<PgPool>>>,
     /// Connection state flag
     connected: Arc<RwLock<bool>>,
 }
@@ -113,24 +114,14 @@ impl PostgresAdapter {
     pub fn new(config: ConnectionConfig) -> Self {
         Self {
             config,
-            client: Arc::new(RwLock::new(None)),
+            pool: Arc::new(RwLock::new(None)),
             connected: Arc::new(RwLock::new(false)),
         }
     }
 
-    /// Build a PostgreSQL connection string from the configuration
+    /// Build a PostgreSQL libpq-style connection string for sqlx.
     ///
-    /// The connection string format is:
-    /// ```text
-    /// host={host} port={port} dbname={database} user={username}
-    /// ```
-    ///
-    /// Additional parameters from `config.parameters` are appended.
-    ///
-    /// # Returns
-    ///
-    /// A connection string suitable for tokio-postgres, or an error if required
-    /// fields are missing.
+    /// Format: `host=H port=P dbname=D user=U password=P`
     fn build_connection_string(&self, password: Option<&str>) -> Result<String> {
         let host = self
             .config
@@ -155,12 +146,22 @@ impl PostgresAdapter {
             conn_str.push_str(&format!(" password={}", pwd));
         }
 
-        // Add additional parameters
         for (key, value) in &self.config.parameters {
-            conn_str.push_str(&format!(" {}={}", key, value));
+            if key != "password" {
+                conn_str.push_str(&format!(" {}={}", key, value));
+            }
         }
 
         Ok(conn_str)
+    }
+
+    /// Return true when `sql` is a DML statement that uses `execute()` rather than `fetch_all()`.
+    fn is_dml(sql: &str) -> bool {
+        let upper = sql.trim_start().to_uppercase();
+        upper.starts_with("INSERT")
+            || upper.starts_with("UPDATE")
+            || upper.starts_with("DELETE")
+            || upper.starts_with("TRUNCATE")
     }
 }
 
@@ -176,31 +177,27 @@ impl Connection for PostgresAdapter {
 
         info!("Connecting to PostgreSQL database");
 
-        // Pull password from stored parameters if available.
         let password = self.config.parameters.get("password").map(String::as_str);
         let conn_str = self.build_connection_string(password).map_err(|e| {
             error!(error = ?e, "Failed to build connection string");
             e
         })?;
 
-        // Connect using NoTls for now (will add SSL support later)
-        let (client, connection) =
-            tokio_postgres::connect(&conn_str, NoTls)
-                .await
-                .map_err(|e| {
-                    error!(error = %e, "Failed to establish connection");
-                    DataError::Connection(format!("Failed to connect: {}", e))
-                })?;
+        let pc = self.config.pool_config.clone().unwrap_or_default();
+        let pool = PgPoolOptions::new()
+            .max_connections(pc.max_connections)
+            .min_connections(pc.min_connections)
+            .acquire_timeout(std::time::Duration::from_secs(pc.acquire_timeout_secs))
+            .idle_timeout(std::time::Duration::from_secs(pc.idle_timeout_secs))
+            .max_lifetime(std::time::Duration::from_secs(pc.max_lifetime_secs))
+            .connect(&conn_str)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "Failed to establish connection");
+                DataError::Connection(format!("Failed to connect: {}", e))
+            })?;
 
-        // Spawn the connection handler
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!(error = %e, "Connection handler error");
-            }
-        });
-
-        // Store the client
-        *self.client.write().await = Some(client);
+        *self.pool.write().await = Some(pool);
         *self.connected.write().await = true;
 
         info!("Successfully connected to PostgreSQL");
@@ -210,26 +207,24 @@ impl Connection for PostgresAdapter {
     #[instrument(skip(self), fields(adapter = "postgres"))]
     async fn disconnect(&mut self) -> Result<()> {
         info!("Disconnecting from PostgreSQL");
-        // Drop the client (closes the connection)
-        *self.client.write().await = None;
+        let mut pool_guard = self.pool.write().await;
+        if let Some(pool) = pool_guard.take() {
+            pool.close().await;
+            info!("Disconnected from PostgreSQL");
+        } else {
+            debug!("Disconnect called but already disconnected");
+        }
         *self.connected.write().await = false;
-        debug!("PostgreSQL connection closed");
         Ok(())
     }
 
     fn is_connected(&self) -> bool {
-        // This needs to be a synchronous check, so we use try_read
-        // Returns false if the lock is held or if not connected
-        self.connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
+        self.pool.try_read().map(|g| g.is_some()).unwrap_or(false)
     }
 
     #[instrument(skip(self), fields(adapter = "postgres"))]
     async fn health_check(&self) -> Result<bool> {
         debug!("Performing health check");
-        // Check internal state first
         if !*self.connected.read().await {
             warn!("Health check failed: not connected");
             return Err(DataError::Connection(
@@ -237,15 +232,13 @@ impl Connection for PostgresAdapter {
             ));
         }
 
-        // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard.as_ref().ok_or_else(|| {
-            error!("Client not available for health check");
-            DataError::Connection("Client not available".to_string())
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Pool not available for health check");
+            DataError::Connection("Pool not available".to_string())
         })?;
 
-        // Execute health check query
-        match client.query_one("SELECT 1", &[]).await {
+        match sqlx::query("SELECT 1").execute(pool).await {
             Ok(_) => {
                 debug!("Health check passed");
                 Ok(true)
@@ -271,42 +264,38 @@ impl DbAdapter for PostgresAdapter {
     // separately with password support.
 
     async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<()> {
-        // Store config
         self.config = config.clone();
 
-        // Build connection string with password
         let conn_str = self.build_connection_string(password)?;
 
-        // Connect using NoTls for now
-        let (client, connection) = tokio_postgres::connect(&conn_str, NoTls)
+        let pc = self.config.pool_config.clone().unwrap_or_default();
+        let pool = PgPoolOptions::new()
+            .max_connections(pc.max_connections)
+            .min_connections(pc.min_connections)
+            .acquire_timeout(std::time::Duration::from_secs(pc.acquire_timeout_secs))
+            .idle_timeout(std::time::Duration::from_secs(pc.idle_timeout_secs))
+            .max_lifetime(std::time::Duration::from_secs(pc.max_lifetime_secs))
+            .connect(&conn_str)
             .await
             .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
 
-        // Spawn the connection handler
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                error!("connection error: {}", e);
-            }
-        });
-
-        // Store the client
-        *self.client.write().await = Some(client);
+        *self.pool.write().await = Some(pool);
         *self.connected.write().await = true;
 
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<()> {
-        *self.client.write().await = None;
+        let mut pool_guard = self.pool.write().await;
+        if let Some(pool) = pool_guard.take() {
+            pool.close().await;
+        }
         *self.connected.write().await = false;
         Ok(())
     }
 
     fn is_connected(&self) -> bool {
-        self.connected
-            .try_read()
-            .map(|guard| *guard)
-            .unwrap_or(false)
+        self.pool.try_read().map(|g| g.is_some()).unwrap_or(false)
     }
 
     async fn test_connection(
@@ -314,7 +303,6 @@ impl DbAdapter for PostgresAdapter {
         config: &ConnectionConfig,
         password: Option<&str>,
     ) -> Result<bool> {
-        // Build connection string
         let host = config
             .host
             .as_ref()
@@ -334,12 +322,14 @@ impl DbAdapter for PostgresAdapter {
             conn_str.push_str(&format!(" password={}", pwd));
         }
 
-        // Try to connect briefly
-        match tokio_postgres::connect(&conn_str, NoTls).await {
-            Ok((client, connection)) => {
-                // Drop connection immediately
-                drop(client);
-                drop(connection);
+        match PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(5))
+            .connect(&conn_str)
+            .await
+        {
+            Ok(pool) => {
+                pool.close().await;
                 Ok(true)
             }
             Err(_) => Ok(false),
@@ -360,7 +350,6 @@ impl DbAdapter for PostgresAdapter {
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         debug!("Executing query");
 
-        // Check connection
         if !*self.connected.read().await {
             error!("Query execution failed: not connected");
             return Err(DataError::Connection(
@@ -368,41 +357,63 @@ impl DbAdapter for PostgresAdapter {
             ));
         }
 
-        // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard.as_ref().ok_or_else(|| {
-            error!("Client not available");
-            DataError::Connection("Client not available".to_string())
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Pool not available");
+            DataError::Connection("Pool not available".to_string())
         })?;
 
-        // Execute query
-        let start = std::time::Instant::now();
-        let rows = client.query(query, &[]).await.map_err(|e| {
+        let map_err = |e: sqlx::Error| {
             error!(error = %e, "Query execution failed");
-            DataError::Query(format!("Query failed: {}", e))
-        })?;
+            let msg = e.to_string();
+            if msg.contains("syntax") {
+                DataError::Query(format!("SQL syntax error: {}", e))
+            } else if msg.contains("permission") || msg.contains("denied") {
+                DataError::Query(format!("Permission denied: {}", e))
+            } else if msg.contains("does not exist") {
+                DataError::Query(format!("Object not found: {}", e))
+            } else if msg.contains("violates") || msg.contains("constraint") {
+                DataError::Query(format!("Constraint violation: {}", e))
+            } else {
+                DataError::Query(format!("Query failed: {}", e))
+            }
+        };
 
+        let start = std::time::Instant::now();
+
+        if Self::is_dml(query) {
+            let result = sqlx::query(query).execute(pool).await.map_err(map_err)?;
+            let affected = result.rows_affected();
+            info!(
+                rows_affected = affected,
+                duration_ms = start.elapsed().as_millis(),
+                "DML executed"
+            );
+            return Ok(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                rows_affected: Some(affected),
+            });
+        }
+
+        let rows = sqlx::query(query).fetch_all(pool).await.map_err(map_err)?;
         let duration = start.elapsed();
-        let row_count = rows.len();
 
         info!(
-            rows = row_count,
+            rows = rows.len(),
             duration_ms = duration.as_millis(),
             "Query executed successfully"
         );
 
-        // If no rows, check if it was a modification query
         if rows.is_empty() {
             debug!("Query returned no rows");
-            // Try to get rows affected (for INSERT/UPDATE/DELETE)
             return Ok(QueryResult {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                rows_affected: None, // tokio-postgres doesn't provide this easily
+                columns: vec![],
+                rows: vec![],
+                rows_affected: Some(0),
             });
         }
 
-        // Extract column names
         let columns: Vec<String> = rows[0]
             .columns()
             .iter()
@@ -411,15 +422,10 @@ impl DbAdapter for PostgresAdapter {
 
         debug!(columns = columns.len(), "Extracted column metadata");
 
-        // Convert rows
         let mut result_rows = Vec::new();
         for row in &rows {
-            let mut result_row = Vec::new();
-            for (col_idx, column) in row.columns().iter().enumerate() {
-                let value = self.convert_postgres_value(row, col_idx, column.type_())?;
-                result_row.push(value);
-            }
-            result_rows.push(result_row);
+            let values = Self::row_to_values(row)?;
+            result_rows.push(values);
         }
 
         Ok(QueryResult {
@@ -447,35 +453,31 @@ impl DbAdapter for PostgresAdapter {
             ));
         }
 
-        // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard.as_ref().ok_or_else(|| {
-            error!("Client not available");
-            DataError::Connection("Client not available".to_string())
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Pool not available");
+            DataError::Connection("Pool not available".to_string())
         })?;
 
-        // If replace, drop and recreate table
         if replace {
             let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
-            client
-                .execute(&drop_sql, &[])
+            pool.execute(drop_sql.as_str())
                 .await
                 .map_err(|e| DataError::Query(format!("Failed to drop table: {}", e)))?;
 
-            // Create table based on DataFrame schema
             let create_sql = self.generate_create_table_sql(df, table_name)?;
-            client
-                .execute(&create_sql, &[])
+            pool.execute(create_sql.as_str())
                 .await
                 .map_err(|e| DataError::Query(format!("Failed to create table: {}", e)))?;
         }
 
-        // Insert data row by row
         let column_names: Vec<String> = df
             .get_column_names()
             .iter()
             .map(|s| s.to_string())
             .collect();
+
+        // Postgres uses $1, $2, … placeholders
         let placeholders: Vec<String> = (1..=column_names.len())
             .map(|i| format!("${}", i))
             .collect();
@@ -483,47 +485,26 @@ impl DbAdapter for PostgresAdapter {
         let insert_sql = format!(
             "INSERT INTO {} ({}) VALUES ({})",
             table_name,
-            column_names
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
+            column_names.join(", "),
             placeholders.join(", ")
         );
 
         let mut rows_inserted: u64 = 0;
 
-        // Insert rows in batches for better performance
         for row_idx in 0..df.height() {
-            // Extract values for this row from each column
-            let mut params: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = Vec::new();
+            let mut query = sqlx::query(&insert_sql);
 
             for col_name in &column_names {
                 let column = df.column(col_name).map_err(|e| {
                     DataError::DataFrame(format!("Column '{}' not found: {}", col_name, e))
                 })?;
-
-                // Get the underlying Series from the Column
                 let series = column.as_materialized_series();
-
-                // Convert series value at row_idx to ToSql parameter
-                let param = self.series_value_to_sql(series, row_idx)?;
-                params.push(param);
+                query = self.bind_series_value(query, series, row_idx)?;
             }
 
-            // Convert params to references (cast to remove Send bound for tokio-postgres)
-            let params_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
-                .iter()
-                .map(|p| p.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
-                .collect();
-
-            // Execute insert
-            client
-                .execute(&insert_sql, &params_refs[..])
-                .await
-                .map_err(|e| {
-                    DataError::Query(format!("Failed to insert row {}: {}", row_idx, e))
-                })?;
+            query.execute(pool).await.map_err(|e| {
+                DataError::Query(format!("Failed to insert row {}: {}", row_idx, e))
+            })?;
 
             rows_inserted += 1;
         }
@@ -546,20 +527,20 @@ impl DbAdapter for PostgresAdapter {
         }
 
         // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard.as_ref().ok_or_else(|| {
-            error!("Client not available");
-            DataError::Connection("Client not available".to_string())
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Pool not available");
+            DataError::Connection("Pool not available".to_string())
         })?;
 
         // Query pg_database catalog
         let query = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
-        let rows = client.query(query, &[]).await.map_err(|e| {
+        let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
             error!(error = %e, "Failed to query databases");
             DataError::Query(format!("Failed to list databases: {}", e))
         })?;
 
-        let databases: Vec<String> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+        let databases: Vec<String> = rows.iter().map(|row| row.try_get::<String, _>(0).unwrap_or_default()).collect();
 
         info!(count = databases.len(), "Listed databases successfully");
         Ok(databases)
@@ -578,10 +559,10 @@ impl DbAdapter for PostgresAdapter {
         }
 
         // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard.as_ref().ok_or_else(|| {
-            error!("Client not available");
-            DataError::Connection("Client not available".to_string())
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Pool not available");
+            DataError::Connection("Pool not available".to_string())
         })?;
 
         // Query information_schema.tables
@@ -600,12 +581,12 @@ impl DbAdapter for PostgresAdapter {
                 .to_string()
         };
 
-        let rows = client.query(&query, &[]).await.map_err(|e| {
+        let rows = sqlx::query(&query).fetch_all(pool).await.map_err(|e| {
             error!(error = %e, "Failed to query tables");
             DataError::Query(format!("Failed to list tables: {}", e))
         })?;
 
-        let tables: Vec<String> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+        let tables: Vec<String> = rows.iter().map(|row| row.try_get::<String, _>(0).unwrap_or_default()).collect();
 
         info!(count = tables.len(), "Listed tables successfully");
         Ok(tables)
@@ -627,10 +608,10 @@ impl DbAdapter for PostgresAdapter {
             ));
         }
 
-        let client_guard = self.client.read().await;
-        let client = client_guard.as_ref().ok_or_else(|| {
-            error!("Client not available");
-            DataError::Connection("Client not available".to_string())
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard.as_ref().ok_or_else(|| {
+            error!("Pool not available");
+            DataError::Connection("Pool not available".to_string())
         })?;
 
         let escaped = escape_like_pattern(pattern);
@@ -649,12 +630,12 @@ impl DbAdapter for PostgresAdapter {
             schema_name
         );
 
-        let rows = client.query(&query, &[&like_pattern]).await.map_err(|e| {
+        let rows = sqlx::query(&query).bind(like_pattern).fetch_all(pool).await.map_err(|e| {
             error!(error = %e, "Failed to find tables");
             DataError::Query(format!("Failed to find tables: {}", e))
         })?;
 
-        let tables: Vec<String> = rows.iter().map(|row| row.get::<_, String>(0)).collect();
+        let tables: Vec<String> = rows.iter().map(|row| row.try_get::<String, _>(0).unwrap_or_default()).collect();
         info!(count = tables.len(), "Found tables successfully");
         Ok(tables)
     }
@@ -674,10 +655,10 @@ impl DbAdapter for PostgresAdapter {
         }
 
         // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         // Use provided schema or default to 'public'
         let schema_name = schema.unwrap_or("public");
@@ -691,8 +672,8 @@ impl DbAdapter for PostgresAdapter {
             schema_name, table_name
         );
 
-        let rows = client
-            .query(&column_query, &[])
+        let rows = sqlx::query(&column_query)
+            .fetch_all(pool)
             .await
             .map_err(|e| DataError::Query(format!("Failed to describe table: {}", e)))?;
 
@@ -713,22 +694,22 @@ impl DbAdapter for PostgresAdapter {
             schema_name, table_name
         );
 
-        let pk_rows = client
-            .query(&pk_query, &[])
+        let pk_rows = sqlx::query(&pk_query)
+            .fetch_all(pool)
             .await
             .map_err(|e| DataError::Query(format!("Failed to query primary keys: {}", e)))?;
 
         let primary_keys: std::collections::HashSet<String> =
-            pk_rows.iter().map(|row| row.get::<_, String>(0)).collect();
+            pk_rows.iter().map(|row| row.try_get::<String, _>(0).unwrap_or_default()).collect();
 
         // Build column info
         let columns: Vec<crate::adapter::ColumnInfo> = rows
             .iter()
             .map(|row| {
-                let col_name: String = row.get(0);
-                let data_type: String = row.get(1);
-                let is_nullable: String = row.get(2);
-                let default_value: Option<String> = row.get(3);
+                let col_name: String = row.try_get(0).unwrap_or_default();
+                let data_type: String = row.try_get(1).unwrap_or_default();
+                let is_nullable: String = row.try_get(2).unwrap_or_default();
+                let default_value: Option<String> = row.try_get(3).ok().flatten();
 
                 crate::adapter::ColumnInfo {
                     name: col_name.clone(),
@@ -747,16 +728,18 @@ impl DbAdapter for PostgresAdapter {
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = $1 AND c.relname = $2
         ";
-        let stats = client
-            .query(stats_query, &[&schema_name, &table_name])
+        let stats = sqlx::query(stats_query)
+            .bind(schema_name)
+            .bind(table_name)
+            .fetch_all(pool)
             .await
             .ok();
         let (row_count, size_bytes) = stats
             .as_ref()
             .and_then(|rows| rows.first())
             .map(|row| {
-                let rc: i64 = row.get(0);
-                let sz: i64 = row.get(1);
+                let rc: i64 = row.try_get(0).unwrap_or(0);
+                let sz: i64 = row.try_get(1).unwrap_or(0);
                 (Some(rc.max(0)), Some(sz))
             })
             .unwrap_or((None, None));
@@ -785,10 +768,10 @@ impl DbAdapter for PostgresAdapter {
         let schema_name = schema.unwrap_or("public");
 
         // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let query = "
             SELECT
@@ -809,8 +792,10 @@ impl DbAdapter for PostgresAdapter {
             GROUP BY i.relname, t.relname, n.nspname, ix.indisunique, ix.indisprimary, am.amname
         ";
 
-        let rows = client
-            .query(query, &[&table_name, &schema_name])
+        let rows = sqlx::query(query)
+            .bind(table_name)
+            .bind(schema_name)
+            .fetch_all(pool)
             .await
             .map_err(|e| {
                 DataError::Query(format!(
@@ -822,13 +807,13 @@ impl DbAdapter for PostgresAdapter {
         let indexes = rows
             .iter()
             .map(|row| IndexInfo {
-                name: row.get("index_name"),
-                table_name: row.get("table_name"),
-                schema: Some(row.get::<_, String>("schema_name")),
-                columns: row.get("columns"),
-                is_unique: row.get("is_unique"),
-                is_primary: row.get("is_primary"),
-                index_type: row.get("index_type"),
+                name: row.try_get::<String, _>("index_name").unwrap_or_default(),
+                table_name: row.try_get::<String, _>("table_name").unwrap_or_default(),
+                schema: Some(row.try_get::<String, _>("schema_name").unwrap_or_default()),
+                columns: row.try_get::<Vec<String>, _>("columns").unwrap_or_default(),
+                is_unique: row.try_get::<bool, _>("is_unique").unwrap_or(false),
+                is_primary: row.try_get::<bool, _>("is_primary").unwrap_or(false),
+                index_type: row.try_get::<String, _>("index_type").ok(),
             })
             .collect();
 
@@ -851,10 +836,10 @@ impl DbAdapter for PostgresAdapter {
         let schema_name = schema.unwrap_or("public");
 
         // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let query = "
             SELECT
@@ -883,8 +868,10 @@ impl DbAdapter for PostgresAdapter {
             ORDER BY tc.constraint_name, kcu.ordinal_position
         ";
 
-        let rows = client
-            .query(query, &[&table_name, &schema_name])
+        let rows = sqlx::query(query)
+            .bind(table_name)
+            .bind(schema_name)
+            .fetch_all(pool)
             .await
             .map_err(|e| {
                 DataError::Query(format!(
@@ -897,22 +884,22 @@ impl DbAdapter for PostgresAdapter {
         let mut fk_map: HashMap<String, ForeignKeyInfo> = HashMap::new();
 
         for row in rows {
-            let fk_name: String = row.get("constraint_name");
-            let column: String = row.get("column_name");
-            let ref_column: String = row.get("foreign_column_name");
+            let fk_name: String = row.try_get::<String, _>("constraint_name").unwrap_or_default();
+            let column: String = row.try_get::<String, _>("column_name").unwrap_or_default();
+            let ref_column: String = row.try_get::<String, _>("foreign_column_name").unwrap_or_default();
 
             fk_map
                 .entry(fk_name.clone())
                 .or_insert_with(|| ForeignKeyInfo {
                     name: fk_name.clone(),
-                    table_name: row.get("table_name"),
-                    schema: Some(row.get::<_, String>("table_schema")),
+                    table_name: row.try_get::<String, _>("table_name").unwrap_or_default(),
+                    schema: Some(row.try_get::<String, _>("table_schema").unwrap_or_default()),
                     columns: Vec::new(),
-                    referenced_table: row.get("foreign_table_name"),
-                    referenced_schema: Some(row.get::<_, String>("foreign_table_schema")),
+                    referenced_table: row.try_get::<String, _>("foreign_table_name").unwrap_or_default(),
+                    referenced_schema: Some(row.try_get::<String, _>("foreign_table_schema").unwrap_or_default()),
                     referenced_columns: Vec::new(),
-                    on_delete: Some(row.get::<_, String>("delete_rule")),
-                    on_update: Some(row.get::<_, String>("update_rule")),
+                    on_delete: Some(row.try_get::<String, _>("delete_rule").unwrap_or_default()),
+                    on_update: Some(row.try_get::<String, _>("update_rule").unwrap_or_default()),
                 })
                 .columns
                 .push(column);
@@ -937,10 +924,10 @@ impl DbAdapter for PostgresAdapter {
         let schema_name = schema.unwrap_or("public");
 
         // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let query = "
             SELECT
@@ -951,7 +938,7 @@ impl DbAdapter for PostgresAdapter {
             ORDER BY table_name
         ";
 
-        let rows = client.query(query, &[&schema_name]).await.map_err(|e| {
+        let rows = sqlx::query(query).bind(schema_name).fetch_all(pool).await.map_err(|e| {
             DataError::Query(format!(
                 "Failed to get views for schema '{}': {}",
                 schema_name, e
@@ -961,8 +948,8 @@ impl DbAdapter for PostgresAdapter {
         let views = rows
             .iter()
             .map(|row| ViewInfo {
-                name: row.get("table_name"),
-                schema: Some(row.get::<_, String>("table_schema")),
+                name: row.try_get::<String, _>("table_name").unwrap_or_default(),
+                schema: Some(row.try_get::<String, _>("table_schema").unwrap_or_default()),
                 definition: None, // Definition retrieved separately via get_view_definition
             })
             .collect();
@@ -986,10 +973,10 @@ impl DbAdapter for PostgresAdapter {
         let schema_name = schema.unwrap_or("public");
 
         // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let query = "
             SELECT view_definition
@@ -997,8 +984,10 @@ impl DbAdapter for PostgresAdapter {
             WHERE table_name = $1 AND table_schema = $2
         ";
 
-        let rows = client
-            .query(query, &[&view_name, &schema_name])
+        let rows = sqlx::query(query)
+            .bind(view_name)
+            .bind(schema_name)
+            .fetch_all(pool)
             .await
             .map_err(|e| {
                 DataError::Query(format!(
@@ -1007,7 +996,7 @@ impl DbAdapter for PostgresAdapter {
                 ))
             })?;
 
-        Ok(rows.first().map(|row| row.get("view_definition")))
+        Ok(rows.first().and_then(|row| row.try_get::<String, _>("view_definition").ok()))
     }
 
     async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
@@ -1022,10 +1011,10 @@ impl DbAdapter for PostgresAdapter {
         let schema_name = schema.unwrap_or("public");
 
         // Get client
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let query = "
             SELECT
@@ -1040,7 +1029,7 @@ impl DbAdapter for PostgresAdapter {
             ORDER BY p.proname
         ";
 
-        let rows = client.query(query, &[&schema_name]).await.map_err(|e| {
+        let rows = sqlx::query(query).bind(schema_name).fetch_all(pool).await.map_err(|e| {
             DataError::Query(format!(
                 "Failed to get stored procedures for schema '{}': {}",
                 schema_name, e
@@ -1050,10 +1039,10 @@ impl DbAdapter for PostgresAdapter {
         let procedures = rows
             .iter()
             .map(|row| ProcedureInfo {
-                name: row.get("name"),
-                schema: Some(row.get::<_, String>("schema")),
-                return_type: Some(row.get::<_, String>("return_type")),
-                language: Some(row.get::<_, String>("language")),
+                name: row.try_get::<String, _>("name").unwrap_or_default(),
+                schema: Some(row.try_get::<String, _>("schema").unwrap_or_default()),
+                return_type: Some(row.try_get::<String, _>("return_type").unwrap_or_default()),
+                language: Some(row.try_get::<String, _>("language").unwrap_or_default()),
             })
             .collect();
 
@@ -1068,17 +1057,17 @@ impl DbAdapter for PostgresAdapter {
                 "Not connected - call connect() first".to_string(),
             ));
         }
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
-        let rows = client
-            .query("SELECT version()", &[])
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        let rows = sqlx::query("SELECT version()")
+            .fetch_all(pool)
             .await
             .map_err(|e| DataError::Query(format!("Failed to get server info: {}", e)))?;
         let version = rows
             .first()
-            .map(|row| row.get::<_, String>(0))
+            .map(|row| row.try_get::<String, _>(0).unwrap_or_default())
             .unwrap_or_else(|| "Unknown".to_string());
         Ok(ServerInfo {
             version,
@@ -1113,8 +1102,6 @@ impl DbAdapter for PostgresAdapter {
             ));
         }
 
-        let _schema_name = schema.unwrap_or("public");
-
         // Validate all rows have the same column count
         for (idx, row) in rows.iter().enumerate() {
             if row.len() != columns.len() {
@@ -1127,12 +1114,61 @@ impl DbAdapter for PostgresAdapter {
             }
         }
 
-        // Note: tokio-postgres doesn't support easy dynamic parameter binding
-        // For a production system, consider using prepared statements in transactions
-        // For now, return NotSupported to indicate this needs special handling
-        return Err(DataError::NotSupported(
-            "bulk_insert requires parameterized statement support - use transactions with individual inserts".to_string()
-        ));
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+
+        let schema_prefix = schema.map(|s| format!("{}.", s)).unwrap_or_default();
+        let column_list = columns.join(", ");
+
+        // PostgreSQL uses globally numbered $1, $2, ... placeholders
+        let mut param_idx = 1usize;
+        let row_placeholders: Vec<String> = rows
+            .iter()
+            .map(|_| {
+                let ph = (0..columns.len())
+                    .map(|_| {
+                        let p = format!("${}", param_idx);
+                        param_idx += 1;
+                        p
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("({})", ph)
+            })
+            .collect();
+
+        let query_str = format!(
+            "INSERT INTO {}{} ({}) VALUES {}",
+            schema_prefix,
+            table_name,
+            column_list,
+            row_placeholders.join(", ")
+        );
+
+        let mut query_builder = sqlx::query(&query_str);
+        for row in rows {
+            for value in row {
+                query_builder = match value {
+                    QueryValue::Null => query_builder.bind(None::<String>),
+                    QueryValue::Int(v) => query_builder.bind(*v),
+                    QueryValue::Float(v) => query_builder.bind(*v),
+                    QueryValue::Text(v) => query_builder.bind(v),
+                    QueryValue::Bool(v) => query_builder.bind(*v),
+                    QueryValue::Bytes(v) => query_builder.bind(v),
+                };
+            }
+        }
+
+        let result = query_builder.execute(pool).await.map_err(|e| {
+            DataError::Query(format!(
+                "Failed to bulk insert into {}{}: {}",
+                schema_prefix, table_name, e
+            ))
+        })?;
+
+        Ok(result.rows_affected())
     }
 
     #[instrument(skip(self, updates), fields(adapter = "postgres", table = %table_name))]
@@ -1155,10 +1191,10 @@ impl DbAdapter for PostgresAdapter {
 
         let schema_name = schema.unwrap_or("public");
 
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let mut total_affected = 0u64;
 
@@ -1180,14 +1216,14 @@ impl DbAdapter for PostgresAdapter {
                 filter_to_sql(filter)
             );
 
-            let result = client.execute(&query, &[]).await.map_err(|e| {
+            let result = sqlx::query(&query).execute(pool).await.map_err(|e| {
                 DataError::Query(format!(
                     "Failed to bulk update {}.{}: {}",
                     schema_name, table_name, e
                 ))
             })?;
 
-            total_affected += result;
+            total_affected += result.rows_affected();
         }
 
         Ok(total_affected)
@@ -1213,10 +1249,10 @@ impl DbAdapter for PostgresAdapter {
 
         let schema_name = schema.unwrap_or("public");
 
-        let client_guard = self.client.read().await;
-        let client = client_guard
+        let pool_guard = self.pool.read().await;
+        let pool = pool_guard
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Client not available".to_string()))?;
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let mut total_affected = 0u64;
 
@@ -1228,142 +1264,179 @@ impl DbAdapter for PostgresAdapter {
                 filter_to_sql(filter)
             );
 
-            let result = client.execute(&query, &[]).await.map_err(|e| {
+            let result = sqlx::query(&query).execute(pool).await.map_err(|e| {
                 DataError::Query(format!(
                     "Failed to bulk delete from {}.{}: {}",
                     schema_name, table_name, e
                 ))
             })?;
 
-            total_affected += result;
+            total_affected += result.rows_affected();
         }
 
         Ok(total_affected)
     }
 }
 
+
 impl PostgresAdapter {
-    /// Convert a PostgreSQL value to QueryValue
-    fn convert_postgres_value(
-        &self,
-        row: &tokio_postgres::Row,
-        col_idx: usize,
-        col_type: &Type,
-    ) -> Result<QueryValue> {
-        // Check for NULL first
-        if row
-            .try_get::<_, Option<String>>(col_idx)
-            .ok()
-            .flatten()
-            .is_none()
-            && !matches!(
-                col_type,
-                &Type::BOOL
-                    | &Type::INT2
-                    | &Type::INT4
-                    | &Type::INT8
-                    | &Type::FLOAT4
-                    | &Type::FLOAT8
-            )
-        {
-            return Ok(QueryValue::Null);
+    /// Convert a PostgreSQL row to a vector of QueryValues using sqlx PgRow
+    fn row_to_values(row: &PgRow) -> Result<Vec<QueryValue>> {
+        let mut values = Vec::new();
+
+        for (i, column) in row.columns().iter().enumerate() {
+            let type_name = column.type_info().name();
+
+            let value = match type_name {
+                "BOOL" => {
+                    let val: Option<bool> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get bool value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Bool(v),
+                        None => QueryValue::Null,
+                    }
+                }
+                "INT2" => {
+                    let val: Option<i16> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get int2 value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Int(v as i64),
+                        None => QueryValue::Null,
+                    }
+                }
+                "INT4" => {
+                    let val: Option<i32> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get int4 value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Int(v as i64),
+                        None => QueryValue::Null,
+                    }
+                }
+                "INT8" => {
+                    let val: Option<i64> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get int8 value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Int(v),
+                        None => QueryValue::Null,
+                    }
+                }
+                "FLOAT4" => {
+                    let val: Option<f32> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get float4 value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Float(v as f64),
+                        None => QueryValue::Null,
+                    }
+                }
+                "FLOAT8" => {
+                    let val: Option<f64> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get float8 value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Float(v),
+                        None => QueryValue::Null,
+                    }
+                }
+                "NUMERIC" => {
+                    let val: Option<sqlx::types::Decimal> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get numeric value: {}", e))
+                    })?;
+                    match val {
+                        Some(d) => d
+                            .to_string()
+                            .parse::<f64>()
+                            .map(QueryValue::Float)
+                            .unwrap_or_else(|_| QueryValue::Text(d.to_string())),
+                        None => QueryValue::Null,
+                    }
+                }
+                "TEXT" | "VARCHAR" | "BPCHAR" | "NAME" | "UNKNOWN" => {
+                    let val: Option<String> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get text value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Text(v),
+                        None => QueryValue::Null,
+                    }
+                }
+                "BYTEA" => {
+                    let val: Option<Vec<u8>> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get bytes value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Bytes(v),
+                        None => QueryValue::Null,
+                    }
+                }
+                "DATE" => {
+                    use sqlx::types::chrono::NaiveDate;
+                    let val: Option<NaiveDate> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get date value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d").to_string()),
+                        None => QueryValue::Null,
+                    }
+                }
+                "TIMESTAMP" => {
+                    use sqlx::types::chrono::NaiveDateTime;
+                    let val: Option<NaiveDateTime> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get timestamp value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()),
+                        None => QueryValue::Null,
+                    }
+                }
+                "TIMESTAMPTZ" => {
+                    use sqlx::types::chrono::{DateTime, Utc};
+                    let val: Option<DateTime<Utc>> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!("Failed to get timestamptz value: {}", e))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S UTC").to_string()),
+                        None => QueryValue::Null,
+                    }
+                }
+                // Default: try as string
+                _ => {
+                    let val: Option<String> = row.try_get(i).map_err(|e| {
+                        DataError::Query(format!(
+                            "Failed to get value for type {}: {}",
+                            type_name, e
+                        ))
+                    })?;
+                    match val {
+                        Some(v) => QueryValue::Text(v),
+                        None => QueryValue::Null,
+                    }
+                }
+            };
+
+            values.push(value);
         }
 
-        // Type conversion based on PostgreSQL type
-        match col_type {
-            &Type::BOOL => row
-                .try_get::<_, Option<bool>>(col_idx)
-                .map(|v| v.map(QueryValue::Bool).unwrap_or(QueryValue::Null))
-                .map_err(|e| DataError::TypeConversion(format!("Failed to convert bool: {}", e))),
-
-            &Type::INT2 => row
-                .try_get::<_, Option<i16>>(col_idx)
-                .map(|v| {
-                    v.map(|i| QueryValue::Int(i as i64))
-                        .unwrap_or(QueryValue::Null)
-                })
-                .map_err(|e| DataError::TypeConversion(format!("Failed to convert int2: {}", e))),
-
-            &Type::INT4 => row
-                .try_get::<_, Option<i32>>(col_idx)
-                .map(|v| {
-                    v.map(|i| QueryValue::Int(i as i64))
-                        .unwrap_or(QueryValue::Null)
-                })
-                .map_err(|e| DataError::TypeConversion(format!("Failed to convert int4: {}", e))),
-
-            &Type::INT8 => row
-                .try_get::<_, Option<i64>>(col_idx)
-                .map(|v| v.map(QueryValue::Int).unwrap_or(QueryValue::Null))
-                .map_err(|e| DataError::TypeConversion(format!("Failed to convert int8: {}", e))),
-
-            &Type::FLOAT4 => row
-                .try_get::<_, Option<f32>>(col_idx)
-                .map(|v| {
-                    v.map(|f| QueryValue::Float(f as f64))
-                        .unwrap_or(QueryValue::Null)
-                })
-                .map_err(|e| DataError::TypeConversion(format!("Failed to convert float4: {}", e))),
-
-            &Type::FLOAT8 => row
-                .try_get::<_, Option<f64>>(col_idx)
-                .map(|v| v.map(QueryValue::Float).unwrap_or(QueryValue::Null))
-                .map_err(|e| DataError::TypeConversion(format!("Failed to convert float8: {}", e))),
-
-            &Type::TEXT | &Type::VARCHAR | &Type::CHAR | &Type::NAME => row
-                .try_get::<_, Option<String>>(col_idx)
-                .map(|v| v.map(QueryValue::Text).unwrap_or(QueryValue::Null))
-                .map_err(|e| DataError::TypeConversion(format!("Failed to convert text: {}", e))),
-
-            &Type::BYTEA => row
-                .try_get::<_, Option<Vec<u8>>>(col_idx)
-                .map(|v| v.map(QueryValue::Bytes).unwrap_or(QueryValue::Null))
-                .map_err(|e| DataError::TypeConversion(format!("Failed to convert bytes: {}", e))),
-
-            // Default: try to convert to string
-            _ => row
-                .try_get::<_, Option<String>>(col_idx)
-                .map(|v| v.map(QueryValue::Text).unwrap_or(QueryValue::Null))
-                .map_err(|e| {
-                    DataError::TypeConversion(format!(
-                        "Failed to convert type {:?}: {}",
-                        col_type, e
-                    ))
-                }),
-        }
+        Ok(values)
     }
 
-    /// Convert a value from a Polars Series to a PostgreSQL ToSql parameter
-    ///
-    /// Extracts the value at `row_idx` from the `series` and converts it to a type
-    /// that implements `ToSql` for use in parameterized queries.
-    fn series_value_to_sql(
+    /// Bind a Series value at a specific row index to a sqlx postgres query
+    fn bind_series_value<'q>(
         &self,
+        query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
         series: &Series,
         row_idx: usize,
-    ) -> Result<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> {
-        // Check if value is null by getting the null mask and checking the index
+    ) -> Result<sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>> {
         let null_mask = series.is_null();
         if null_mask.get(row_idx).unwrap_or(false) {
-            // Return type-appropriate NULL so tokio-postgres serializes with the correct OID
-            return match series.dtype() {
-                DataType::Boolean => Ok(Box::new(None::<bool>)),
-                DataType::Int8
-                | DataType::Int16
-                | DataType::Int32
-                | DataType::UInt8
-                | DataType::UInt16
-                | DataType::UInt32 => Ok(Box::new(None::<i32>)),
-                DataType::Int64 | DataType::UInt64 => Ok(Box::new(None::<i64>)),
-                DataType::Float32 => Ok(Box::new(None::<f32>)),
-                DataType::Float64 => Ok(Box::new(None::<f64>)),
-                DataType::Binary => Ok(Box::new(None::<Vec<u8>>)),
-                _ => Ok(Box::new(None::<String>)), // TEXT / fallback
-            };
+            return Ok(query.bind(None::<String>));
         }
 
-        // Convert based on Series data type
-        match series.dtype() {
+        let bound_query = match series.dtype() {
             DataType::Boolean => {
                 let val = series
                     .bool()
@@ -1372,7 +1445,7 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val))
+                query.bind(val)
             }
             DataType::Int8 | DataType::Int16 => {
                 let series_i32 = series
@@ -1385,7 +1458,7 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val))
+                query.bind(val)
             }
             DataType::Int32 => {
                 let val = series
@@ -1395,7 +1468,7 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val))
+                query.bind(val)
             }
             DataType::Int64 => {
                 let val = series
@@ -1405,10 +1478,10 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val))
+                query.bind(val)
             }
             DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
-                // Convert unsigned to signed for PostgreSQL
+                // Cast unsigned to signed i32 for PostgreSQL INTEGER
                 let series_i32 = series
                     .cast(&DataType::Int32)
                     .map_err(|e| DataError::TypeConversion(e.to_string()))?;
@@ -1419,10 +1492,10 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val))
+                query.bind(val)
             }
             DataType::UInt64 => {
-                // Convert unsigned to signed for PostgreSQL
+                // Cast unsigned u64 to signed i64 for PostgreSQL BIGINT
                 let series_i64 = series
                     .cast(&DataType::Int64)
                     .map_err(|e| DataError::TypeConversion(e.to_string()))?;
@@ -1433,7 +1506,7 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val))
+                query.bind(val)
             }
             DataType::Float32 => {
                 let val = series
@@ -1443,7 +1516,7 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val))
+                query.bind(val)
             }
             DataType::Float64 => {
                 let val = series
@@ -1453,7 +1526,7 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val))
+                query.bind(val)
             }
             DataType::String => {
                 let val = series
@@ -1463,7 +1536,7 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val.to_string()))
+                query.bind(val.to_string())
             }
             DataType::Binary => {
                 let val = series
@@ -1473,10 +1546,10 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val.to_vec()))
+                query.bind(val.to_vec())
             }
             dtype => {
-                // For unsupported types, try to convert to string
+                // Fallback: cast to String
                 let series_str = series.cast(&DataType::String).map_err(|e| {
                     DataError::TypeConversion(format!(
                         "Cannot convert {:?} to PostgreSQL type: {}",
@@ -1490,9 +1563,11 @@ impl PostgresAdapter {
                     .ok_or_else(|| {
                         DataError::DataFrame(format!("Index {} out of bounds", row_idx))
                     })?;
-                Ok(Box::new(val.to_string()))
+                query.bind(val.to_string())
             }
-        }
+        };
+
+        Ok(bound_query)
     }
 
     /// Generate CREATE TABLE SQL from DataFrame schema
