@@ -454,7 +454,12 @@ impl OracleAdapter {
     /// Execute a query in blocking context
     #[instrument(skip(self, query), fields(adapter = "oracle", query_length = query.len()))]
     async fn execute_query_blocking(&self, query: String) -> Result<QueryResult> {
-        debug!("Executing query in blocking context");
+        let sql_type = super::common::detect_sql_type(&query);
+        debug!(
+            sql_type,
+            sql_preview = %super::common::sql_preview(&query, 100),
+            "Executing query in blocking context"
+        );
 
         // Get the connection outside of spawn_blocking to avoid lifetime issues
         let connection = self.connection.clone();
@@ -465,18 +470,18 @@ impl OracleAdapter {
             let handle = tokio::runtime::Handle::current();
             let conn_guard = handle.block_on(connection.read());
             let conn = conn_guard.as_ref().ok_or_else(|| {
-                error!("Connection not available");
+                error!(adapter = "oracle", operation = "execute_query", "Not connected");
                 DataError::Connection("Not connected".to_string())
             })?;
 
             // Prepare and execute the statement
             let mut stmt = conn.statement(&query).build().map_err(|e| {
-                error!(error = %e, "Failed to prepare statement");
+                error!(adapter = "oracle", operation = "execute_query", error = %e, "Failed to prepare statement");
                 DataError::Query(format!("Failed to prepare statement: {}", e))
             })?;
 
             let result_set = stmt.query(&[]).map_err(|e| {
-                error!(error = %e, "Query execution failed");
+                error!(adapter = "oracle", operation = "execute_query", error = %e, "Query execution failed");
                 DataError::Query(format!("Query execution failed: {}", e))
             })?;
 
@@ -506,15 +511,16 @@ impl OracleAdapter {
         })
         .await
         .map_err(|e| {
-            error!(error = %e, "Task join error");
+            error!(adapter = "oracle", operation = "execute_query", error = %e, "Task join error");
             DataError::Connection(format!("Task join error: {}", e))
         })??;
 
         let duration = start.elapsed();
-        let row_count = result.rows.len();
         info!(
-            rows = row_count,
+            sql_type,
             duration_ms = duration.as_millis(),
+            rows = result.rows.len(),
+            columns = result.columns.len(),
             "Query executed successfully"
         );
 
@@ -536,22 +542,24 @@ impl ConnectionTrait for OracleAdapter {
         info!("Connecting to Oracle database");
 
         if self.config.db_type != DatabaseType::Oracle {
-            error!("Invalid database type configuration");
+            error!(adapter = "oracle", operation = "connect", "Invalid database type configuration");
             return Err(DataError::Config(format!(
                 "Invalid database type: expected Oracle, got {:?}",
                 self.config.db_type
             )));
         }
 
+        debug!("Oracle uses a single connection per adapter instance (no connection pool)");
         let (username, password, connect_string) =
             Self::build_connection_params(&self.config, None);
+        debug!(username = %username, "Spawning blocking task for Oracle connection");
         let connection = self.connection.clone();
         let connected = self.connected.clone();
 
         tokio::task::spawn_blocking(move || {
             let conn = oracle::Connection::connect(&username, &password, &connect_string).map_err(
                 |e| {
-                    error!(error = %e, "Failed to establish Oracle connection");
+                    error!(adapter = "oracle", operation = "connect", error = %e, "Failed to establish Oracle connection");
                     DataError::Connection(format!("Failed to connect: {}", e))
                 },
             )?;
@@ -568,7 +576,7 @@ impl ConnectionTrait for OracleAdapter {
         })
         .await
         .map_err(|e| {
-            error!(error = %e, "Task join error during connection");
+            error!(adapter = "oracle", operation = "connect", error = %e, "Task join error during connection");
             DataError::Connection(format!("Task join error: {}", e))
         })?
     }
@@ -613,7 +621,7 @@ impl ConnectionTrait for OracleAdapter {
                 Ok(true)
             }
             Err(e) => {
-                error!(error = ?e, "Health check query failed");
+                error!(adapter = "oracle", operation = "health_check", error = ?e, "Health check query failed");
                 Ok(false)
             }
         }
@@ -688,6 +696,7 @@ impl DbAdapter for OracleAdapter {
 
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         if !*self.connected.read().await {
+            error!(adapter = "oracle", operation = "execute_query", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -699,7 +708,21 @@ impl DbAdapter for OracleAdapter {
         if Self::is_select_query(query) {
             self.execute_query_blocking(query.to_string()).await
         } else {
+            let sql_type = super::common::detect_sql_type(query);
+            debug!(
+                sql_type,
+                sql_preview = %super::common::sql_preview(query, 100),
+                "Executing DDL/DML statement"
+            );
+            let start = std::time::Instant::now();
             let rows_affected = self.execute_statement_blocking(query.to_string()).await?;
+            info!(
+                sql_type,
+                duration_ms = start.elapsed().as_millis(),
+                rows_affected,
+                columns = 0usize,
+                "DDL/DML executed"
+            );
             Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
@@ -721,6 +744,16 @@ impl DbAdapter for OracleAdapter {
                 "Not connected - call connect() first".to_string(),
             ));
         }
+
+        let nrows = df.height();
+        info!(
+            table = %table_name,
+            rows = nrows,
+            columns = df.width(),
+            replace,
+            "Starting DataFrame export"
+        );
+        let export_start = std::time::Instant::now();
 
         let table_upper = table_name.to_uppercase();
 
@@ -749,8 +782,8 @@ impl DbAdapter for OracleAdapter {
             self.execute_statement_blocking(create_sql).await?;
         }
 
-        let nrows = df.height();
         if nrows == 0 {
+            info!(table = %table_name, rows_written = 0u64, duration_ms = export_start.elapsed().as_millis(), "DataFrame export complete");
             return Ok(0);
         }
 
@@ -783,8 +816,17 @@ impl DbAdapter for OracleAdapter {
                 literals.join(", ")
             );
             total += self.execute_statement_blocking(insert_sql).await?;
+            if (row_idx + 1) % 1000 == 0 {
+                debug!(rows_inserted = total, total_rows = nrows, "Export progress");
+            }
         }
 
+        info!(
+            table = %table_name,
+            rows_written = total,
+            duration_ms = export_start.elapsed().as_millis(),
+            "DataFrame export complete"
+        );
         Ok(total)
     }
 
@@ -800,7 +842,7 @@ impl DbAdapter for OracleAdapter {
         debug!("Listing tables");
 
         if !*self.connected.read().await {
-            error!("List tables failed: not connected");
+            error!(adapter = "oracle", operation = "list_tables", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -843,7 +885,7 @@ impl DbAdapter for OracleAdapter {
         debug!("Finding tables by pattern");
 
         if !*self.connected.read().await {
-            error!("Find tables failed: not connected");
+            error!(adapter = "oracle", operation = "find_tables", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));

@@ -71,7 +71,12 @@ impl DuckDbAdapter {
     /// Execute a query in a blocking context
     #[instrument(skip(self, query), fields(adapter = "duckdb", query_length = query.len()))]
     async fn execute_query_blocking(&self, query: String) -> Result<QueryResult> {
-        debug!("Executing query in blocking context");
+        let sql_type = super::common::detect_sql_type(&query);
+        debug!(
+            sql_type,
+            sql_preview = %super::common::sql_preview(&query, 100),
+            "Executing query in blocking context"
+        );
         let start = std::time::Instant::now();
         let connection = self.connection.clone();
 
@@ -81,7 +86,7 @@ impl DuckDbAdapter {
                 .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
 
             let conn = conn_guard.as_ref().ok_or_else(|| {
-                error!("Query attempted while not connected");
+                error!(adapter = "duckdb", operation = "execute_query", "Not connected");
                 DataError::Connection("Not connected".to_string())
             })?;
 
@@ -126,14 +131,16 @@ impl DuckDbAdapter {
         })
         .await
         .map_err(|e| {
-            error!(error = %e, "Task join error");
+            error!(adapter = "duckdb", operation = "execute_query", error = %e, "Task join error");
             DataError::Connection(format!("Task join error: {}", e))
         })??;
 
         let duration = start.elapsed();
         info!(
-            rows = result.rows.len(),
+            sql_type,
             duration_ms = duration.as_millis(),
+            rows = result.rows.len(),
+            columns = result.columns.len(),
             "Query executed successfully"
         );
 
@@ -238,13 +245,15 @@ impl ConnectionTrait for DuckDbAdapter {
                 "Invalid database type: expected DuckDB, got {:?}",
                 self.config.db_type
             ));
-            error!(error = %err, "Invalid database type");
+            error!(adapter = "duckdb", operation = "connect", error = %err, "Invalid database type");
             return Err(err);
         }
 
         Self::validate_database_path(&self.config.database)?;
 
-        info!(database = %self.config.database, "Connecting to DuckDB");
+        let mode = if self.config.database == ":memory:" { "in-memory" } else { "file" };
+        info!(database = %self.config.database, mode, "Connecting to DuckDB");
+        debug!("DuckDB uses a single connection per adapter instance (no connection pool)");
 
         let path = self.config.database.clone();
         let connection = self.connection.clone();
@@ -256,7 +265,7 @@ impl ConnectionTrait for DuckDbAdapter {
                 duckdb::Connection::open(&path)
             }
             .map_err(|e| {
-                error!(error = %e, "Failed to open DuckDB connection");
+                error!(adapter = "duckdb", operation = "connect", error = %e, "Failed to open DuckDB connection");
                 DataError::Connection(format!("Failed to connect: {}", e))
             })?;
 
@@ -269,7 +278,7 @@ impl ConnectionTrait for DuckDbAdapter {
         })
         .await
         .map_err(|e| {
-            error!(error = %e, "Task join error during connect");
+            error!(adapter = "duckdb", operation = "connect", error = %e, "Task join error during connect");
             DataError::Connection(format!("Task join error: {}", e))
         })?
         .map(|()| {
@@ -375,11 +384,21 @@ impl DbAdapter for DuckDbAdapter {
         replace: bool,
     ) -> Result<u64> {
         if !ConnectionTrait::is_connected(self) {
-            error!("duckdb connection error - not connected");
+            error!(adapter = "duckdb", operation = "export_dataframe", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
+
+        let nrows = df.height();
+        info!(
+            table = %table_name,
+            rows = nrows,
+            columns = df.width(),
+            replace,
+            "Starting DataFrame export"
+        );
+        let export_start = std::time::Instant::now();
 
         if replace {
             let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
@@ -406,14 +425,15 @@ impl DbAdapter for DuckDbAdapter {
             .map(|s| s.to_string())
             .collect();
 
-        if column_names.is_empty() || df.height() == 0 {
+        if column_names.is_empty() || nrows == 0 {
+            info!(table = %table_name, rows_written = 0u64, duration_ms = export_start.elapsed().as_millis(), "DataFrame export complete");
             return Ok(0);
         }
 
         let cols_clause = column_names.join(", ");
         let mut rows_inserted = 0u64;
 
-        for row_idx in 0..df.height() {
+        for row_idx in 0..nrows {
             let mut literals = Vec::with_capacity(column_names.len());
             for col_name in &column_names {
                 let col = df.column(col_name).map_err(|e| {
@@ -430,8 +450,17 @@ impl DbAdapter for DuckDbAdapter {
             );
             self.execute_statement_blocking(insert_sql).await?;
             rows_inserted += 1;
+            if rows_inserted % 1000 == 0 {
+                debug!(rows_inserted, total_rows = nrows, "Export progress");
+            }
         }
 
+        info!(
+            table = %table_name,
+            rows_written = rows_inserted,
+            duration_ms = export_start.elapsed().as_millis(),
+            "DataFrame export complete"
+        );
         Ok(rows_inserted)
     }
 
@@ -461,7 +490,7 @@ impl DbAdapter for DuckDbAdapter {
             return Ok(0);
         }
         if !ConnectionTrait::is_connected(self) {
-            error!("duckdb connection error - not connected");
+            error!(adapter = "duckdb", operation = "bulk_insert", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -516,7 +545,7 @@ impl DbAdapter for DuckDbAdapter {
             return Ok(0);
         }
         if !ConnectionTrait::is_connected(self) {
-            error!("duckdb connection error - not connected");
+            error!(adapter = "duckdb", operation = "bulk_update", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -557,7 +586,7 @@ impl DbAdapter for DuckDbAdapter {
             return Ok(0);
         }
         if !ConnectionTrait::is_connected(self) {
-            error!("duckdb connection error - not connected");
+            error!(adapter = "duckdb", operation = "bulk_delete", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));

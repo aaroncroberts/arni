@@ -201,7 +201,7 @@ impl ConnectionTrait for MongoDbAdapter {
                 "Invalid database type: expected MongoDB, got {:?}",
                 self.config.db_type
             ));
-            error!(error = %err, "Invalid database type");
+            error!(adapter = "mongodb", operation = "connect", error = %err, "Invalid database type");
             return Err(err);
         }
 
@@ -211,6 +211,7 @@ impl ConnectionTrait for MongoDbAdapter {
         let port = self.config.port.unwrap_or(27017);
         info!(host, port, database = %self.config.database, "Connecting to MongoDB");
 
+        debug!("MongoDB connection pooling is managed by the mongodb driver");
         let password = self.password.as_deref();
         let connection_string = Self::build_connection_string(&self.config, password);
 
@@ -251,7 +252,7 @@ impl ConnectionTrait for MongoDbAdapter {
                         self.config.port.unwrap_or(27017),
                         e
                     ));
-                    error!(error = %err, "MongoDB authentication failed");
+                    error!(adapter = "mongodb", operation = "connect", error = %err, "MongoDB authentication failed");
                     err
                 } else if error_msg.contains("connection refused")
                     || error_msg.contains("No connection available")
@@ -262,7 +263,7 @@ impl ConnectionTrait for MongoDbAdapter {
                         self.config.port.unwrap_or(27017),
                         e
                     ));
-                    error!(error = %err, "MongoDB network error");
+                    error!(adapter = "mongodb", operation = "connect", error = %err, "MongoDB network error");
                     err
                 } else if error_msg.contains("not master") || error_msg.contains("replica set") {
                     let err = DataError::Connection(format!(
@@ -271,7 +272,7 @@ impl ConnectionTrait for MongoDbAdapter {
                         self.config.port.unwrap_or(27017),
                         e
                     ));
-                    error!(error = %err, "MongoDB replica set error");
+                    error!(adapter = "mongodb", operation = "connect", error = %err, "MongoDB replica set error");
                     err
                 } else if error_msg.contains("unauthorized") {
                     let err = DataError::Authentication(format!(
@@ -281,7 +282,7 @@ impl ConnectionTrait for MongoDbAdapter {
                         self.config.port.unwrap_or(27017),
                         e
                     ));
-                    error!(error = %err, "MongoDB unauthorized access");
+                    error!(adapter = "mongodb", operation = "connect", error = %err, "MongoDB unauthorized access");
                     err
                 } else {
                     let err = DataError::Connection(format!(
@@ -291,7 +292,7 @@ impl ConnectionTrait for MongoDbAdapter {
                         self.config.port.unwrap_or(27017),
                         e
                     ));
-                    error!(error = %err, "MongoDB connection failed");
+                    error!(adapter = "mongodb", operation = "connect", error = %err, "MongoDB connection failed");
                     err
                 }
             })?;
@@ -359,11 +360,17 @@ impl DbAdapter for MongoDbAdapter {
 
     #[instrument(skip(self, query), fields(adapter = "mongodb", query_length = query.len()))]
     async fn execute_query(&self, query: &str) -> Result<QueryResult, DataError> {
-        debug!("Executing MongoDB query");
+        // MongoDB queries are JSON documents; sql_type reflects that this is a FIND operation.
+        let sql_type = "FIND";
+        debug!(
+            sql_type,
+            sql_preview = %super::common::sql_preview(query, 100),
+            "Executing MongoDB query"
+        );
         let start = std::time::Instant::now();
 
         let client = self.client.as_ref().ok_or_else(|| {
-            error!("Query attempted while not connected");
+            error!(adapter = "mongodb", operation = "execute_query", "Not connected");
             DataError::Connection("Not connected".to_string())
         })?;
 
@@ -446,8 +453,10 @@ impl DbAdapter for MongoDbAdapter {
 
         let duration = start.elapsed();
         info!(
-            rows = results.len(),
+            sql_type,
             duration_ms = duration.as_millis(),
+            rows = results.len(),
+            columns = columns.len(),
             "Query executed successfully"
         );
 
@@ -547,6 +556,9 @@ impl DbAdapter for MongoDbAdapter {
         if rows.is_empty() {
             return Ok(0);
         }
+        debug!(table = %table_name, rows = rows.len(), "Starting bulk insert");
+        let bulk_start = std::time::Instant::now();
+
         let client = self
             .client
             .as_ref()
@@ -570,6 +582,13 @@ impl DbAdapter for MongoDbAdapter {
             .insert_many(docs)
             .await
             .map_err(|e| DataError::Query(format!("bulk_insert failed: {}", e)))?;
+
+        info!(
+            table = %table_name,
+            rows_inserted = count,
+            duration_ms = bulk_start.elapsed().as_millis(),
+            "Bulk insert complete"
+        );
         Ok(count)
     }
 
@@ -583,6 +602,9 @@ impl DbAdapter for MongoDbAdapter {
         if updates.is_empty() {
             return Ok(0);
         }
+        debug!(table = %table_name, update_count = updates.len(), "Starting bulk update");
+        let bulk_start = std::time::Instant::now();
+
         let client = self
             .client
             .as_ref()
@@ -607,6 +629,13 @@ impl DbAdapter for MongoDbAdapter {
                 .map_err(|e| DataError::Query(format!("bulk_update failed: {}", e)))?;
             total += result.modified_count;
         }
+
+        info!(
+            table = %table_name,
+            rows_modified = total,
+            duration_ms = bulk_start.elapsed().as_millis(),
+            "Bulk update complete"
+        );
         Ok(total)
     }
 

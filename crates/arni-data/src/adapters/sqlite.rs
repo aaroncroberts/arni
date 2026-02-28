@@ -231,7 +231,7 @@ impl ConnectionTrait for SqliteAdapter {
                 "Invalid database type: expected SQLite, got {:?}",
                 self.config.db_type
             ));
-            error!(error = %err, "Invalid database type");
+            error!(adapter = "sqlite", operation = "connect", error = %err, "Invalid database type");
             return Err(err);
         }
 
@@ -242,6 +242,14 @@ impl ConnectionTrait for SqliteAdapter {
         let conn_str = Self::build_connection_string(&self.config);
 
         let pc = self.config.pool_config.clone().unwrap_or_default();
+        debug!(
+            max_connections = pc.max_connections,
+            min_connections = pc.min_connections,
+            acquire_timeout_secs = pc.acquire_timeout_secs,
+            idle_timeout_secs = pc.idle_timeout_secs,
+            max_lifetime_secs = pc.max_lifetime_secs,
+            "Building SQLite connection pool"
+        );
         let pool = SqlitePoolOptions::new()
             .max_connections(pc.max_connections)
             .min_connections(pc.min_connections)
@@ -251,7 +259,7 @@ impl ConnectionTrait for SqliteAdapter {
             .connect(&conn_str)
             .await
             .map_err(|e| {
-                error!(error = %e, "Failed to connect to SQLite");
+                error!(adapter = "sqlite", operation = "connect", error = %e, "Failed to connect to SQLite");
                 DataError::Connection(format!("Failed to connect: {}", e))
             })?;
 
@@ -351,16 +359,21 @@ impl DbAdapter for SqliteAdapter {
 
     #[instrument(skip(self, query), fields(adapter = "sqlite", query_length = query.len()))]
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
-        debug!("Executing query");
+        let sql_type = super::common::detect_sql_type(query);
+        debug!(
+            sql_type,
+            sql_preview = %super::common::sql_preview(query, 100),
+            "Executing query"
+        );
         let start = std::time::Instant::now();
 
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!("Query attempted while not connected");
+            error!(adapter = "sqlite", operation = "execute_query", "Not connected");
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
         let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
-            error!(error = %e, "Query execution failed");
+            error!(adapter = "sqlite", operation = "execute_query", sql_type, error = %e, "Query execution failed");
             DataError::Query(format!("Query failed: {}", e))
         })?;
 
@@ -386,8 +399,10 @@ impl DbAdapter for SqliteAdapter {
 
         let duration = start.elapsed();
         info!(
-            rows = result_rows.len(),
+            sql_type,
             duration_ms = duration.as_millis(),
+            rows = result_rows.len(),
+            columns = columns.len(),
             "Query executed successfully"
         );
 
@@ -433,7 +448,7 @@ impl DbAdapter for SqliteAdapter {
         mode: TableSearchMode,
     ) -> Result<Vec<String>> {
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!("Find tables attempted while not connected");
+            error!(adapter = "sqlite", operation = "find_tables", "Not connected");
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
@@ -700,12 +715,22 @@ impl DbAdapter for SqliteAdapter {
     ) -> Result<u64> {
         {
             if self.pool.is_none() {
-                error!("sqlite connection error - not connected");
+                error!(adapter = "sqlite", operation = "export_dataframe", table = %table_name, "Not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
                 ));
             }
         }
+
+        let nrows = df.height();
+        info!(
+            table = %table_name,
+            rows = nrows,
+            columns = df.width(),
+            replace,
+            "Starting DataFrame export"
+        );
+        let export_start = std::time::Instant::now();
 
         if replace {
             let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
@@ -732,14 +757,15 @@ impl DbAdapter for SqliteAdapter {
             .map(|s| s.to_string())
             .collect();
 
-        if column_names.is_empty() || df.height() == 0 {
+        if column_names.is_empty() || nrows == 0 {
+            info!(table = %table_name, rows_written = 0u64, duration_ms = export_start.elapsed().as_millis(), "DataFrame export complete");
             return Ok(0);
         }
 
         let cols_clause = column_names.join(", ");
         let mut rows_inserted = 0u64;
 
-        for row_idx in 0..df.height() {
+        for row_idx in 0..nrows {
             let mut literals = Vec::with_capacity(column_names.len());
             for col_name in &column_names {
                 let col = df.column(col_name).map_err(|e| {
@@ -756,8 +782,17 @@ impl DbAdapter for SqliteAdapter {
             );
             self.execute_statement(&insert_sql).await?;
             rows_inserted += 1;
+            if rows_inserted % 1000 == 0 {
+                debug!(rows_inserted, total_rows = nrows, "Export progress");
+            }
         }
 
+        info!(
+            table = %table_name,
+            rows_written = rows_inserted,
+            duration_ms = export_start.elapsed().as_millis(),
+            "DataFrame export complete"
+        );
         Ok(rows_inserted)
     }
 
@@ -777,7 +812,7 @@ impl DbAdapter for SqliteAdapter {
         }
         {
             if self.pool.is_none() {
-                error!("sqlite connection error - not connected");
+                error!(adapter = "sqlite", operation = "bulk_insert", table = %table_name, "Not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
                 ));
@@ -833,7 +868,7 @@ impl DbAdapter for SqliteAdapter {
         }
         {
             if self.pool.is_none() {
-                error!("sqlite connection error - not connected");
+                error!(adapter = "sqlite", operation = "bulk_update", table = %table_name, "Not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
                 ));
@@ -876,7 +911,7 @@ impl DbAdapter for SqliteAdapter {
         }
         {
             if self.pool.is_none() {
-                error!("sqlite connection error - not connected");
+                error!(adapter = "sqlite", operation = "bulk_delete", table = %table_name, "Not connected");
                 return Err(DataError::Connection(
                     "Not connected - call connect() first".to_string(),
                 ));

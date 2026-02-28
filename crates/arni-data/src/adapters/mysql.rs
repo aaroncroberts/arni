@@ -340,11 +340,16 @@ impl MySqlAdapter {
     /// ```
     #[instrument(skip(self, query), fields(adapter = "mysql", query_length = query.len()))]
     pub async fn execute_query(&self, query: &str) -> Result<QueryResult> {
-        debug!("Executing query");
+        let sql_type = super::common::detect_sql_type(query);
+        debug!(
+            sql_type,
+            sql_preview = %super::common::sql_preview(query, 100),
+            "Executing query"
+        );
 
         // Check if connected
         if self.pool.is_none() {
-            error!("Query execution failed: not connected");
+            error!(adapter = "mysql", operation = "execute_query", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -352,12 +357,12 @@ impl MySqlAdapter {
 
         // Get pool
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!("Pool not available");
+            error!(adapter = "mysql", operation = "execute_query", "Pool not available");
             DataError::Connection("Pool not available".to_string())
         })?;
 
         let map_err = |e: sqlx::Error| {
-            error!(error = %e, "Query execution failed");
+            error!(adapter = "mysql", operation = "execute_query", sql_type, error = %e, "Query execution failed");
             let error_msg = e.to_string();
             if error_msg.contains("syntax") {
                 DataError::Query(format!("SQL syntax error: {}", e))
@@ -380,7 +385,9 @@ impl MySqlAdapter {
             let affected = result.rows_affected();
             let duration = start.elapsed();
             info!(
+                sql_type,
                 rows_affected = affected,
+                columns = 0usize,
                 duration_ms = duration.as_millis(),
                 "DML executed"
             );
@@ -394,15 +401,9 @@ impl MySqlAdapter {
         let rows = sqlx::query(query).fetch_all(pool).await.map_err(map_err)?;
 
         let duration = start.elapsed();
-        let row_count = rows.len();
-
-        info!(
-            rows = row_count,
-            duration_ms = duration.as_millis(),
-            "Query executed successfully"
-        );
 
         if rows.is_empty() {
+            info!(sql_type, duration_ms = duration.as_millis(), rows = 0usize, columns = 0usize, "Query executed successfully");
             debug!("Query returned no rows");
             return Ok(QueryResult {
                 columns: vec![],
@@ -418,6 +419,13 @@ impl MySqlAdapter {
             .map(|col| col.name().to_string())
             .collect();
 
+        info!(
+            sql_type,
+            duration_ms = duration.as_millis(),
+            rows = rows.len(),
+            columns = columns.len(),
+            "Query executed successfully"
+        );
         debug!(columns = columns.len(), "Extracted column metadata");
 
         // Convert rows to QueryValue vectors
@@ -450,12 +458,20 @@ impl Connection for MySqlAdapter {
         // Pull password from stored parameters if available.
         let password = self.config.parameters.get("password").map(String::as_str);
         let conn_str = self.build_connection_string(password).map_err(|e| {
-            error!(error = ?e, "Failed to build connection string");
+            error!(adapter = "mysql", operation = "connect", error = ?e, "Failed to build connection string");
             e
         })?;
 
         // Create connection pool with sqlx
         let pc = self.config.pool_config.clone().unwrap_or_default();
+        debug!(
+            max_connections = pc.max_connections,
+            min_connections = pc.min_connections,
+            acquire_timeout_secs = pc.acquire_timeout_secs,
+            idle_timeout_secs = pc.idle_timeout_secs,
+            max_lifetime_secs = pc.max_lifetime_secs,
+            "Building MySQL connection pool"
+        );
         let pool = MySqlPoolOptions::new()
             .max_connections(pc.max_connections)
             .min_connections(pc.min_connections)
@@ -465,7 +481,7 @@ impl Connection for MySqlAdapter {
             .connect(&conn_str)
             .await
             .map_err(|e| {
-                error!(error = %e, "Failed to establish connection");
+                error!(adapter = "mysql", operation = "connect", error = %e, "Failed to establish connection");
                 DataError::Connection(format!("Failed to connect: {}", e))
             })?;
 
@@ -504,7 +520,7 @@ impl Connection for MySqlAdapter {
 
         // Get pool
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!("Pool not available for health check");
+            error!(adapter = "mysql", operation = "health_check", "Pool not available for health check");
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -515,7 +531,7 @@ impl Connection for MySqlAdapter {
                 Ok(true)
             }
             Err(e) => {
-                error!(error = %e, "Health check query failed");
+                error!(adapter = "mysql", operation = "health_check", error = %e, "Health check query failed");
                 Err(DataError::Query(format!("Health check failed: {}", e)))
             }
         }
@@ -621,9 +637,18 @@ impl DbAdapter for MySqlAdapter {
         _schema: Option<&str>,
         replace: bool,
     ) -> Result<u64> {
+        info!(
+            table = %table_name,
+            rows = df.height(),
+            columns = df.width(),
+            replace,
+            "Starting DataFrame export"
+        );
+        let export_start = std::time::Instant::now();
+
         // Check connection
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "export_dataframe", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -686,8 +711,17 @@ impl DbAdapter for MySqlAdapter {
             })?;
 
             rows_inserted += 1;
+            if rows_inserted % 1000 == 0 {
+                debug!(rows_inserted, total_rows = df.height(), "Export progress");
+            }
         }
 
+        info!(
+            table = %table_name,
+            rows_written = rows_inserted,
+            duration_ms = export_start.elapsed().as_millis(),
+            "DataFrame export complete"
+        );
         Ok(rows_inserted)
     }
 
@@ -698,7 +732,7 @@ impl DbAdapter for MySqlAdapter {
     async fn list_databases(&self) -> Result<Vec<String>> {
         // Check connection
         if !Connection::is_connected(self) {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "list_databases", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -725,7 +759,7 @@ impl DbAdapter for MySqlAdapter {
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
         // Check connection
         if !Connection::is_connected(self) {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "list_tables", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -783,7 +817,7 @@ impl DbAdapter for MySqlAdapter {
         mode: TableSearchMode,
     ) -> Result<Vec<String>> {
         if !Connection::is_connected(self) {
-            error!("mysql find tables error - not connected");
+            error!(adapter = "mysql", operation = "find_tables", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -832,7 +866,7 @@ impl DbAdapter for MySqlAdapter {
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
         // Check connection
         if !Connection::is_connected(self) {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "describe_table", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -876,7 +910,7 @@ impl DbAdapter for MySqlAdapter {
                 .map_err(|e| DataError::Query(format!("Failed to describe table: {}", e)))?;
 
         if rows.is_empty() {
-            error!("mysql query failed - not connected");
+            error!(adapter = "mysql", operation = "describe_table", table = %table_name, schema = %schema_name, "Table not found in schema");
             return Err(DataError::Query(format!(
                 "Table '{}.{}' not found",
                 schema_name, table_name
@@ -929,7 +963,7 @@ impl DbAdapter for MySqlAdapter {
     async fn get_indexes(&self, table_name: &str, _schema: Option<&str>) -> Result<Vec<IndexInfo>> {
         // Check connection
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "get_indexes", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -993,7 +1027,7 @@ impl DbAdapter for MySqlAdapter {
     ) -> Result<Vec<ForeignKeyInfo>> {
         // Check connection
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "get_foreign_keys", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1067,7 +1101,7 @@ impl DbAdapter for MySqlAdapter {
     async fn get_views(&self, _schema: Option<&str>) -> Result<Vec<ViewInfo>> {
         // Check connection
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "get_views", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1109,7 +1143,7 @@ impl DbAdapter for MySqlAdapter {
     ) -> Result<Option<String>> {
         // Check connection
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "get_view_definition", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1145,7 +1179,7 @@ impl DbAdapter for MySqlAdapter {
     async fn list_stored_procedures(&self, _schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         // Check connection
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "list_stored_procedures", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1187,7 +1221,7 @@ impl DbAdapter for MySqlAdapter {
     #[instrument(skip(self), fields(adapter = "mysql"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "get_server_info", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1229,7 +1263,7 @@ impl DbAdapter for MySqlAdapter {
 
         // Check connection
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "bulk_insert", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1306,7 +1340,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "bulk_update", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1375,7 +1409,7 @@ impl DbAdapter for MySqlAdapter {
         }
 
         if self.pool.is_none() {
-            error!("mysql connection error - not connected");
+            error!(adapter = "mysql", operation = "bulk_delete", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));

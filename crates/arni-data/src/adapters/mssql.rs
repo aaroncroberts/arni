@@ -133,6 +133,14 @@ impl SqlServerAdapter {
         let tiberius_config = Self::build_config(config, password)?;
         let manager = bb8_tiberius::ConnectionManager::new(tiberius_config);
         let pc = config.pool_config.clone().unwrap_or_default();
+        debug!(
+            max_size = pc.max_connections,
+            min_idle = pc.min_connections,
+            connection_timeout_secs = pc.acquire_timeout_secs,
+            idle_timeout_secs = pc.idle_timeout_secs,
+            max_lifetime_secs = pc.max_lifetime_secs,
+            "Building SQL Server connection pool (bb8)"
+        );
         bb8::Pool::builder()
             .max_size(pc.max_connections)
             .min_idle(Some(pc.min_connections))
@@ -142,7 +150,7 @@ impl SqlServerAdapter {
             .build(manager)
             .await
             .map_err(|e| {
-                error!(error = %e, "Failed to create connection pool");
+                error!(adapter = "mssql", operation = "connect", error = %e, "Failed to create connection pool");
                 DataError::Connection(format!("Failed to create pool: {}", e))
             })
     }
@@ -505,7 +513,7 @@ impl ConnectionTrait for SqlServerAdapter {
                 "Invalid database type: expected SQLServer, got {:?}",
                 self.config.db_type
             ));
-            error!(error = %err, "Invalid database type");
+            error!(adapter = "mssql", operation = "connect", error = %err, "Invalid database type");
             return Err(err);
         }
 
@@ -604,15 +612,20 @@ impl DbAdapter for SqlServerAdapter {
 
     #[instrument(skip(self, query), fields(adapter = "sqlserver", query_length = query.len()))]
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
-        debug!("Executing query");
+        let sql_type = super::common::detect_sql_type(query);
+        debug!(
+            sql_type,
+            sql_preview = %super::common::sql_preview(query, 100),
+            "Executing query"
+        );
         let start = std::time::Instant::now();
 
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!("Query attempted while not connected");
+            error!(adapter = "mssql", operation = "execute_query", "Not connected");
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
         let mut conn = pool.get().await.map_err(|e| {
-            error!(error = %e, "Failed to acquire connection");
+            error!(adapter = "mssql", operation = "execute_query", "Failed to acquire connection from pool");
             DataError::Connection(format!("Failed to acquire connection: {}", e))
         })?;
 
@@ -630,7 +643,7 @@ impl DbAdapter for SqlServerAdapter {
         };
 
         let stream = conn.query(effective_query, &[]).await.map_err(|e| {
-            error!(error = %e, "Query execution failed");
+            error!(adapter = "mssql", operation = "execute_query", sql_type, error = %e, "Query execution failed");
             DataError::Query(format!("Query failed: {}", e))
         })?;
 
@@ -638,7 +651,7 @@ impl DbAdapter for SqlServerAdapter {
             .into_results()
             .await
             .map_err(|e| {
-                error!(error = %e, "Failed to fetch results");
+                error!(adapter = "mssql", operation = "execute_query", sql_type, error = %e, "Failed to fetch results");
                 DataError::Query(format!("Failed to fetch results: {}", e))
             })?
             .into_iter()
@@ -667,8 +680,10 @@ impl DbAdapter for SqlServerAdapter {
 
         let duration = start.elapsed();
         info!(
-            rows = result_rows.len(),
+            sql_type,
             duration_ms = duration.as_millis(),
+            rows = result_rows.len(),
+            columns = columns.len(),
             "Query executed successfully"
         );
 
@@ -1103,6 +1118,16 @@ impl DbAdapter for SqlServerAdapter {
             ));
         }
 
+        let nrows = df.height();
+        info!(
+            table = %table_name,
+            rows = nrows,
+            columns = df.width(),
+            replace,
+            "Starting DataFrame export"
+        );
+        let export_start = std::time::Instant::now();
+
         if replace {
             let drop_sql = format!(
                 "IF OBJECT_ID(N'{}', N'U') IS NOT NULL DROP TABLE {}",
@@ -1125,8 +1150,8 @@ impl DbAdapter for SqlServerAdapter {
             self.execute_statement(&create_sql).await?;
         }
 
-        let nrows = df.height();
         if nrows == 0 {
+            info!(table = %table_name, rows_written = 0u64, duration_ms = export_start.elapsed().as_millis(), "DataFrame export complete");
             return Ok(0);
         }
 
@@ -1159,8 +1184,17 @@ impl DbAdapter for SqlServerAdapter {
                 literals.join(", ")
             );
             total += self.execute_statement(&insert_sql).await?;
+            if (row_idx + 1) % 1000 == 0 {
+                debug!(rows_inserted = total, total_rows = nrows, "Export progress");
+            }
         }
 
+        info!(
+            table = %table_name,
+            rows_written = total,
+            duration_ms = export_start.elapsed().as_millis(),
+            "DataFrame export complete"
+        );
         Ok(total)
     }
 

@@ -200,6 +200,43 @@ pub(crate) fn query_value_to_sql_literal(value: &QueryValue, bool_as_int: bool) 
     }
 }
 
+// ─── Query logging helpers ────────────────────────────────────────────────────
+
+#[allow(dead_code)]
+/// Classify the SQL statement type from its first keyword.
+///
+/// Returns one of: `"SELECT"`, `"INSERT"`, `"UPDATE"`, `"DELETE"`, `"CREATE"`,
+/// `"DROP"`, `"ALTER"`, `"TRUNCATE"`, `"WITH"`, or `"OTHER"`.
+/// Case-insensitive; leading whitespace is trimmed.
+pub(crate) fn detect_sql_type(sql: &str) -> &'static str {
+    match sql.split_whitespace().next().unwrap_or("").to_uppercase().as_str() {
+        "SELECT" => "SELECT",
+        "INSERT" => "INSERT",
+        "UPDATE" => "UPDATE",
+        "DELETE" => "DELETE",
+        "CREATE" => "CREATE",
+        "DROP"   => "DROP",
+        "ALTER"  => "ALTER",
+        "TRUNCATE" => "TRUNCATE",
+        "WITH"   => "WITH",
+        _        => "OTHER",
+    }
+}
+
+#[allow(dead_code)]
+/// Return the first `max_chars` characters of `sql` with internal whitespace collapsed.
+///
+/// Useful for attaching a safe, readable preview to log fields without
+/// logging full query text (which may be very long or contain user data).
+pub(crate) fn sql_preview(sql: &str, max_chars: usize) -> String {
+    let collapsed: String = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.len() <= max_chars {
+        collapsed
+    } else {
+        format!("{}…", &collapsed[..max_chars])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +302,56 @@ mod tests {
     fn float_nan_is_null() {
         let s = Series::new("col".into(), &[f64::NAN]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "NULL");
+    }
+
+    #[test]
+    fn detect_sql_type_select() {
+        assert_eq!(detect_sql_type("SELECT 1"), "SELECT");
+        assert_eq!(detect_sql_type("  select * from t"), "SELECT");
+    }
+
+    #[test]
+    fn detect_sql_type_dml() {
+        assert_eq!(detect_sql_type("INSERT INTO t VALUES (1)"), "INSERT");
+        assert_eq!(detect_sql_type("UPDATE t SET a=1"), "UPDATE");
+        assert_eq!(detect_sql_type("DELETE FROM t"), "DELETE");
+    }
+
+    #[test]
+    fn detect_sql_type_ddl() {
+        assert_eq!(detect_sql_type("CREATE TABLE t (id INT)"), "CREATE");
+        assert_eq!(detect_sql_type("DROP TABLE t"), "DROP");
+        assert_eq!(detect_sql_type("ALTER TABLE t ADD COLUMN x INT"), "ALTER");
+        assert_eq!(detect_sql_type("TRUNCATE TABLE t"), "TRUNCATE");
+    }
+
+    #[test]
+    fn detect_sql_type_with() {
+        assert_eq!(detect_sql_type("WITH cte AS (SELECT 1) SELECT * FROM cte"), "WITH");
+    }
+
+    #[test]
+    fn detect_sql_type_other() {
+        assert_eq!(detect_sql_type("EXPLAIN SELECT 1"), "OTHER");
+        assert_eq!(detect_sql_type(""), "OTHER");
+    }
+
+    #[test]
+    fn sql_preview_short() {
+        assert_eq!(sql_preview("SELECT 1", 100), "SELECT 1");
+    }
+
+    #[test]
+    fn sql_preview_collapses_whitespace() {
+        assert_eq!(sql_preview("SELECT\n  1,\n  2", 100), "SELECT 1, 2");
+    }
+
+    #[test]
+    fn sql_preview_truncates() {
+        let long = "SELECT ".to_string() + &"a".repeat(200);
+        let preview = sql_preview(&long, 20);
+        assert!(preview.ends_with('…'));
+        // character count: 20 chars + ellipsis
+        assert!(preview.len() <= 25);
     }
 }

@@ -179,11 +179,19 @@ impl Connection for PostgresAdapter {
 
         let password = self.config.parameters.get("password").map(String::as_str);
         let conn_str = self.build_connection_string(password).map_err(|e| {
-            error!(error = ?e, "Failed to build connection string");
+            error!(adapter = "postgres", operation = "connect", error = ?e, "Failed to build connection string");
             e
         })?;
 
         let pc = self.config.pool_config.clone().unwrap_or_default();
+        debug!(
+            max_connections = pc.max_connections,
+            min_connections = pc.min_connections,
+            acquire_timeout_secs = pc.acquire_timeout_secs,
+            idle_timeout_secs = pc.idle_timeout_secs,
+            max_lifetime_secs = pc.max_lifetime_secs,
+            "Building PostgreSQL connection pool"
+        );
         let pool = PgPoolOptions::new()
             .max_connections(pc.max_connections)
             .min_connections(pc.min_connections)
@@ -193,7 +201,7 @@ impl Connection for PostgresAdapter {
             .connect(&conn_str)
             .await
             .map_err(|e| {
-                error!(error = %e, "Failed to establish connection");
+                error!(adapter = "postgres", operation = "connect", error = %e, "Failed to establish connection");
                 DataError::Connection(format!("Failed to connect: {}", e))
             })?;
 
@@ -234,7 +242,7 @@ impl Connection for PostgresAdapter {
 
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!("Pool not available for health check");
+            error!(adapter = "postgres", operation = "health_check", "Pool not available for health check");
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -244,7 +252,7 @@ impl Connection for PostgresAdapter {
                 Ok(true)
             }
             Err(e) => {
-                error!(error = %e, "Health check query failed");
+                error!(adapter = "postgres", operation = "health_check", error = %e, "Health check query failed");
                 Err(DataError::Query(format!("Health check failed: {}", e)))
             }
         }
@@ -269,6 +277,14 @@ impl DbAdapter for PostgresAdapter {
         let conn_str = self.build_connection_string(password)?;
 
         let pc = self.config.pool_config.clone().unwrap_or_default();
+        debug!(
+            max_connections = pc.max_connections,
+            min_connections = pc.min_connections,
+            acquire_timeout_secs = pc.acquire_timeout_secs,
+            idle_timeout_secs = pc.idle_timeout_secs,
+            max_lifetime_secs = pc.max_lifetime_secs,
+            "Building PostgreSQL connection pool"
+        );
         let pool = PgPoolOptions::new()
             .max_connections(pc.max_connections)
             .min_connections(pc.min_connections)
@@ -348,10 +364,15 @@ impl DbAdapter for PostgresAdapter {
 
     #[instrument(skip(self, query), fields(adapter = "postgres", query_length = query.len()))]
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
-        debug!("Executing query");
+        let sql_type = super::common::detect_sql_type(query);
+        debug!(
+            sql_type,
+            sql_preview = %super::common::sql_preview(query, 100),
+            "Executing query"
+        );
 
         if !*self.connected.read().await {
-            error!("Query execution failed: not connected");
+            error!(adapter = "postgres", operation = "execute_query", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -359,12 +380,12 @@ impl DbAdapter for PostgresAdapter {
 
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!("Pool not available");
+            error!(adapter = "postgres", operation = "execute_query", "Pool not available");
             DataError::Connection("Pool not available".to_string())
         })?;
 
         let map_err = |e: sqlx::Error| {
-            error!(error = %e, "Query execution failed");
+            error!(adapter = "postgres", operation = "execute_query", sql_type, error = %e, "Query execution failed");
             let msg = e.to_string();
             if msg.contains("syntax") {
                 DataError::Query(format!("SQL syntax error: {}", e))
@@ -385,7 +406,9 @@ impl DbAdapter for PostgresAdapter {
             let result = sqlx::query(query).execute(pool).await.map_err(map_err)?;
             let affected = result.rows_affected();
             info!(
+                sql_type,
                 rows_affected = affected,
+                columns = 0usize,
                 duration_ms = start.elapsed().as_millis(),
                 "DML executed"
             );
@@ -399,13 +422,8 @@ impl DbAdapter for PostgresAdapter {
         let rows = sqlx::query(query).fetch_all(pool).await.map_err(map_err)?;
         let duration = start.elapsed();
 
-        info!(
-            rows = rows.len(),
-            duration_ms = duration.as_millis(),
-            "Query executed successfully"
-        );
-
         if rows.is_empty() {
+            info!(sql_type, duration_ms = duration.as_millis(), rows = 0usize, columns = 0usize, "Query executed successfully");
             debug!("Query returned no rows");
             return Ok(QueryResult {
                 columns: vec![],
@@ -420,6 +438,13 @@ impl DbAdapter for PostgresAdapter {
             .map(|col| col.name().to_string())
             .collect();
 
+        info!(
+            sql_type,
+            duration_ms = duration.as_millis(),
+            rows = rows.len(),
+            columns = columns.len(),
+            "Query executed successfully"
+        );
         debug!(columns = columns.len(), "Extracted column metadata");
 
         let mut result_rows = Vec::new();
@@ -443,11 +468,18 @@ impl DbAdapter for PostgresAdapter {
         _schema: Option<&str>,
         replace: bool,
     ) -> Result<u64> {
-        info!("Exporting DataFrame to table");
+        info!(
+            table = %table_name,
+            rows = df.height(),
+            columns = df.width(),
+            replace,
+            "Starting DataFrame export"
+        );
+        let export_start = std::time::Instant::now();
 
         // Check connection
         if !*self.connected.read().await {
-            error!("Export failed: not connected");
+            error!(adapter = "postgres", operation = "export_dataframe", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -455,7 +487,7 @@ impl DbAdapter for PostgresAdapter {
 
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!("Pool not available");
+            error!(adapter = "postgres", operation = "export_dataframe", table = %table_name, "Pool not available");
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -507,8 +539,17 @@ impl DbAdapter for PostgresAdapter {
             })?;
 
             rows_inserted += 1;
+            if rows_inserted % 1000 == 0 {
+                debug!(rows_inserted, total_rows = df.height(), "Export progress");
+            }
         }
 
+        info!(
+            table = %table_name,
+            rows_written = rows_inserted,
+            duration_ms = export_start.elapsed().as_millis(),
+            "DataFrame export complete"
+        );
         Ok(rows_inserted)
     }
 
@@ -520,7 +561,7 @@ impl DbAdapter for PostgresAdapter {
 
         // Check connection
         if !*self.connected.read().await {
-            error!("List databases failed: not connected");
+            error!(adapter = "postgres", operation = "list_databases", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -529,14 +570,14 @@ impl DbAdapter for PostgresAdapter {
         // Get client
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!("Pool not available");
+            error!(adapter = "postgres", operation = "list_databases", "Pool not available");
             DataError::Connection("Pool not available".to_string())
         })?;
 
         // Query pg_database catalog
         let query = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
         let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
-            error!(error = %e, "Failed to query databases");
+            error!(adapter = "postgres", operation = "list_databases", error = %e, "Failed to query databases");
             DataError::Query(format!("Failed to list databases: {}", e))
         })?;
 
@@ -552,7 +593,7 @@ impl DbAdapter for PostgresAdapter {
 
         // Check connection
         if !*self.connected.read().await {
-            error!("List tables failed: not connected");
+            error!(adapter = "postgres", operation = "list_tables", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -561,7 +602,7 @@ impl DbAdapter for PostgresAdapter {
         // Get client
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!("Pool not available");
+            error!(adapter = "postgres", operation = "list_tables", "Pool not available");
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -582,7 +623,7 @@ impl DbAdapter for PostgresAdapter {
         };
 
         let rows = sqlx::query(&query).fetch_all(pool).await.map_err(|e| {
-            error!(error = %e, "Failed to query tables");
+            error!(adapter = "postgres", operation = "list_tables", error = %e, "Failed to query tables");
             DataError::Query(format!("Failed to list tables: {}", e))
         })?;
 
@@ -602,7 +643,7 @@ impl DbAdapter for PostgresAdapter {
         debug!("Finding tables by pattern");
 
         if !*self.connected.read().await {
-            error!("Find tables failed: not connected");
+            error!(adapter = "postgres", operation = "find_tables", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -610,7 +651,7 @@ impl DbAdapter for PostgresAdapter {
 
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!("Pool not available");
+            error!(adapter = "postgres", operation = "find_tables", "Pool not available");
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -631,7 +672,7 @@ impl DbAdapter for PostgresAdapter {
         );
 
         let rows = sqlx::query(&query).bind(like_pattern).fetch_all(pool).await.map_err(|e| {
-            error!(error = %e, "Failed to find tables");
+            error!(adapter = "postgres", operation = "find_tables", error = %e, "Failed to find tables");
             DataError::Query(format!("Failed to find tables: {}", e))
         })?;
 
@@ -648,7 +689,7 @@ impl DbAdapter for PostgresAdapter {
     ) -> Result<crate::adapter::TableInfo> {
         // Check connection
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "describe_table", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -678,7 +719,7 @@ impl DbAdapter for PostgresAdapter {
             .map_err(|e| DataError::Query(format!("Failed to describe table: {}", e)))?;
 
         if rows.is_empty() {
-            error!("postgres query failed - not connected");
+            error!(adapter = "postgres", operation = "describe_table", table = %table_name, schema = %schema_name, "Table not found in schema");
             return Err(DataError::Query(format!(
                 "Table '{}.{}' not found",
                 schema_name, table_name
@@ -759,7 +800,7 @@ impl DbAdapter for PostgresAdapter {
     async fn get_indexes(&self, table_name: &str, schema: Option<&str>) -> Result<Vec<IndexInfo>> {
         // Check connection
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "get_indexes", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -827,7 +868,7 @@ impl DbAdapter for PostgresAdapter {
     ) -> Result<Vec<ForeignKeyInfo>> {
         // Check connection
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "get_foreign_keys", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -915,7 +956,7 @@ impl DbAdapter for PostgresAdapter {
     async fn get_views(&self, schema: Option<&str>) -> Result<Vec<ViewInfo>> {
         // Check connection
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "get_views", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -964,7 +1005,7 @@ impl DbAdapter for PostgresAdapter {
     ) -> Result<Option<String>> {
         // Check connection
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "get_view_definition", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1002,7 +1043,7 @@ impl DbAdapter for PostgresAdapter {
     async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         // Check connection
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "list_stored_procedures", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1052,7 +1093,7 @@ impl DbAdapter for PostgresAdapter {
     #[instrument(skip(self), fields(adapter = "postgres"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "get_server_info", "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1096,7 +1137,7 @@ impl DbAdapter for PostgresAdapter {
 
         // Check connection
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "bulk_insert", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1183,7 +1224,7 @@ impl DbAdapter for PostgresAdapter {
         }
 
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "bulk_update", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1241,7 +1282,7 @@ impl DbAdapter for PostgresAdapter {
         }
 
         if !*self.connected.read().await {
-            error!("postgres connection error - not connected");
+            error!(adapter = "postgres", operation = "bulk_delete", table = %table_name, "Not connected");
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
