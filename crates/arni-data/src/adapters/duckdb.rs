@@ -163,27 +163,10 @@ impl DuckDbAdapter {
 
     /// Convert a [`QueryValue`] to a SQL literal suitable for inline DuckDB SQL.
     ///
-    /// - Strings are single-quoted with `'` escaped as `''`.
-    /// - Binary data is encoded as a DuckDB hex literal `X'...'`.
-    /// - NaN/Infinite floats are mapped to `NULL`.
+    /// Delegates to [`super::common::query_value_to_sql_literal`] with `bool_as_int = false`
+    /// (DuckDB has a native BOOLEAN type; uses `TRUE`/`FALSE`).
     fn query_value_to_sql_literal(value: &QueryValue) -> String {
-        match value {
-            QueryValue::Null => "NULL".to_string(),
-            QueryValue::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
-            QueryValue::Int(i) => i.to_string(),
-            QueryValue::Float(f) => {
-                if f.is_nan() || f.is_infinite() {
-                    "NULL".to_string()
-                } else {
-                    format!("{}", f)
-                }
-            }
-            QueryValue::Text(s) => format!("'{}'", s.replace('\'', "''")),
-            QueryValue::Bytes(b) => {
-                let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
-                format!("X'{}'", hex)
-            }
-        }
+        super::common::query_value_to_sql_literal(value, false)
     }
 
     /// Map a Polars [`DataType`] to the corresponding DuckDB SQL type name.
@@ -207,132 +190,11 @@ impl DuckDbAdapter {
     }
 
     /// Extract the value at `row_idx` from `series` as a DuckDB SQL literal string.
+    ///
+    /// Delegates to the shared implementation in [`super::common`], with booleans
+    /// rendered as `TRUE`/`FALSE` (DuckDB has a native BOOLEAN type).
     fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
-        // Fast path: NULL
-        if series.is_null().get(row_idx).unwrap_or(false) {
-            return Ok("NULL".to_string());
-        }
-        match series.dtype() {
-            DataType::Boolean => {
-                let val = series
-                    .bool()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(if val { "TRUE" } else { "FALSE" }.to_string())
-            }
-            DataType::Int8 | DataType::Int16 | DataType::Int32 => {
-                let s = series
-                    .cast(&DataType::Int32)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                let val = s
-                    .i32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(val.to_string())
-            }
-            DataType::Int64 => {
-                let val = series
-                    .i64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(val.to_string())
-            }
-            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
-                let s = series
-                    .cast(&DataType::UInt32)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                let val = s
-                    .u32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(val.to_string())
-            }
-            DataType::UInt64 => {
-                let val = series
-                    .u64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(val.to_string())
-            }
-            DataType::Float32 => {
-                let val = series
-                    .f32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                if val.is_nan() || val.is_infinite() {
-                    Ok("NULL".to_string())
-                } else {
-                    Ok(format!("{}", val))
-                }
-            }
-            DataType::Float64 => {
-                let val = series
-                    .f64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                if val.is_nan() || val.is_infinite() {
-                    Ok("NULL".to_string())
-                } else {
-                    Ok(format!("{}", val))
-                }
-            }
-            DataType::String => {
-                let val = series
-                    .str()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(format!("'{}'", val.replace('\'', "''")))
-            }
-            DataType::Binary => {
-                let val = series
-                    .binary()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                let hex: String = val.iter().map(|byte| format!("{:02x}", byte)).collect();
-                Ok(format!("X'{}'", hex))
-            }
-            _ => {
-                // Generic fallback: cast to String and single-quote.
-                let s = series
-                    .cast(&DataType::String)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                match s
-                    .str()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                {
-                    Some(val) => Ok(format!("'{}'", val.replace('\'', "''"))),
-                    None => Ok("NULL".to_string()),
-                }
-            }
-        }
+        super::common::series_value_to_sql_literal(series, row_idx, false)
     }
 
     /// Get a value from a DuckDB row
@@ -577,11 +439,6 @@ impl DbAdapter for DuckDbAdapter {
     async fn read_table(&self, table_name: &str, _schema: Option<&str>) -> Result<DataFrame> {
         let query = format!("SELECT * FROM {}", table_name);
         let result = self.execute_query(&query).await?;
-        result.to_dataframe()
-    }
-
-    async fn query_df(&self, query: &str) -> Result<DataFrame> {
-        let result = self.execute_query(query).await?;
         result.to_dataframe()
     }
 

@@ -1,5 +1,7 @@
 //! Database adapter implementations
 //!
+//! The [`common`] module provides shared SQL literal helpers used by multiple adapters.
+//!
 //! This module contains concrete implementations of the [`DbAdapter`](crate::adapter::DbAdapter)
 //! and [`Connection`](crate::adapter::Connection) traits for various database systems.
 //!
@@ -19,6 +21,8 @@
 //! # Or enable all databases
 //! arni-data = { version = "0.1", features = ["all-databases"] }
 //! ```
+
+pub(crate) mod common;
 
 #[cfg(feature = "postgres")]
 pub mod postgres;

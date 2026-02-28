@@ -526,8 +526,7 @@ impl ConnectionTrait for SqlServerAdapter {
     }
 
     fn is_connected(&self) -> bool {
-        // Simplified - would need async implementation for proper check
-        false
+        self.client.try_read().map(|g| g.is_some()).unwrap_or(false)
     }
 
     #[instrument(skip(self), fields(adapter = "sqlserver"))]

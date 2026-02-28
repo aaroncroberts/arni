@@ -563,4 +563,44 @@ mod tests {
         let text = String::from_utf8(bytes).unwrap();
         assert!(!text.contains("<row>"), "empty df should have no <row>: {text}");
     }
+
+    // ── Excel date/datetime rendering ────────────────────────────────────────
+
+    /// `AnyValue::Date` must render as "yyyy-mm-dd", not as a raw epoch-day integer.
+    #[test]
+    fn excel_date_column_renders_as_string() {
+        // 19723 epoch days = 2024-01-15
+        let days = Series::new("d".into(), &[19723i32]);
+        let date_series = days.cast(&DataType::Date).unwrap();
+        let val = date_series.get(0).unwrap();
+        let text = format!("{val}");
+        assert!(
+            !text.chars().all(|c| c.is_ascii_digit()),
+            "Date should not render as a raw integer, got: '{text}'"
+        );
+        assert!(
+            text.contains('-'),
+            "Date should render in yyyy-mm-dd form, got: '{text}'"
+        );
+    }
+
+    /// `AnyValue::Datetime` must render as a human-readable string, not raw microseconds.
+    #[test]
+    fn excel_datetime_column_renders_as_string() {
+        // 1_705_276_800_000_000 µs = 2024-01-15 00:00:00 UTC
+        let ts = Series::new("t".into(), &[1_705_276_800_000_000i64]);
+        let dt_series = ts
+            .cast(&DataType::Datetime(TimeUnit::Microseconds, None))
+            .unwrap();
+        let val = dt_series.get(0).unwrap();
+        let text = format!("{val}");
+        assert!(
+            !text.chars().all(|c| c.is_ascii_digit()),
+            "Datetime should not render as a raw integer, got: '{text}'"
+        );
+        assert!(
+            text.contains('-') || text.contains(':'),
+            "Datetime should render as ISO 8601, got: '{text}'"
+        );
+    }
 }

@@ -108,24 +108,11 @@ impl SqliteAdapter {
     }
 
     /// Convert a [`QueryValue`] to a SQL literal suitable for inline SQLite SQL.
+    ///
+    /// Delegates to [`super::common::query_value_to_sql_literal`] with `bool_as_int = true`
+    /// (SQLite has no native BOOLEAN type; uses `1`/`0` instead).
     fn query_value_to_sql_literal(value: &QueryValue) -> String {
-        match value {
-            QueryValue::Null => "NULL".to_string(),
-            QueryValue::Bool(b) => if *b { "1" } else { "0" }.to_string(), // SQLite has no BOOLEAN
-            QueryValue::Int(i) => i.to_string(),
-            QueryValue::Float(f) => {
-                if f.is_nan() || f.is_infinite() {
-                    "NULL".to_string()
-                } else {
-                    format!("{}", f)
-                }
-            }
-            QueryValue::Text(s) => format!("'{}'", s.replace('\'', "''")),
-            QueryValue::Bytes(b) => {
-                let hex: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
-                format!("X'{}'", hex)
-            }
-        }
+        super::common::query_value_to_sql_literal(value, true)
     }
 
     /// Map a Polars [`DataType`] to the corresponding SQLite type affinity.
@@ -142,130 +129,11 @@ impl SqliteAdapter {
     }
 
     /// Extract the value at `row_idx` from `series` as a SQLite SQL literal.
+    ///
+    /// Delegates to the shared implementation in [`super::common`], with booleans
+    /// rendered as `1`/`0` (SQLite has no native BOOLEAN type).
     fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
-        if series.is_null().get(row_idx).unwrap_or(false) {
-            return Ok("NULL".to_string());
-        }
-        match series.dtype() {
-            DataType::Boolean => {
-                let val = series
-                    .bool()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(if val { "1" } else { "0" }.to_string())
-            }
-            DataType::Int8 | DataType::Int16 | DataType::Int32 => {
-                let s = series
-                    .cast(&DataType::Int32)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                let val = s
-                    .i32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(val.to_string())
-            }
-            DataType::Int64 => {
-                let val = series
-                    .i64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(val.to_string())
-            }
-            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
-                let s = series
-                    .cast(&DataType::UInt32)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                let val = s
-                    .u32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(val.to_string())
-            }
-            DataType::UInt64 => {
-                let val = series
-                    .u64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(val.to_string())
-            }
-            DataType::Float32 => {
-                let val = series
-                    .f32()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                if val.is_nan() || val.is_infinite() {
-                    Ok("NULL".to_string())
-                } else {
-                    Ok(format!("{}", val))
-                }
-            }
-            DataType::Float64 => {
-                let val = series
-                    .f64()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                if val.is_nan() || val.is_infinite() {
-                    Ok("NULL".to_string())
-                } else {
-                    Ok(format!("{}", val))
-                }
-            }
-            DataType::String => {
-                let val = series
-                    .str()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                Ok(format!("'{}'", val.replace('\'', "''")))
-            }
-            DataType::Binary => {
-                let val = series
-                    .binary()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                    .ok_or_else(|| {
-                        DataError::DataFrame(format!("Index {} out of bounds", row_idx))
-                    })?;
-                let hex: String = val.iter().map(|byte| format!("{:02x}", byte)).collect();
-                Ok(format!("X'{}'", hex))
-            }
-            _ => {
-                let s = series
-                    .cast(&DataType::String)
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?;
-                match s
-                    .str()
-                    .map_err(|e| DataError::TypeConversion(e.to_string()))?
-                    .get(row_idx)
-                {
-                    Some(val) => Ok(format!("'{}'", val.replace('\'', "''"))),
-                    None => Ok("NULL".to_string()),
-                }
-            }
-        }
+        super::common::series_value_to_sql_literal(series, row_idx, true)
     }
 
     /// Convert a SQLite row to QueryValue vector
@@ -406,9 +274,7 @@ impl ConnectionTrait for SqliteAdapter {
     }
 
     fn is_connected(&self) -> bool {
-        // For async check, we'd need to make this async or use try_read
-        // For now, just check if pool exists
-        false // Simplified - would need async implementation
+        self.pool.try_read().map(|g| g.is_some()).unwrap_or(false)
     }
 
     #[instrument(skip(self), fields(adapter = "sqlite"))]
