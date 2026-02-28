@@ -132,7 +132,7 @@ pub fn to_file(df: &mut DataFrame, format: DataFormat, path: &Path) -> Result<()
 
 // ─── XML implementation ───────────────────────────────────────────────────────
 
-fn xml_err(e: quick_xml::Error) -> DataError {
+fn xml_err(e: std::io::Error) -> DataError {
     DataError::Query(format!("XML serialization error: {e}"))
 }
 

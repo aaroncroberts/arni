@@ -236,7 +236,7 @@ impl ConnectionTrait for MongoDbAdapter {
         // Test the connection
         client
             .database(&self.config.database)
-            .run_command(doc! { "ping": 1 }, None)
+            .run_command(doc! { "ping": 1 })
             .await
             .map_err(|e| {
                 let error_msg = e.to_string();
@@ -333,7 +333,7 @@ impl ConnectionTrait for MongoDbAdapter {
 
         client
             .database(db_name)
-            .run_command(doc! { "ping": 1 }, None)
+            .run_command(doc! { "ping": 1 })
             .await
             .map(|_| {
                 debug!("Health check passed");
@@ -398,7 +398,7 @@ impl DbAdapter for MongoDbAdapter {
         let collection = db.collection::<Document>(collection_name);
 
         let mut cursor = collection
-            .find(filter, None)
+            .find(filter)
             .await
             .map_err(|e| DataError::Query(format!("Failed to execute find: {}", e)))?;
 
@@ -433,7 +433,7 @@ impl DbAdapter for MongoDbAdapter {
         let columns = if let Some(_first_row) = results.first() {
             let doc = db
                 .collection::<Document>(collection_name)
-                .find_one(None, None)
+                .find_one(doc!{})
                 .await
                 .map_err(|e| DataError::Query(format!("Failed to get column names: {}", e)))?
                 .ok_or_else(|| DataError::Query("No documents found".to_string()))?;
@@ -488,7 +488,7 @@ impl DbAdapter for MongoDbAdapter {
                     // Try to ping the database
                     match client
                         .database(&config.database)
-                        .run_command(doc! { "ping": 1 }, None)
+                        .run_command(doc! { "ping": 1 })
                         .await
                     {
                         Ok(_) => Ok(true),
@@ -566,7 +566,7 @@ impl DbAdapter for MongoDbAdapter {
 
         let count = docs.len() as u64;
         collection
-            .insert_many(docs, None)
+            .insert_many(docs)
             .await
             .map_err(|e| DataError::Query(format!("bulk_insert failed: {}", e)))?;
         Ok(count)
@@ -601,7 +601,7 @@ impl DbAdapter for MongoDbAdapter {
             }
             let update = doc! { "$set": set_doc };
             let result = collection
-                .update_many(filter_doc, update, None)
+                .update_many(filter_doc, update)
                 .await
                 .map_err(|e| DataError::Query(format!("bulk_update failed: {}", e)))?;
             total += result.modified_count;
@@ -630,7 +630,7 @@ impl DbAdapter for MongoDbAdapter {
         for filter in filters {
             let filter_doc = mongo_filter_to_bson(filter);
             let result = collection
-                .delete_many(filter_doc, None)
+                .delete_many(filter_doc)
                 .await
                 .map_err(|e| DataError::Query(format!("bulk_delete failed: {}", e)))?;
             total += result.deleted_count;
@@ -650,7 +650,7 @@ impl DbAdapter for MongoDbAdapter {
 
         // Run buildInfo command
         let build_info = db
-            .run_command(doc! { "buildInfo": 1 }, None)
+            .run_command(doc! { "buildInfo": 1 })
             .await
             .map_err(|e| DataError::Query(format!("Failed to get build info: {}", e)))?;
 
@@ -687,7 +687,7 @@ impl DbAdapter for MongoDbAdapter {
             .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
 
         let db_names = client
-            .list_database_names(None, None)
+            .list_database_names()
             .await
             .map_err(|e| DataError::Query(format!("Failed to list databases: {}", e)))?;
 
@@ -708,7 +708,7 @@ impl DbAdapter for MongoDbAdapter {
 
         let db = client.database(db_name);
         let collections = db
-            .list_collection_names(None)
+            .list_collection_names()
             .await
             .map_err(|e| DataError::Query(format!("Failed to list collections: {}", e)))?;
 
@@ -746,7 +746,7 @@ impl DbAdapter for MongoDbAdapter {
 
         let db = client.database(db_name);
         let collections = db
-            .list_collection_names(None)
+            .list_collection_names()
             .await
             .map_err(|e| DataError::Query(format!("Failed to list collections: {}", e)))?;
 
@@ -776,7 +776,7 @@ impl DbAdapter for MongoDbAdapter {
 
         // Sample documents to infer schema
         let mut cursor = collection
-            .find(None, None)
+            .find(doc!{})
             .await
             .map_err(|e| DataError::Query(format!("Failed to query collection: {}", e)))?;
 
@@ -817,7 +817,7 @@ impl DbAdapter for MongoDbAdapter {
             .collect();
 
         let row_count = collection
-            .count_documents(None, None)
+            .count_documents(doc!{})
             .await
             .ok()
             .map(|n| n as i64);
@@ -851,7 +851,7 @@ impl DbAdapter for MongoDbAdapter {
         let collection = db.collection::<Document>(table_name);
 
         let mut cursor = collection
-            .list_indexes(None)
+            .list_indexes()
             .await
             .map_err(|e| DataError::Query(format!("Failed to list indexes: {}", e)))?;
 

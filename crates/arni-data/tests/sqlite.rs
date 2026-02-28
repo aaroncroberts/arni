@@ -386,7 +386,7 @@ mod sqlite_tests {
             .await
             .unwrap();
 
-        let df = DataFrame::new(vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
+        let df = DataFrame::new(0, vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
         let rows = DbAdapter::export_dataframe(&adapter, &df, "emp", None, false)
             .await
             .expect("empty export should succeed");

@@ -35,7 +35,7 @@ toml.workspace = true
 polars = { workspace = true, features = ["lazy", "dtype-full", "serde", "csv", "json", "parquet"] }
 
 # XML serialization
-quick-xml = "0.36"
+quick-xml = "0.39"
 
 # Pattern matching
 regex = "1"

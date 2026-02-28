@@ -416,7 +416,7 @@ mod duckdb_tests {
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
         // Create empty DataFrame with schema
-        let df = DataFrame::new(vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
+        let df = DataFrame::new(0, vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
 
         // Create table first so export has somewhere to write
         DbAdapter::execute_query(&adapter, "CREATE TABLE empty_test (id INTEGER)")
