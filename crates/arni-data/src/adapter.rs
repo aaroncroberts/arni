@@ -15,6 +15,44 @@ use std::fmt;
 // Re-export error types (will be defined in error.rs)
 pub type Result<T> = std::result::Result<T, crate::DataError>;
 
+/// Connection pool tuning parameters.
+///
+/// All pool-based adapters (Postgres, MySQL, SQLite) apply these settings when
+/// creating their underlying [`sqlx`] pool. Omit the field on [`ConnectionConfig`]
+/// to accept the defaults.
+///
+/// # Examples
+/// ```
+/// use arni_data::adapter::PoolConfig;
+/// let cfg = PoolConfig { max_connections: 20, acquire_timeout_secs: 10, ..Default::default() };
+/// assert_eq!(cfg.min_connections, 1);
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolConfig {
+    /// Maximum number of connections the pool may open simultaneously (default: 10).
+    pub max_connections: u32,
+    /// Minimum number of idle connections kept alive (default: 1).
+    pub min_connections: u32,
+    /// Seconds to wait for an available connection before returning an error (default: 30).
+    pub acquire_timeout_secs: u64,
+    /// Seconds a connection may sit idle before being closed (default: 600 = 10 min).
+    pub idle_timeout_secs: u64,
+    /// Maximum total lifetime of a connection in seconds (default: 1800 = 30 min).
+    pub max_lifetime_secs: u64,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 10,
+            min_connections: 1,
+            acquire_timeout_secs: 30,
+            idle_timeout_secs: 600,
+            max_lifetime_secs: 1800,
+        }
+    }
+}
+
 /// Represents a database connection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
@@ -37,6 +75,9 @@ pub struct ConnectionConfig {
     /// Additional connection parameters
     #[serde(default)]
     pub parameters: HashMap<String, String>,
+    /// Connection pool tuning; `None` uses [`PoolConfig::default()`].
+    #[serde(default)]
+    pub pool_config: Option<PoolConfig>,
 }
 
 /// Supported database types
@@ -1040,6 +1081,7 @@ mod tests {
             username: Some("test_user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         assert_eq!(config.id, "test-connection");
@@ -1269,6 +1311,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: true,
             parameters: HashMap::new(),
+            pool_config: None,
         };
         let cloned = config.clone();
         assert_eq!(cloned.id, config.id);
@@ -1376,6 +1419,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let mut conn = MockConnection::new(config);
@@ -1407,6 +1451,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let mut conn = MockConnection::new(config);
@@ -1431,6 +1476,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let conn = MockConnection::new(config);
@@ -1452,6 +1498,7 @@ mod tests {
             username: Some("admin".to_string()),
             use_ssl: true,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let conn = MockConnection::new(config.clone());
@@ -1480,6 +1527,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let mut conn = MockConnection::new(config);
@@ -1634,5 +1682,66 @@ mod tests {
     fn test_table_search_mode_eq() {
         assert_eq!(TableSearchMode::StartsWith, TableSearchMode::StartsWith);
         assert_ne!(TableSearchMode::StartsWith, TableSearchMode::Contains);
+    }
+
+    #[test]
+    fn pool_config_default_values() {
+        let pc = PoolConfig::default();
+        assert_eq!(pc.max_connections, 10);
+        assert_eq!(pc.min_connections, 1);
+        assert_eq!(pc.acquire_timeout_secs, 30);
+        assert_eq!(pc.idle_timeout_secs, 600);
+        assert_eq!(pc.max_lifetime_secs, 1800);
+    }
+
+    #[test]
+    fn pool_config_custom_values_roundtrip() {
+        let pc = PoolConfig {
+            max_connections: 20,
+            min_connections: 2,
+            acquire_timeout_secs: 10,
+            idle_timeout_secs: 300,
+            max_lifetime_secs: 900,
+        };
+        assert_eq!(pc.max_connections, 20);
+        assert_eq!(pc.min_connections, 2);
+    }
+
+    #[test]
+    fn connection_config_pool_config_defaults_to_none() {
+        let cfg = ConnectionConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            db_type: DatabaseType::Postgres,
+            host: Some("localhost".to_string()),
+            port: Some(5432),
+            database: "testdb".to_string(),
+            username: None,
+            use_ssl: false,
+            parameters: HashMap::new(),
+            pool_config: None,
+        };
+        // When None, callers use PoolConfig::default()
+        let pc = cfg.pool_config.unwrap_or_default();
+        assert_eq!(pc.max_connections, 10);
+    }
+
+    #[test]
+    fn connection_config_respects_custom_pool_config() {
+        let custom = PoolConfig { max_connections: 50, ..Default::default() };
+        let cfg = ConnectionConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            db_type: DatabaseType::MySQL,
+            host: Some("localhost".to_string()),
+            port: Some(3306),
+            database: "mydb".to_string(),
+            username: None,
+            use_ssl: false,
+            parameters: HashMap::new(),
+            pool_config: Some(custom),
+        };
+        assert_eq!(cfg.pool_config.as_ref().unwrap().max_connections, 50);
+        assert_eq!(cfg.pool_config.as_ref().unwrap().min_connections, 1);
     }
 }

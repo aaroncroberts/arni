@@ -183,6 +183,7 @@ impl Default for MongoDbAdapter {
                 username: None,
                 use_ssl: false,
                 parameters: HashMap::new(),
+                pool_config: None,
             },
             client: None,
             current_database: None,
@@ -1042,6 +1043,7 @@ mod tests {
             username: Some("test_user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         }
     }
 

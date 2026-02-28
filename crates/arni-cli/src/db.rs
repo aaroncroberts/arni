@@ -98,6 +98,7 @@ mod tests {
             username: None,
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         }
     }
 

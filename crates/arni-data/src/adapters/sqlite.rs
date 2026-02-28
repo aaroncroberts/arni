@@ -244,8 +244,13 @@ impl ConnectionTrait for SqliteAdapter {
 
         let conn_str = Self::build_connection_string(&self.config);
 
+        let pc = self.config.pool_config.clone().unwrap_or_default();
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
+            .max_connections(pc.max_connections)
+            .min_connections(pc.min_connections)
+            .acquire_timeout(std::time::Duration::from_secs(pc.acquire_timeout_secs))
+            .idle_timeout(std::time::Duration::from_secs(pc.idle_timeout_secs))
+            .max_lifetime(std::time::Duration::from_secs(pc.max_lifetime_secs))
             .connect(&conn_str)
             .await
             .map_err(|e| {
@@ -918,6 +923,7 @@ mod tests {
             username: None,
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         }
     }
 

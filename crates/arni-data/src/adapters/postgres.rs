@@ -1555,6 +1555,7 @@ mod tests {
             ),
             use_ssl: false,
             parameters,
+            pool_config: None,
         }
     }
 

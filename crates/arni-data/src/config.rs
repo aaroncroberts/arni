@@ -514,6 +514,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         profile.add_connection(conn);
@@ -534,6 +535,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         });
 
         config.profiles.insert("dev".to_string(), profile);
@@ -554,6 +556,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let result = validate_connection(&config);
@@ -576,6 +579,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let result = validate_connection(&config);
@@ -598,6 +602,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let result = validate_connection(&config);
@@ -617,6 +622,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let result = validate_connection(&config);
@@ -636,6 +642,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let result = validate_connection(&config);
@@ -655,6 +662,7 @@ mod tests {
             username: None,
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let result = validate_connection(&config);
@@ -673,6 +681,7 @@ mod tests {
             username: None,
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let result = validate_connection(&config);
@@ -692,6 +701,7 @@ mod tests {
                 username: Some("user".to_string()),
                 use_ssl: false,
                 parameters: HashMap::new(),
+                pool_config: None,
             },
             ConnectionConfig {
                 id: "duplicate".to_string(),
@@ -703,6 +713,7 @@ mod tests {
                 username: Some("user".to_string()),
                 use_ssl: false,
                 parameters: HashMap::new(),
+                pool_config: None,
             },
         ];
 
@@ -784,6 +795,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         });
 
         config.profiles.insert("default".to_string(), profile);
@@ -804,6 +816,7 @@ mod tests {
             username: Some("user".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         };
 
         let result = validate_connection(&config);

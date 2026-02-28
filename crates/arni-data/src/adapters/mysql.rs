@@ -461,8 +461,13 @@ impl Connection for MySqlAdapter {
         })?;
 
         // Create connection pool with sqlx
+        let pc = self.config.pool_config.clone().unwrap_or_default();
         let pool = MySqlPoolOptions::new()
-            .max_connections(5)
+            .max_connections(pc.max_connections)
+            .min_connections(pc.min_connections)
+            .acquire_timeout(std::time::Duration::from_secs(pc.acquire_timeout_secs))
+            .idle_timeout(std::time::Duration::from_secs(pc.idle_timeout_secs))
+            .max_lifetime(std::time::Duration::from_secs(pc.max_lifetime_secs))
             .connect(&conn_str)
             .await
             .map_err(|e| {
@@ -1666,6 +1671,7 @@ mod tests {
             ),
             use_ssl: false,
             parameters,
+            pool_config: None,
         }
     }
 

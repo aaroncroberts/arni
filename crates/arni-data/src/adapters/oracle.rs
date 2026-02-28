@@ -1432,6 +1432,7 @@ mod tests {
             username: Some("system".to_string()),
             use_ssl: false,
             parameters: HashMap::new(),
+            pool_config: None,
         }
     }
 
