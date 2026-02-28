@@ -116,6 +116,7 @@ pub mod adapters;
 pub mod config;
 pub mod error;
 pub mod export;
+pub mod registry;
 
 // Re-export commonly used types
 pub use adapter::{
@@ -125,3 +126,74 @@ pub use adapter::{
 pub use config::{ArniConfig, ConfigProfile};
 pub use error::{DataError, Result};
 pub use export::{to_bytes, to_file, DataFormat};
+pub use registry::ConnectionRegistry;
+
+/// A thread-safe, cheaply-cloneable handle to any database adapter.
+///
+/// All concrete adapters implement `DbAdapter + Send + Sync + 'static`, so they
+/// can be wrapped in `Arc` and shared across async tasks without serialisation.
+///
+/// # Example
+///
+/// ```ignore
+/// use arni_data::SharedAdapter;
+/// let adapter: SharedAdapter = std::sync::Arc::new(my_adapter);
+/// let clone = Arc::clone(&adapter); // zero-cost clone
+/// ```
+pub type SharedAdapter = std::sync::Arc<dyn DbAdapter + Send + Sync + 'static>;
+
+#[cfg(test)]
+mod shared_adapter_tests {
+    /// Compile-time proof that a concrete adapter satisfies the SharedAdapter bounds.
+    /// These tests have no runtime cost — they exist solely to catch bound regressions.
+    fn _assert_shared<T: super::DbAdapter + Send + Sync + 'static>() {}
+
+    #[cfg(feature = "postgres")]
+    #[test]
+    fn postgres_adapter_is_shared() {
+        use crate::adapters::postgres::PostgresAdapter;
+        _assert_shared::<PostgresAdapter>();
+    }
+
+    #[cfg(feature = "mysql")]
+    #[test]
+    fn mysql_adapter_is_shared() {
+        use crate::adapters::mysql::MySqlAdapter;
+        _assert_shared::<MySqlAdapter>();
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn sqlite_adapter_is_shared() {
+        use crate::adapters::sqlite::SqliteAdapter;
+        _assert_shared::<SqliteAdapter>();
+    }
+
+    #[cfg(feature = "mssql")]
+    #[test]
+    fn sqlserver_adapter_is_shared() {
+        use crate::adapters::mssql::SqlServerAdapter;
+        _assert_shared::<SqlServerAdapter>();
+    }
+
+    #[cfg(feature = "mongodb")]
+    #[test]
+    fn mongodb_adapter_is_shared() {
+        use crate::adapters::mongodb::MongoDbAdapter;
+        _assert_shared::<MongoDbAdapter>();
+    }
+
+    #[cfg(feature = "oracle")]
+    #[test]
+    fn oracle_adapter_is_shared() {
+        use crate::adapters::oracle::OracleAdapter;
+        _assert_shared::<OracleAdapter>();
+    }
+
+    #[cfg(feature = "duckdb")]
+    #[test]
+    fn duckdb_adapter_is_shared() {
+        use crate::adapters::duckdb::DuckDbAdapter;
+        _assert_shared::<DuckDbAdapter>();
+    }
+}
