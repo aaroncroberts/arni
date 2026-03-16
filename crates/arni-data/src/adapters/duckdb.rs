@@ -984,8 +984,8 @@ mod tests {
     #[test]
     fn test_sql_literal_float() {
         assert_eq!(
-            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Float(3.14)),
-            "3.14"
+            DuckDbAdapter::query_value_to_sql_literal(&QueryValue::Float(1.5_f64)),
+            "1.5"
         );
     }
 

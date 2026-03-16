@@ -2144,7 +2144,7 @@ mod tests {
         assert!(result.is_ok());
 
         let databases = result.unwrap();
-        assert!(databases.len() > 0);
+        assert!(!databases.is_empty());
         assert!(databases.contains(&"postgres".to_string()));
 
         Connection::disconnect(&mut adapter)
@@ -2301,7 +2301,7 @@ mod tests {
         let table_info = result.unwrap();
         assert_eq!(table_info.name, "tables");
         assert_eq!(table_info.schema, Some("information_schema".to_string()));
-        assert!(table_info.columns.len() > 0);
+        assert!(!table_info.columns.is_empty());
 
         // Verify column structure
         for col in &table_info.columns {

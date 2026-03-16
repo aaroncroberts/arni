@@ -73,6 +73,7 @@ pub fn is_postgres_available() -> bool {
 }
 
 /// Check if MongoDB is available for testing
+#[allow(dead_code)]
 pub fn is_mongodb_available() -> bool {
     env::var("TEST_MONGODB_AVAILABLE")
         .ok()

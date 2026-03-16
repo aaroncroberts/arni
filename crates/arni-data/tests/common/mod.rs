@@ -134,8 +134,7 @@ fn env_prefix(profile_name: &str) -> String {
         "TEST_{}",
         profile_name
             .to_uppercase()
-            .replace('-', "_")
-            .replace('.', "_")
+            .replace(['-', '.'], "_")
     )
 }
 

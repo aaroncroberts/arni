@@ -1571,8 +1571,8 @@ mod tests {
 
     #[test]
     fn test_sql_literal_float() {
-        let lit = OracleAdapter::query_value_to_sql_literal(&QueryValue::Float(3.14));
-        assert!(lit.starts_with("3.14"), "got: {}", lit);
+        let lit = OracleAdapter::query_value_to_sql_literal(&QueryValue::Float(1.5_f64));
+        assert!(lit.starts_with("1.5"), "got: {}", lit);
     }
 
     #[test]

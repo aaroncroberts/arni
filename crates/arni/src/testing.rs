@@ -3,8 +3,6 @@
 //! This module provides common utilities for testing, including mock implementations
 //! and test data generators. Only available when testing.
 
-#![cfg(test)]
-
 use crate::{Connection, DataFrame, DbAdapter, Error, Result};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};

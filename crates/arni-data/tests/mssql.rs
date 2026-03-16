@@ -118,10 +118,9 @@ mod mssql_tests {
         // No connection established — health_check should return Ok(false) or an
         // error; it must NOT panic.
         let result = ConnectionTrait::health_check(&adapter).await;
-        match result {
-            Ok(healthy) => assert!(!healthy, "should not be healthy before connect"),
-            Err(_) => {} // returning an error is also acceptable
-        }
+        if let Ok(healthy) = result {
+            assert!(!healthy, "should not be healthy before connect");
+        } // Err(_) is also acceptable
     }
 
     #[tokio::test]

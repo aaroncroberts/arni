@@ -213,10 +213,7 @@ mod tests {
         let mut config = make_config(DatabaseType::Postgres);
         config.parameters.insert("password".into(), String::new());
         // Match arm `Some(pw) if !pw.is_empty()` must NOT match
-        let matched = match config.parameters.get("password") {
-            Some(pw) if !pw.is_empty() => true,
-            _ => false,
-        };
+        let matched = matches!(config.parameters.get("password"), Some(pw) if !pw.is_empty());
         assert!(
             !matched,
             "empty password should not match the stored-pw arm"

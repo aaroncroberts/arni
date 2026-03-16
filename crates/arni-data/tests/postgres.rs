@@ -1081,7 +1081,7 @@ mod postgres_tests {
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
 
-        let result = DbAdapter::execute_query(&adapter, "SELECT 3.14::FLOAT8 AS f")
+        let result = DbAdapter::execute_query(&adapter, "SELECT 1.5::FLOAT8 AS f")
             .await
             .expect("float SELECT should succeed");
 
@@ -1089,8 +1089,8 @@ mod postgres_tests {
         match &result.rows[0][0] {
             QueryValue::Float(f) => {
                 assert!(
-                    (f - 3.14_f64).abs() < 1e-6,
-                    "float value should be approximately 3.14, got {f}"
+                    (f - 1.5_f64).abs() < 1e-9,
+                    "float value should be 1.5, got {f}"
                 );
             }
             other => panic!("expected QueryValue::Float, got {other:?}"),

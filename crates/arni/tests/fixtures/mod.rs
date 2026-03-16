@@ -52,6 +52,7 @@ pub fn empty_dataframe() -> DataFrame {
 /// SQL statements for creating test tables
 pub struct TestSchema;
 
+#[allow(dead_code)]
 impl TestSchema {
     /// SQL to create users table
     pub fn create_users_table() -> &'static str {

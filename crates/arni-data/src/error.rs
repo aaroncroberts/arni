@@ -166,7 +166,7 @@ mod tests {
 
         // Create a value that might fail TOML serialization
         let mut map = HashMap::new();
-        map.insert("key".to_string(), std::f64::NAN);
+        map.insert("key".to_string(), f64::NAN);
 
         match toml::to_string(&map) {
             Err(toml_err) => {
@@ -177,8 +177,7 @@ mod tests {
                 }
             }
             Ok(_) => {
-                // If serialization succeeds, verify From impl exists
-                assert!(true);
+                // If serialization succeeds, the From impl exists — nothing to assert
             }
         }
     }
