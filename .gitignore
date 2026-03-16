@@ -23,9 +23,10 @@ target
 **/.DS_Store
 .claude/.DS_Store
 
-# Beads issue tracker runtime files (lock/pid/port files and Dolt DB)
+# Beads runtime/temp files — the actual DB files in .beads/ ARE tracked
 .beads/dolt-server.lock
 .beads/dolt-server.log
 .beads/dolt-server.pid
 .beads/dolt-server.port
 .beads/dolt/
+.beads/export-state/
