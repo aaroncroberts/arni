@@ -1031,29 +1031,40 @@ profiles:
 
     #[test]
     fn test_load_from_default_paths_no_files() {
-        // This test assumes no default config files exist
-        // Save current directory
+        // This test assumes no default config files exist.
+        // Override HOME/USERPROFILE so the function cannot find ~/.arni/config.*
+        // even if such a file exists on the developer's machine.
+        let original_home = std::env::var("HOME").ok();
+        let original_userprofile = std::env::var("USERPROFILE").ok();
         let original_dir = std::env::current_dir().unwrap();
 
-        // Create a temporary empty directory
-        let temp_dir = std::env::temp_dir().join("arni_test_empty");
+        // Create a temporary empty directory and use it as both HOME and cwd
+        let temp_dir = std::env::temp_dir().join("arni_test_empty_no_config");
         std::fs::create_dir_all(&temp_dir).ok();
 
-        // Change to temp directory
+        std::env::set_var("HOME", &temp_dir);
+        std::env::set_var("USERPROFILE", &temp_dir);
         std::env::set_current_dir(&temp_dir).unwrap();
 
         let result = ArniConfig::load_from_default_paths();
+
+        // Restore environment before asserting so a panic doesn't leave it dirty
+        std::env::set_current_dir(&original_dir).unwrap();
+        match original_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match original_userprofile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        std::fs::remove_dir_all(&temp_dir).ok();
+
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("No configuration file found"));
-
-        // Restore directory
-        std::env::set_current_dir(&original_dir).unwrap();
-
-        // Cleanup
-        std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     #[test]
