@@ -5,12 +5,12 @@ mod db;
 mod logging_config;
 
 use arni_data::adapter::{ConnectionConfig, DatabaseType, TableSearchMode};
+use arni_data::export::{to_bytes, to_file, DataFormat};
 use clap::{Parser, Subcommand};
 use colored::*;
 use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as CTable};
 use config::{ConfigStore, ConnectionEntry};
 use figlet_rs::FIGfont;
-use arni_data::export::{to_bytes, to_file, DataFormat};
 use polars::prelude::DataFrame;
 use std::collections::HashMap;
 use std::error::Error;
@@ -678,7 +678,10 @@ fn run_compose_command(args: &[&str]) -> Result<(), Box<dyn Error>> {
 async fn handle_connect_command(profile: String) -> Result<(), Box<dyn Error>> {
     let store = ConfigStore::load(None)?;
     let cfg = store.get(&profile).map_err(|e| {
-        format!("{}\nhint: run `arni config list` to see available profiles", e)
+        format!(
+            "{}\nhint: run `arni config list` to see available profiles",
+            e
+        )
     })?;
 
     println!(
@@ -748,7 +751,10 @@ async fn handle_query_command(
 
     let store = ConfigStore::load(None)?;
     let adapter = db::connect(&store, &profile).await.map_err(|e| {
-        format!("{}\nhint: run `arni config list` to see available profiles", e)
+        format!(
+            "{}\nhint: run `arni config list` to see available profiles",
+            e
+        )
     })?;
 
     let mut df = adapter
@@ -808,7 +814,10 @@ async fn handle_metadata_command(
 
     let store = ConfigStore::load(None)?;
     let adapter = db::connect(&store, &profile).await.map_err(|e| {
-        format!("{}\nhint: run `arni config list` to see available profiles", e)
+        format!(
+            "{}\nhint: run `arni config list` to see available profiles",
+            e
+        )
     })?;
     let meta = adapter.metadata();
 
@@ -966,7 +975,10 @@ async fn handle_export_command(
 
     let store = ConfigStore::load(None)?;
     let adapter = db::connect(&store, &profile).await.map_err(|e| {
-        format!("{}\nhint: run `arni config list` to see available profiles", e)
+        format!(
+            "{}\nhint: run `arni config list` to see available profiles",
+            e
+        )
     })?;
 
     println!("{}", "Executing query...".dimmed());
@@ -1185,13 +1197,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_sqlite_memory() {
-        let result = test_connection(&make_cfg(DatabaseType::SQLite, ":memory:")).await.unwrap();
+        let result = test_connection(&make_cfg(DatabaseType::SQLite, ":memory:"))
+            .await
+            .unwrap();
         assert!(result.contains("In-memory"));
     }
 
     #[tokio::test]
     async fn test_connection_duckdb_memory() {
-        let result = test_connection(&make_cfg(DatabaseType::DuckDB, ":memory:")).await.unwrap();
+        let result = test_connection(&make_cfg(DatabaseType::DuckDB, ":memory:"))
+            .await
+            .unwrap();
         assert!(result.contains("In-memory"));
     }
 
@@ -1201,8 +1217,9 @@ mod tests {
         let db_path = dir.path().join("test.db");
         std::fs::write(&db_path, b"").unwrap();
 
-        let result =
-            test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap())).await.unwrap();
+        let result = test_connection(&make_cfg(DatabaseType::SQLite, db_path.to_str().unwrap()))
+            .await
+            .unwrap();
         assert!(result.contains("File exists"));
     }
 
@@ -1223,8 +1240,9 @@ mod tests {
         let db_path = dir.path().join("test.duckdb");
         std::fs::write(&db_path, b"").unwrap();
 
-        let result =
-            test_connection(&make_cfg(DatabaseType::DuckDB, db_path.to_str().unwrap())).await.unwrap();
+        let result = test_connection(&make_cfg(DatabaseType::DuckDB, db_path.to_str().unwrap()))
+            .await
+            .unwrap();
         assert!(result.contains("File exists"));
     }
 }

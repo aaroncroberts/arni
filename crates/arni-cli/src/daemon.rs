@@ -79,15 +79,34 @@ enum Command {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum Response {
-    Ok { ok: bool },
-    Error { ok: bool, error: String },
-    QueryOk { ok: bool, columns: Vec<String>, rows: Vec<Vec<serde_json::Value>> },
-    TablesOk { ok: bool, tables: Vec<String> },
+    Ok {
+        ok: bool,
+    },
+    Error {
+        ok: bool,
+        error: String,
+    },
+    QueryOk {
+        ok: bool,
+        columns: Vec<String>,
+        rows: Vec<Vec<serde_json::Value>>,
+    },
+    TablesOk {
+        ok: bool,
+        tables: Vec<String>,
+    },
 }
 
 impl Response {
-    fn ok() -> Self { Self::Ok { ok: true } }
-    fn err(msg: impl Into<String>) -> Self { Self::Error { ok: false, error: msg.into() } }
+    fn ok() -> Self {
+        Self::Ok { ok: true }
+    }
+    fn err(msg: impl Into<String>) -> Self {
+        Self::Error {
+            ok: false,
+            error: msg.into(),
+        }
+    }
 }
 
 // ─── Daemon entry point ───────────────────────────────────────────────────────
@@ -184,9 +203,8 @@ async fn handle_client(
             Err(e) => (Response::err(format!("Invalid command: {}", e)), false),
         };
 
-        let mut json = serde_json::to_string(&response).unwrap_or_else(|_| {
-            r#"{"ok":false,"error":"serialization error"}"#.to_string()
-        });
+        let mut json = serde_json::to_string(&response)
+            .unwrap_or_else(|_| r#"{"ok":false,"error":"serialization error"}"#.to_string());
         json.push('\n');
 
         if let Err(e) = writer.write_all(json.as_bytes()).await {
@@ -235,7 +253,11 @@ async fn dispatch_command(
                         .iter()
                         .map(|row| row.iter().map(query_value_to_json).collect())
                         .collect();
-                    Response::QueryOk { ok: true, columns: result.columns, rows }
+                    Response::QueryOk {
+                        ok: true,
+                        columns: result.columns,
+                        rows,
+                    }
                 }
                 Err(e) => Response::err(e.to_string()),
             };
@@ -358,7 +380,8 @@ mod tests {
 
     #[tokio::test]
     async fn command_deserialization() {
-        let cmd: Command = serde_json::from_str(r#"{"cmd":"query","profile":"p","sql":"SELECT 1"}"#).unwrap();
+        let cmd: Command =
+            serde_json::from_str(r#"{"cmd":"query","profile":"p","sql":"SELECT 1"}"#).unwrap();
         assert!(matches!(cmd, Command::Query { .. }));
 
         let cmd: Command = serde_json::from_str(r#"{"cmd":"tables","profile":"p"}"#).unwrap();
@@ -370,9 +393,21 @@ mod tests {
 
     #[test]
     fn query_value_json_roundtrip() {
-        assert_eq!(query_value_to_json(&QueryValue::Null), serde_json::Value::Null);
-        assert_eq!(query_value_to_json(&QueryValue::Bool(true)), serde_json::Value::Bool(true));
-        assert_eq!(query_value_to_json(&QueryValue::Int(42)), serde_json::json!(42));
-        assert_eq!(query_value_to_json(&QueryValue::Text("hi".into())), serde_json::json!("hi"));
+        assert_eq!(
+            query_value_to_json(&QueryValue::Null),
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            query_value_to_json(&QueryValue::Bool(true)),
+            serde_json::Value::Bool(true)
+        );
+        assert_eq!(
+            query_value_to_json(&QueryValue::Int(42)),
+            serde_json::json!(42)
+        );
+        assert_eq!(
+            query_value_to_json(&QueryValue::Text("hi".into())),
+            serde_json::json!("hi")
+        );
     }
 }

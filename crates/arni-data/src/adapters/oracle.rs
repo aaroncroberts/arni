@@ -542,7 +542,11 @@ impl ConnectionTrait for OracleAdapter {
         info!("Connecting to Oracle database");
 
         if self.config.db_type != DatabaseType::Oracle {
-            error!(adapter = "oracle", operation = "connect", "Invalid database type configuration");
+            error!(
+                adapter = "oracle",
+                operation = "connect",
+                "Invalid database type configuration"
+            );
             return Err(DataError::Config(format!(
                 "Invalid database type: expected Oracle, got {:?}",
                 self.config.db_type
@@ -696,7 +700,11 @@ impl DbAdapter for OracleAdapter {
 
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         if !*self.connected.read().await {
-            error!(adapter = "oracle", operation = "execute_query", "Not connected");
+            error!(
+                adapter = "oracle",
+                operation = "execute_query",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -842,7 +850,11 @@ impl DbAdapter for OracleAdapter {
         debug!("Listing tables");
 
         if !*self.connected.read().await {
-            error!(adapter = "oracle", operation = "list_tables", "Not connected");
+            error!(
+                adapter = "oracle",
+                operation = "list_tables",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -885,7 +897,11 @@ impl DbAdapter for OracleAdapter {
         debug!("Finding tables by pattern");
 
         if !*self.connected.read().await {
-            error!(adapter = "oracle", operation = "find_tables", "Not connected");
+            error!(
+                adapter = "oracle",
+                operation = "find_tables",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));

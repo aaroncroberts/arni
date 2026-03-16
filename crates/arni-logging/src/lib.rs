@@ -193,9 +193,8 @@ pub fn init_arni_logging(
     let file_appender = RollingFileAppender::new(appender_rotation, log_dir, "arni");
     let (non_blocking_writer, guard) = non_blocking(file_appender);
 
-    let file_filter = EnvFilter::try_new(level).map_err(|e| {
-        LoggingError::FilterError(format!("Invalid log level '{}': {}", level, e))
-    })?;
+    let file_filter = EnvFilter::try_new(level)
+        .map_err(|e| LoggingError::FilterError(format!("Invalid log level '{}': {}", level, e)))?;
 
     // Console only shows WARN+ to avoid cluttering interactive output.
     let console_filter = EnvFilter::try_new("warn")

@@ -28,7 +28,9 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use polars::prelude::{AnyValue, CsvWriter, DataFrame, JsonFormat, JsonWriter, ParquetWriter, SerWriter};
+use polars::prelude::{
+    AnyValue, CsvWriter, DataFrame, JsonFormat, JsonWriter, ParquetWriter, SerWriter,
+};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Writer;
 use rust_xlsxwriter::{Format, Workbook, XlsxError};
@@ -356,7 +358,10 @@ mod tests {
         let mut df = sample_df();
         let bytes = to_bytes(&mut df, DataFormat::Csv).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        assert!(text.starts_with("name,score"), "expected header row, got: {text}");
+        assert!(
+            text.starts_with("name,score"),
+            "expected header row, got: {text}"
+        );
     }
 
     #[test]
@@ -444,7 +449,10 @@ mod tests {
         let bytes = to_bytes(&mut df, DataFormat::Xml).unwrap();
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.contains("<dataframe>"), "missing <dataframe>: {text}");
-        assert!(text.contains("</dataframe>"), "missing </dataframe>: {text}");
+        assert!(
+            text.contains("</dataframe>"),
+            "missing </dataframe>: {text}"
+        );
     }
 
     #[test]
@@ -508,10 +516,13 @@ mod tests {
         assert_eq!("csv".parse::<DataFormat>().unwrap(), DataFormat::Csv);
         assert_eq!("json".parse::<DataFormat>().unwrap(), DataFormat::Json);
         assert_eq!("xml".parse::<DataFormat>().unwrap(), DataFormat::Xml);
-        assert_eq!("parquet".parse::<DataFormat>().unwrap(), DataFormat::Parquet);
+        assert_eq!(
+            "parquet".parse::<DataFormat>().unwrap(),
+            DataFormat::Parquet
+        );
         assert_eq!("excel".parse::<DataFormat>().unwrap(), DataFormat::Excel);
         assert_eq!("xlsx".parse::<DataFormat>().unwrap(), DataFormat::Excel);
-        assert_eq!("CSV".parse::<DataFormat>().unwrap(), DataFormat::Csv);  // case-insensitive
+        assert_eq!("CSV".parse::<DataFormat>().unwrap(), DataFormat::Csv); // case-insensitive
     }
 
     #[test]
@@ -544,7 +555,12 @@ mod tests {
         let bytes = to_bytes(&mut df, DataFormat::Excel).unwrap();
         // .xlsx files are ZIP archives; ZIP magic bytes are PK\x03\x04
         assert!(bytes.len() > 4, "xlsx bytes should be non-trivial");
-        assert_eq!(&bytes[..2], b"PK", "expected ZIP/xlsx magic 'PK', got {:?}", &bytes[..4]);
+        assert_eq!(
+            &bytes[..2],
+            b"PK",
+            "expected ZIP/xlsx magic 'PK', got {:?}",
+            &bytes[..4]
+        );
     }
 
     #[test]
@@ -559,12 +575,15 @@ mod tests {
     #[test]
     fn excel_with_mixed_types() {
         // Exercises the numeric, boolean, and string match arms
-        let mut df = DataFrame::new(3, vec![
-            Column::new("id".into(), &[1i32, 2, 3]),
-            Column::new("active".into(), &[true, false, true]),
-            Column::new("name".into(), &["Alice", "Bob", "Carol"]),
-            Column::new("score".into(), &[92.5f64, 87.0, 95.1]),
-        ])
+        let mut df = DataFrame::new(
+            3,
+            vec![
+                Column::new("id".into(), &[1i32, 2, 3]),
+                Column::new("active".into(), &[true, false, true]),
+                Column::new("name".into(), &["Alice", "Bob", "Carol"]),
+                Column::new("score".into(), &[92.5f64, 87.0, 95.1]),
+            ],
+        )
         .unwrap();
         let bytes = to_bytes(&mut df, DataFormat::Excel).unwrap();
         assert_eq!(&bytes[..2], b"PK");
@@ -572,8 +591,7 @@ mod tests {
 
     #[test]
     fn excel_empty_df_does_not_panic() {
-        let mut df =
-            DataFrame::new(0, vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
+        let mut df = DataFrame::new(0, vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
         let bytes = to_bytes(&mut df, DataFormat::Excel).unwrap();
         // Should produce a valid (header-only) workbook without panicking
         assert_eq!(&bytes[..2], b"PK");
@@ -583,10 +601,13 @@ mod tests {
 
     #[test]
     fn csv_empty_df_has_header_only() {
-        let mut df = DataFrame::new(0, vec![
-            Column::new("id".into(), &[] as &[i32]),
-            Column::new("val".into(), &[] as &[f64]),
-        ])
+        let mut df = DataFrame::new(
+            0,
+            vec![
+                Column::new("id".into(), &[] as &[i32]),
+                Column::new("val".into(), &[] as &[f64]),
+            ],
+        )
         .unwrap();
         let bytes = to_bytes(&mut df, DataFormat::Csv).unwrap();
         let text = String::from_utf8(bytes).unwrap();
@@ -595,11 +616,13 @@ mod tests {
 
     #[test]
     fn xml_empty_df_has_no_row_elements() {
-        let mut df =
-            DataFrame::new(0, vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
+        let mut df = DataFrame::new(0, vec![Column::new("id".into(), &[] as &[i32])]).unwrap();
         let bytes = to_bytes(&mut df, DataFormat::Xml).unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        assert!(!text.contains("<row>"), "empty df should have no <row>: {text}");
+        assert!(
+            !text.contains("<row>"),
+            "empty df should have no <row>: {text}"
+        );
     }
 
     // ── Excel date/datetime rendering ────────────────────────────────────────

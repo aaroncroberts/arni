@@ -242,7 +242,11 @@ impl Connection for PostgresAdapter {
 
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!(adapter = "postgres", operation = "health_check", "Pool not available for health check");
+            error!(
+                adapter = "postgres",
+                operation = "health_check",
+                "Pool not available for health check"
+            );
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -372,7 +376,11 @@ impl DbAdapter for PostgresAdapter {
         );
 
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "execute_query", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "execute_query",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -380,7 +388,11 @@ impl DbAdapter for PostgresAdapter {
 
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!(adapter = "postgres", operation = "execute_query", "Pool not available");
+            error!(
+                adapter = "postgres",
+                operation = "execute_query",
+                "Pool not available"
+            );
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -423,7 +435,13 @@ impl DbAdapter for PostgresAdapter {
         let duration = start.elapsed();
 
         if rows.is_empty() {
-            info!(sql_type, duration_ms = duration.as_millis(), rows = 0usize, columns = 0usize, "Query executed successfully");
+            info!(
+                sql_type,
+                duration_ms = duration.as_millis(),
+                rows = 0usize,
+                columns = 0usize,
+                "Query executed successfully"
+            );
             debug!("Query returned no rows");
             return Ok(QueryResult {
                 columns: vec![],
@@ -561,7 +579,11 @@ impl DbAdapter for PostgresAdapter {
 
         // Check connection
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "list_databases", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "list_databases",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -570,7 +592,11 @@ impl DbAdapter for PostgresAdapter {
         // Get client
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!(adapter = "postgres", operation = "list_databases", "Pool not available");
+            error!(
+                adapter = "postgres",
+                operation = "list_databases",
+                "Pool not available"
+            );
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -581,7 +607,10 @@ impl DbAdapter for PostgresAdapter {
             DataError::Query(format!("Failed to list databases: {}", e))
         })?;
 
-        let databases: Vec<String> = rows.iter().map(|row| row.try_get::<String, _>(0).unwrap_or_default()).collect();
+        let databases: Vec<String> = rows
+            .iter()
+            .map(|row| row.try_get::<String, _>(0).unwrap_or_default())
+            .collect();
 
         info!(count = databases.len(), "Listed databases successfully");
         Ok(databases)
@@ -593,7 +622,11 @@ impl DbAdapter for PostgresAdapter {
 
         // Check connection
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "list_tables", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "list_tables",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -602,7 +635,11 @@ impl DbAdapter for PostgresAdapter {
         // Get client
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!(adapter = "postgres", operation = "list_tables", "Pool not available");
+            error!(
+                adapter = "postgres",
+                operation = "list_tables",
+                "Pool not available"
+            );
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -627,7 +664,10 @@ impl DbAdapter for PostgresAdapter {
             DataError::Query(format!("Failed to list tables: {}", e))
         })?;
 
-        let tables: Vec<String> = rows.iter().map(|row| row.try_get::<String, _>(0).unwrap_or_default()).collect();
+        let tables: Vec<String> = rows
+            .iter()
+            .map(|row| row.try_get::<String, _>(0).unwrap_or_default())
+            .collect();
 
         info!(count = tables.len(), "Listed tables successfully");
         Ok(tables)
@@ -643,7 +683,11 @@ impl DbAdapter for PostgresAdapter {
         debug!("Finding tables by pattern");
 
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "find_tables", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "find_tables",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -651,7 +695,11 @@ impl DbAdapter for PostgresAdapter {
 
         let pool_guard = self.pool.read().await;
         let pool = pool_guard.as_ref().ok_or_else(|| {
-            error!(adapter = "postgres", operation = "find_tables", "Pool not available");
+            error!(
+                adapter = "postgres",
+                operation = "find_tables",
+                "Pool not available"
+            );
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -676,7 +724,10 @@ impl DbAdapter for PostgresAdapter {
             DataError::Query(format!("Failed to find tables: {}", e))
         })?;
 
-        let tables: Vec<String> = rows.iter().map(|row| row.try_get::<String, _>(0).unwrap_or_default()).collect();
+        let tables: Vec<String> = rows
+            .iter()
+            .map(|row| row.try_get::<String, _>(0).unwrap_or_default())
+            .collect();
         info!(count = tables.len(), "Found tables successfully");
         Ok(tables)
     }
@@ -689,7 +740,11 @@ impl DbAdapter for PostgresAdapter {
     ) -> Result<crate::adapter::TableInfo> {
         // Check connection
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "describe_table", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "describe_table",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -740,8 +795,10 @@ impl DbAdapter for PostgresAdapter {
             .await
             .map_err(|e| DataError::Query(format!("Failed to query primary keys: {}", e)))?;
 
-        let primary_keys: std::collections::HashSet<String> =
-            pk_rows.iter().map(|row| row.try_get::<String, _>(0).unwrap_or_default()).collect();
+        let primary_keys: std::collections::HashSet<String> = pk_rows
+            .iter()
+            .map(|row| row.try_get::<String, _>(0).unwrap_or_default())
+            .collect();
 
         // Build column info
         let columns: Vec<crate::adapter::ColumnInfo> = rows
@@ -925,9 +982,13 @@ impl DbAdapter for PostgresAdapter {
         let mut fk_map: HashMap<String, ForeignKeyInfo> = HashMap::new();
 
         for row in rows {
-            let fk_name: String = row.try_get::<String, _>("constraint_name").unwrap_or_default();
+            let fk_name: String = row
+                .try_get::<String, _>("constraint_name")
+                .unwrap_or_default();
             let column: String = row.try_get::<String, _>("column_name").unwrap_or_default();
-            let ref_column: String = row.try_get::<String, _>("foreign_column_name").unwrap_or_default();
+            let ref_column: String = row
+                .try_get::<String, _>("foreign_column_name")
+                .unwrap_or_default();
 
             fk_map
                 .entry(fk_name.clone())
@@ -936,8 +997,13 @@ impl DbAdapter for PostgresAdapter {
                     table_name: row.try_get::<String, _>("table_name").unwrap_or_default(),
                     schema: Some(row.try_get::<String, _>("table_schema").unwrap_or_default()),
                     columns: Vec::new(),
-                    referenced_table: row.try_get::<String, _>("foreign_table_name").unwrap_or_default(),
-                    referenced_schema: Some(row.try_get::<String, _>("foreign_table_schema").unwrap_or_default()),
+                    referenced_table: row
+                        .try_get::<String, _>("foreign_table_name")
+                        .unwrap_or_default(),
+                    referenced_schema: Some(
+                        row.try_get::<String, _>("foreign_table_schema")
+                            .unwrap_or_default(),
+                    ),
                     referenced_columns: Vec::new(),
                     on_delete: Some(row.try_get::<String, _>("delete_rule").unwrap_or_default()),
                     on_update: Some(row.try_get::<String, _>("update_rule").unwrap_or_default()),
@@ -956,7 +1022,11 @@ impl DbAdapter for PostgresAdapter {
     async fn get_views(&self, schema: Option<&str>) -> Result<Vec<ViewInfo>> {
         // Check connection
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "get_views", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "get_views",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -979,12 +1049,16 @@ impl DbAdapter for PostgresAdapter {
             ORDER BY table_name
         ";
 
-        let rows = sqlx::query(query).bind(schema_name).fetch_all(pool).await.map_err(|e| {
-            DataError::Query(format!(
-                "Failed to get views for schema '{}': {}",
-                schema_name, e
-            ))
-        })?;
+        let rows = sqlx::query(query)
+            .bind(schema_name)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                DataError::Query(format!(
+                    "Failed to get views for schema '{}': {}",
+                    schema_name, e
+                ))
+            })?;
 
         let views = rows
             .iter()
@@ -1005,7 +1079,11 @@ impl DbAdapter for PostgresAdapter {
     ) -> Result<Option<String>> {
         // Check connection
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "get_view_definition", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "get_view_definition",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1037,13 +1115,19 @@ impl DbAdapter for PostgresAdapter {
                 ))
             })?;
 
-        Ok(rows.first().and_then(|row| row.try_get::<String, _>("view_definition").ok()))
+        Ok(rows
+            .first()
+            .and_then(|row| row.try_get::<String, _>("view_definition").ok()))
     }
 
     async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         // Check connection
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "list_stored_procedures", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "list_stored_procedures",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1070,12 +1154,16 @@ impl DbAdapter for PostgresAdapter {
             ORDER BY p.proname
         ";
 
-        let rows = sqlx::query(query).bind(schema_name).fetch_all(pool).await.map_err(|e| {
-            DataError::Query(format!(
-                "Failed to get stored procedures for schema '{}': {}",
-                schema_name, e
-            ))
-        })?;
+        let rows = sqlx::query(query)
+            .bind(schema_name)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                DataError::Query(format!(
+                    "Failed to get stored procedures for schema '{}': {}",
+                    schema_name, e
+                ))
+            })?;
 
         let procedures = rows
             .iter()
@@ -1093,7 +1181,11 @@ impl DbAdapter for PostgresAdapter {
     #[instrument(skip(self), fields(adapter = "postgres"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "get_server_info", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "get_server_info",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -1318,7 +1410,6 @@ impl DbAdapter for PostgresAdapter {
         Ok(total_affected)
     }
 }
-
 
 impl PostgresAdapter {
     /// Convert a PostgreSQL row to a vector of QueryValues using sqlx PgRow
@@ -1877,12 +1968,15 @@ mod tests {
         .unwrap();
 
         // Create test DataFrame with various types
-        let df = DataFrame::new(3, vec![
-            Series::new("id".into(), &[1i32, 2, 3]).into(),
-            Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
-            Series::new("score".into(), &[95.5f64, 87.3, 92.1]).into(),
-            Series::new("active".into(), &[true, false, true]).into(),
-        ])
+        let df = DataFrame::new(
+            3,
+            vec![
+                Series::new("id".into(), &[1i32, 2, 3]).into(),
+                Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
+                Series::new("score".into(), &[95.5f64, 87.3, 92.1]).into(),
+                Series::new("active".into(), &[true, false, true]).into(),
+            ],
+        )
         .unwrap();
 
         // Export with replace=true
@@ -1974,14 +2068,16 @@ mod tests {
         .unwrap();
 
         // First export
-        let df1 = DataFrame::new(3, vec![Series::new("value".into(), &[1i32, 2, 3]).into()]).unwrap();
+        let df1 =
+            DataFrame::new(3, vec![Series::new("value".into(), &[1i32, 2, 3]).into()]).unwrap();
 
         DbAdapter::export_dataframe(&adapter, &df1, "test_replace", None, true)
             .await
             .unwrap();
 
         // Second export with replace=true (should drop and recreate)
-        let df2 = DataFrame::new(2, vec![Series::new("value".into(), &[10i32, 20]).into()]).unwrap();
+        let df2 =
+            DataFrame::new(2, vec![Series::new("value".into(), &[10i32, 20]).into()]).unwrap();
 
         let result = DbAdapter::export_dataframe(&adapter, &df2, "test_replace", None, true).await;
         assert!(result.is_ok());
@@ -2240,12 +2336,15 @@ mod tests {
         let config = create_test_config();
         let adapter = PostgresAdapter::new(config);
 
-        let df = DataFrame::new(3, vec![
-            Series::new("id".into(), &[1, 2, 3]).into(),
-            Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
-            Series::new("score".into(), &[95.5, 87.3, 92.1]).into(),
-            Series::new("active".into(), &[true, false, true]).into(),
-        ])
+        let df = DataFrame::new(
+            3,
+            vec![
+                Series::new("id".into(), &[1, 2, 3]).into(),
+                Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
+                Series::new("score".into(), &[95.5, 87.3, 92.1]).into(),
+                Series::new("active".into(), &[true, false, true]).into(),
+            ],
+        )
         .unwrap();
 
         let sql = adapter

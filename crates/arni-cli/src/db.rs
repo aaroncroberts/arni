@@ -19,7 +19,9 @@ use crate::config::ConfigStore;
 ///
 /// Returns `Box<dyn DbAdapter + Send + Sync + 'static>` so callers can wrap
 /// the result in `Arc::from(adapter)` to obtain a [`SharedAdapter`].
-pub fn create_adapter(config: ConnectionConfig) -> Result<Box<dyn DbAdapter + Send + Sync + 'static>> {
+pub fn create_adapter(
+    config: ConnectionConfig,
+) -> Result<Box<dyn DbAdapter + Send + Sync + 'static>> {
     let adapter: Box<dyn DbAdapter + Send + Sync + 'static> = match config.db_type {
         DatabaseType::Postgres => {
             Box::new(arni_data::adapters::postgres::PostgresAdapter::new(config))
@@ -199,9 +201,7 @@ mod tests {
     #[test]
     fn test_stored_password_in_parameters() {
         let mut config = make_config(DatabaseType::Postgres);
-        config
-            .parameters
-            .insert("password".into(), "s3cr3t".into());
+        config.parameters.insert("password".into(), "s3cr3t".into());
         // Verify the lookup logic directly
         let pw = config.parameters.get("password").cloned();
         assert_eq!(pw.as_deref(), Some("s3cr3t"));
@@ -211,15 +211,16 @@ mod tests {
     #[test]
     fn test_empty_stored_password_treated_as_absent() {
         let mut config = make_config(DatabaseType::Postgres);
-        config
-            .parameters
-            .insert("password".into(), String::new());
+        config.parameters.insert("password".into(), String::new());
         // Match arm `Some(pw) if !pw.is_empty()` must NOT match
         let matched = match config.parameters.get("password") {
             Some(pw) if !pw.is_empty() => true,
             _ => false,
         };
-        assert!(!matched, "empty password should not match the stored-pw arm");
+        assert!(
+            !matched,
+            "empty password should not match the stored-pw arm"
+        );
     }
 
     /// SQLite/DuckDB adapters never require auth.

@@ -132,7 +132,6 @@ impl MongoDbAdapter {
         }
     }
 
-
     /// Convert a BSON value to QueryValue
     fn bson_to_query_value(bson: &Bson) -> QueryValue {
         match bson {
@@ -370,7 +369,11 @@ impl DbAdapter for MongoDbAdapter {
         let start = std::time::Instant::now();
 
         let client = self.client.as_ref().ok_or_else(|| {
-            error!(adapter = "mongodb", operation = "execute_query", "Not connected");
+            error!(
+                adapter = "mongodb",
+                operation = "execute_query",
+                "Not connected"
+            );
             DataError::Connection("Not connected".to_string())
         })?;
 
@@ -441,7 +444,7 @@ impl DbAdapter for MongoDbAdapter {
         let columns = if let Some(_first_row) = results.first() {
             let doc = db
                 .collection::<Document>(collection_name)
-                .find_one(doc!{})
+                .find_one(doc! {})
                 .await
                 .map_err(|e| DataError::Query(format!("Failed to get column names: {}", e)))?
                 .ok_or_else(|| DataError::Query("No documents found".to_string()))?;
@@ -806,7 +809,7 @@ impl DbAdapter for MongoDbAdapter {
 
         // Sample documents to infer schema
         let mut cursor = collection
-            .find(doc!{})
+            .find(doc! {})
             .await
             .map_err(|e| DataError::Query(format!("Failed to query collection: {}", e)))?;
 
@@ -847,7 +850,7 @@ impl DbAdapter for MongoDbAdapter {
             .collect();
 
         let row_count = collection
-            .count_documents(doc!{})
+            .count_documents(doc! {})
             .await
             .ok()
             .map(|n| n as i64);
@@ -1148,7 +1151,10 @@ mod tests {
         assert!(uri.contains("secret"));
         assert!(uri.contains("db.example.com:27017"));
         assert!(uri.contains("authSource=admin"));
-        assert!(!uri.contains("tls=true"), "use_ssl=false must not add tls param");
+        assert!(
+            !uri.contains("tls=true"),
+            "use_ssl=false must not add tls param"
+        );
     }
 
     #[test]
@@ -1167,7 +1173,10 @@ mod tests {
         config.use_ssl = true;
         let uri = MongoDbAdapter::build_connection_string(&config, Some("secret"));
         assert!(uri.contains("tls=true"), "use_ssl=true must add tls=true");
-        assert!(uri.contains("authSource=admin"), "authSource must still be present");
+        assert!(
+            uri.contains("authSource=admin"),
+            "authSource must still be present"
+        );
     }
 
     #[test]
@@ -1177,7 +1186,10 @@ mod tests {
         config.use_ssl = true;
         let uri = MongoDbAdapter::build_connection_string(&config, None);
         assert!(uri.contains("tls=true"), "use_ssl=true must add tls=true");
-        assert!(uri.starts_with("mongodb://localhost:27017"), "host unchanged");
+        assert!(
+            uri.starts_with("mongodb://localhost:27017"),
+            "host unchanged"
+        );
     }
 
     #[test]
@@ -1227,7 +1239,10 @@ mod tests {
         let config = make_config("localhost", "mydb");
         let uri = MongoDbAdapter::build_connection_string(&config, Some("p@ssw0rd"));
         assert!(uri.contains("%40"), "@ in password must be percent-encoded");
-        assert!(!uri[10..].contains("p@"), "raw @ must not appear after scheme");
+        assert!(
+            !uri[10..].contains("p@"),
+            "raw @ must not appear after scheme"
+        );
     }
 
     #[test]

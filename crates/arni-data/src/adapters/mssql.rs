@@ -464,9 +464,10 @@ impl SqlServerAdapter {
         let pool = self.pool.as_ref().ok_or_else(|| {
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
-        let mut conn = pool.get().await.map_err(|e| {
-            DataError::Connection(format!("Failed to acquire connection: {}", e))
-        })?;
+        let mut conn = pool
+            .get()
+            .await
+            .map_err(|e| DataError::Connection(format!("Failed to acquire connection: {}", e)))?;
         let result = conn
             .execute(sql, &[])
             .await
@@ -621,11 +622,19 @@ impl DbAdapter for SqlServerAdapter {
         let start = std::time::Instant::now();
 
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!(adapter = "mssql", operation = "execute_query", "Not connected");
+            error!(
+                adapter = "mssql",
+                operation = "execute_query",
+                "Not connected"
+            );
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
         let mut conn = pool.get().await.map_err(|e| {
-            error!(adapter = "mssql", operation = "execute_query", "Failed to acquire connection from pool");
+            error!(
+                adapter = "mssql",
+                operation = "execute_query",
+                "Failed to acquire connection from pool"
+            );
             DataError::Connection(format!("Failed to acquire connection: {}", e))
         })?;
 
@@ -1408,7 +1417,10 @@ mod tests {
                 .get("trust_server_certificate")
                 .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
                 .unwrap_or(false);
-        assert!(!trust, "use_ssl=true without param → trust_cert=false (validates cert)");
+        assert!(
+            !trust,
+            "use_ssl=true without param → trust_cert=false (validates cert)"
+        );
 
         // When use_ssl=true with param=true, trust_cert IS set
         config

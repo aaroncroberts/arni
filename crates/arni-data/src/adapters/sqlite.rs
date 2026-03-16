@@ -49,10 +49,7 @@ impl SqliteAdapter {
     /// to establish the connection.
     pub fn new(config: ConnectionConfig) -> Self {
         debug!(database = %config.database, "Creating SQLite adapter");
-        Self {
-            config,
-            pool: None,
-        }
+        Self { config, pool: None }
     }
 
     /// Validate database path
@@ -368,7 +365,11 @@ impl DbAdapter for SqliteAdapter {
         let start = std::time::Instant::now();
 
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!(adapter = "sqlite", operation = "execute_query", "Not connected");
+            error!(
+                adapter = "sqlite",
+                operation = "execute_query",
+                "Not connected"
+            );
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 
@@ -448,7 +449,11 @@ impl DbAdapter for SqliteAdapter {
         mode: TableSearchMode,
     ) -> Result<Vec<String>> {
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!(adapter = "sqlite", operation = "find_tables", "Not connected");
+            error!(
+                adapter = "sqlite",
+                operation = "find_tables",
+                "Not connected"
+            );
             DataError::Connection("Not connected - call connect() first".to_string())
         })?;
 

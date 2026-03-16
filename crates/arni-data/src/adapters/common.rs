@@ -209,17 +209,23 @@ pub(crate) fn query_value_to_sql_literal(value: &QueryValue, bool_as_int: bool) 
 /// `"DROP"`, `"ALTER"`, `"TRUNCATE"`, `"WITH"`, or `"OTHER"`.
 /// Case-insensitive; leading whitespace is trimmed.
 pub(crate) fn detect_sql_type(sql: &str) -> &'static str {
-    match sql.split_whitespace().next().unwrap_or("").to_uppercase().as_str() {
+    match sql
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_uppercase()
+        .as_str()
+    {
         "SELECT" => "SELECT",
         "INSERT" => "INSERT",
         "UPDATE" => "UPDATE",
         "DELETE" => "DELETE",
         "CREATE" => "CREATE",
-        "DROP"   => "DROP",
-        "ALTER"  => "ALTER",
+        "DROP" => "DROP",
+        "ALTER" => "ALTER",
         "TRUNCATE" => "TRUNCATE",
-        "WITH"   => "WITH",
-        _        => "OTHER",
+        "WITH" => "WITH",
+        _ => "OTHER",
     }
 }
 
@@ -286,10 +292,7 @@ mod tests {
     #[test]
     fn string_value_escaped() {
         let s = str_series(&["it's"]);
-        assert_eq!(
-            series_value_to_sql_literal(&s, 0, true).unwrap(),
-            "'it''s'"
-        );
+        assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "'it''s'");
     }
 
     #[test]
@@ -327,7 +330,10 @@ mod tests {
 
     #[test]
     fn detect_sql_type_with() {
-        assert_eq!(detect_sql_type("WITH cte AS (SELECT 1) SELECT * FROM cte"), "WITH");
+        assert_eq!(
+            detect_sql_type("WITH cte AS (SELECT 1) SELECT * FROM cte"),
+            "WITH"
+        );
     }
 
     #[test]

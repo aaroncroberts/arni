@@ -86,7 +86,11 @@ impl DuckDbAdapter {
                 .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
 
             let conn = conn_guard.as_ref().ok_or_else(|| {
-                error!(adapter = "duckdb", operation = "execute_query", "Not connected");
+                error!(
+                    adapter = "duckdb",
+                    operation = "execute_query",
+                    "Not connected"
+                );
                 DataError::Connection("Not connected".to_string())
             })?;
 
@@ -251,7 +255,11 @@ impl ConnectionTrait for DuckDbAdapter {
 
         Self::validate_database_path(&self.config.database)?;
 
-        let mode = if self.config.database == ":memory:" { "in-memory" } else { "file" };
+        let mode = if self.config.database == ":memory:" {
+            "in-memory"
+        } else {
+            "file"
+        };
         info!(database = %self.config.database, mode, "Connecting to DuckDB");
         debug!("DuckDB uses a single connection per adapter instance (no connection pool)");
 

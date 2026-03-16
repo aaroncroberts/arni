@@ -1728,7 +1728,10 @@ mod tests {
 
     #[test]
     fn connection_config_respects_custom_pool_config() {
-        let custom = PoolConfig { max_connections: 50, ..Default::default() };
+        let custom = PoolConfig {
+            max_connections: 50,
+            ..Default::default()
+        };
         let cfg = ConnectionConfig {
             id: "test".to_string(),
             name: "Test".to_string(),

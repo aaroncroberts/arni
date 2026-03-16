@@ -107,10 +107,7 @@ impl MySqlAdapter {
     /// let adapter = MySqlAdapter::new(config);
     /// ```
     pub fn new(config: ConnectionConfig) -> Self {
-        Self {
-            config,
-            pool: None,
-        }
+        Self { config, pool: None }
     }
 
     /// Validate database name
@@ -349,7 +346,11 @@ impl MySqlAdapter {
 
         // Check if connected
         if self.pool.is_none() {
-            error!(adapter = "mysql", operation = "execute_query", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "execute_query",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
@@ -357,7 +358,11 @@ impl MySqlAdapter {
 
         // Get pool
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!(adapter = "mysql", operation = "execute_query", "Pool not available");
+            error!(
+                adapter = "mysql",
+                operation = "execute_query",
+                "Pool not available"
+            );
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -403,7 +408,13 @@ impl MySqlAdapter {
         let duration = start.elapsed();
 
         if rows.is_empty() {
-            info!(sql_type, duration_ms = duration.as_millis(), rows = 0usize, columns = 0usize, "Query executed successfully");
+            info!(
+                sql_type,
+                duration_ms = duration.as_millis(),
+                rows = 0usize,
+                columns = 0usize,
+                "Query executed successfully"
+            );
             debug!("Query returned no rows");
             return Ok(QueryResult {
                 columns: vec![],
@@ -520,7 +531,11 @@ impl Connection for MySqlAdapter {
 
         // Get pool
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!(adapter = "mysql", operation = "health_check", "Pool not available for health check");
+            error!(
+                adapter = "mysql",
+                operation = "health_check",
+                "Pool not available for health check"
+            );
             DataError::Connection("Pool not available".to_string())
         })?;
 
@@ -655,7 +670,8 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -732,14 +748,19 @@ impl DbAdapter for MySqlAdapter {
     async fn list_databases(&self) -> Result<Vec<String>> {
         // Check connection
         if !Connection::is_connected(self) {
-            error!(adapter = "mysql", operation = "list_databases", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "list_databases",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -759,14 +780,19 @@ impl DbAdapter for MySqlAdapter {
     async fn list_tables(&self, schema: Option<&str>) -> Result<Vec<String>> {
         // Check connection
         if !Connection::is_connected(self) {
-            error!(adapter = "mysql", operation = "list_tables", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "list_tables",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -817,13 +843,18 @@ impl DbAdapter for MySqlAdapter {
         mode: TableSearchMode,
     ) -> Result<Vec<String>> {
         if !Connection::is_connected(self) {
-            error!(adapter = "mysql", operation = "find_tables", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "find_tables",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -866,14 +897,19 @@ impl DbAdapter for MySqlAdapter {
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
         // Check connection
         if !Connection::is_connected(self) {
-            error!(adapter = "mysql", operation = "describe_table", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "describe_table",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -970,7 +1006,8 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1034,7 +1071,8 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1108,7 +1146,8 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1143,14 +1182,19 @@ impl DbAdapter for MySqlAdapter {
     ) -> Result<Option<String>> {
         // Check connection
         if self.pool.is_none() {
-            error!(adapter = "mysql", operation = "get_view_definition", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "get_view_definition",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1179,14 +1223,19 @@ impl DbAdapter for MySqlAdapter {
     async fn list_stored_procedures(&self, _schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         // Check connection
         if self.pool.is_none() {
-            error!(adapter = "mysql", operation = "list_stored_procedures", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "list_stored_procedures",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1221,12 +1270,17 @@ impl DbAdapter for MySqlAdapter {
     #[instrument(skip(self), fields(adapter = "mysql"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
         if self.pool.is_none() {
-            error!(adapter = "mysql", operation = "get_server_info", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "get_server_info",
+                "Not connected"
+            );
             return Err(DataError::Connection(
                 "Not connected - call connect() first".to_string(),
             ));
         }
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
         let row = sqlx::query("SELECT VERSION() AS version")
@@ -1282,7 +1336,8 @@ impl DbAdapter for MySqlAdapter {
         }
 
         // Get pool
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1346,7 +1401,8 @@ impl DbAdapter for MySqlAdapter {
             ));
         }
 
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1415,7 +1471,8 @@ impl DbAdapter for MySqlAdapter {
             ));
         }
 
-        let pool = self.pool
+        let pool = self
+            .pool
             .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
@@ -1941,11 +1998,14 @@ mod tests {
         let config = create_test_config();
         let adapter = MySqlAdapter::new(config);
 
-        let df = DataFrame::new(3, vec![
-            Series::new("id".into(), &[1, 2, 3]).into(),
-            Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
-            Series::new("active".into(), &[true, false, true]).into(),
-        ])
+        let df = DataFrame::new(
+            3,
+            vec![
+                Series::new("id".into(), &[1, 2, 3]).into(),
+                Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
+                Series::new("active".into(), &[true, false, true]).into(),
+            ],
+        )
         .unwrap();
 
         let sql = adapter
@@ -1975,10 +2035,13 @@ mod tests {
         .await
         .expect("Failed to connect");
 
-        let df = DataFrame::new(3, vec![
-            Series::new("id".into(), &[1, 2, 3]).into(),
-            Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
-        ])
+        let df = DataFrame::new(
+            3,
+            vec![
+                Series::new("id".into(), &[1, 2, 3]).into(),
+                Series::new("name".into(), &["Alice", "Bob", "Charlie"]).into(),
+            ],
+        )
         .unwrap();
 
         // Export with replace=true

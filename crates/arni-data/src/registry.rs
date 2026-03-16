@@ -67,7 +67,11 @@ impl ConnectionRegistry {
     /// # Errors
     ///
     /// Propagates any error returned by `factory`.
-    pub async fn get_or_connect<F, Fut>(&self, key: &str, factory: F) -> Result<SharedAdapter, DataError>
+    pub async fn get_or_connect<F, Fut>(
+        &self,
+        key: &str,
+        factory: F,
+    ) -> Result<SharedAdapter, DataError>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<SharedAdapter, DataError>>,
@@ -129,29 +133,77 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::adapter::Connection for StubAdapter {
-        async fn connect(&mut self) -> Result<(), DataError> { Ok(()) }
-        async fn disconnect(&mut self) -> Result<(), DataError> { Ok(()) }
-        fn is_connected(&self) -> bool { true }
-        async fn health_check(&self) -> Result<bool, DataError> { Ok(true) }
-        fn config(&self) -> &crate::adapter::ConnectionConfig { unimplemented!() }
+        async fn connect(&mut self) -> Result<(), DataError> {
+            Ok(())
+        }
+        async fn disconnect(&mut self) -> Result<(), DataError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        async fn health_check(&self) -> Result<bool, DataError> {
+            Ok(true)
+        }
+        fn config(&self) -> &crate::adapter::ConnectionConfig {
+            unimplemented!()
+        }
     }
 
     #[async_trait::async_trait]
     impl crate::DbAdapter for StubAdapter {
-        async fn connect(&mut self, _c: &crate::ConnectionConfig, _p: Option<&str>) -> Result<(), DataError> {
+        async fn connect(
+            &mut self,
+            _c: &crate::ConnectionConfig,
+            _p: Option<&str>,
+        ) -> Result<(), DataError> {
             self.connects.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        async fn disconnect(&mut self) -> Result<(), DataError> { Ok(()) }
-        fn is_connected(&self) -> bool { true }
-        async fn test_connection(&self, _c: &crate::ConnectionConfig, _p: Option<&str>) -> Result<bool, DataError> { Ok(true) }
-        fn database_type(&self) -> crate::DatabaseType { crate::DatabaseType::SQLite }
-        fn metadata(&self) -> crate::adapter::AdapterMetadata<'_> { unimplemented!() }
-        async fn export_dataframe(&self, _df: &polars::prelude::DataFrame, _t: &str, _s: Option<&str>, _r: bool) -> Result<u64, DataError> { unimplemented!() }
-        async fn execute_query(&self, _q: &str) -> Result<crate::QueryResult, DataError> { unimplemented!() }
-        async fn list_databases(&self) -> Result<Vec<String>, DataError> { Ok(vec![]) }
-        async fn list_tables(&self, _s: Option<&str>) -> Result<Vec<String>, DataError> { Ok(vec![]) }
-        async fn describe_table(&self, _t: &str, _s: Option<&str>) -> Result<crate::TableInfo, DataError> { unimplemented!() }
+        async fn disconnect(&mut self) -> Result<(), DataError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        async fn test_connection(
+            &self,
+            _c: &crate::ConnectionConfig,
+            _p: Option<&str>,
+        ) -> Result<bool, DataError> {
+            Ok(true)
+        }
+        fn database_type(&self) -> crate::DatabaseType {
+            crate::DatabaseType::SQLite
+        }
+        fn metadata(&self) -> crate::adapter::AdapterMetadata<'_> {
+            unimplemented!()
+        }
+        async fn export_dataframe(
+            &self,
+            _df: &polars::prelude::DataFrame,
+            _t: &str,
+            _s: Option<&str>,
+            _r: bool,
+        ) -> Result<u64, DataError> {
+            unimplemented!()
+        }
+        async fn execute_query(&self, _q: &str) -> Result<crate::QueryResult, DataError> {
+            unimplemented!()
+        }
+        async fn list_databases(&self) -> Result<Vec<String>, DataError> {
+            Ok(vec![])
+        }
+        async fn list_tables(&self, _s: Option<&str>) -> Result<Vec<String>, DataError> {
+            Ok(vec![])
+        }
+        async fn describe_table(
+            &self,
+            _t: &str,
+            _s: Option<&str>,
+        ) -> Result<crate::TableInfo, DataError> {
+            unimplemented!()
+        }
     }
 
     fn stub_config() -> crate::ConnectionConfig {
@@ -181,11 +233,16 @@ mod tests {
         let counter = StdArc::new(AtomicUsize::new(0));
 
         let c1 = counter.clone();
-        let a1 = reg.get_or_connect("test", || make_shared(c1)).await.unwrap();
+        let a1 = reg
+            .get_or_connect("test", || make_shared(c1))
+            .await
+            .unwrap();
         assert_eq!(counter.load(Ordering::SeqCst), 1, "factory called once");
 
         let a2 = reg
-            .get_or_connect("test", || async { panic!("must not call factory on cache hit") })
+            .get_or_connect("test", || async {
+                panic!("must not call factory on cache hit")
+            })
             .await
             .unwrap();
         assert!(Arc::ptr_eq(&a1, &a2), "same Arc returned");
@@ -221,10 +278,17 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
 
-        assert_eq!(counter.load(Ordering::SeqCst), 1, "only 1 connection made across 20 tasks");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "only 1 connection made across 20 tasks"
+        );
         let first = &results[0];
         for a in &results[1..] {
-            assert!(Arc::ptr_eq(first, a), "all tasks share the same adapter Arc");
+            assert!(
+                Arc::ptr_eq(first, a),
+                "all tasks share the same adapter Arc"
+            );
         }
     }
 
@@ -242,6 +306,10 @@ mod tests {
 
         let c2 = counter.clone();
         reg.get_or_connect("key", || make_shared(c2)).await.unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst), 2, "re-connected after eviction");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            2,
+            "re-connected after eviction"
+        );
     }
 }
