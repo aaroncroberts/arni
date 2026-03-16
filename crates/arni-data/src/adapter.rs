@@ -1555,7 +1555,10 @@ mod tests {
             "FALSE"
         );
         assert_eq!(query_value_to_sql_literal(&QueryValue::Int(42)), "42");
-        assert_eq!(query_value_to_sql_literal(&QueryValue::Float(1.5_f64)), "1.5");
+        assert_eq!(
+            query_value_to_sql_literal(&QueryValue::Float(1.5_f64)),
+            "1.5"
+        );
         assert_eq!(
             query_value_to_sql_literal(&QueryValue::Text("hello".to_string())),
             "'hello'"

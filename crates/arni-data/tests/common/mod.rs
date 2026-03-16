@@ -132,9 +132,7 @@ pub fn skip_if_unavailable(db_type: &str) -> bool {
 fn env_prefix(profile_name: &str) -> String {
     format!(
         "TEST_{}",
-        profile_name
-            .to_uppercase()
-            .replace(['-', '.'], "_")
+        profile_name.to_uppercase().replace(['-', '.'], "_")
     )
 }
 
