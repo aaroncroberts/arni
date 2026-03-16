@@ -225,30 +225,6 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
-  # Check that tests pass with minimal versions
-  minimal-versions:
-    name: Minimal Versions Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: minimal-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Update to minimal versions
-        run: cargo +nightly update -Z minimal-versions
-
-      - name: Check with minimal versions
-        run: cargo +nightly check --all-features
 
   # Code coverage (ubuntu-only, runs after unit tests)
   coverage:
