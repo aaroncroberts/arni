@@ -28,7 +28,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-ALL_SERVICES=(postgres mysql mssql mongodb oracle)
+ALL_SERVICES=(postgres mysql mssql mongodb oracle sqlite duckdb)
+# Embedded databases (sqlite, duckdb) do not use containers but are included
+# for logical separation and consistent status reporting.
+EMBEDDED_SERVICES=(sqlite duckdb)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,9 +47,10 @@ require_podman() {
     fi
 }
 
-# Ensure persistent data directories exist
+# Ensure persistent data directories exist (containerised services only)
 ensure_data_dirs() {
     for svc in "${ALL_SERVICES[@]}"; do
+        is_embedded "${svc}" && continue
         mkdir -p "${ARNI_DATA_DIR}/${svc}"
     done
 }
@@ -186,6 +190,18 @@ start_oracle() {
     msg "oracle    ready on :1522"
 }
 
+start_sqlite() {
+    # SQLite is an embedded database — no container required.
+    # Data files live wherever your application or tests place them (e.g. in-memory or a .db file).
+    msg "sqlite    embedded — no container needed (in-process, no daemon)"
+}
+
+start_duckdb() {
+    # DuckDB is an embedded database — no container required.
+    # The library runs in-process; test databases are created in memory or as .duckdb files.
+    msg "duckdb    embedded — no container needed (in-process, no daemon)"
+}
+
 # ── Command dispatch ──────────────────────────────────────────────────────────
 
 cmd_start() {
@@ -201,6 +217,8 @@ cmd_start() {
             mssql)    start_mssql   ;;
             mongodb)  start_mongodb  ;;
             oracle)   start_oracle   ;;
+            sqlite)   start_sqlite   ;;
+            duckdb)   start_duckdb   ;;
             *) err "Unknown service: ${svc}. Valid: ${ALL_SERVICES[*]}"; exit 1 ;;
         esac
     done
@@ -211,6 +229,10 @@ cmd_stop() {
     [[ ${#services[@]} -eq 0 ]] && services=("${ALL_SERVICES[@]}")
 
     for svc in "${services[@]}"; do
+        if is_embedded "${svc}"; then
+            msg "${svc}  embedded — nothing to stop"
+            continue
+        fi
         local name="arni-dev-${svc}"
         if container_running "${name}"; then
             msg "${svc}  stopping..."
@@ -226,6 +248,10 @@ cmd_rm() {
     [[ ${#services[@]} -eq 0 ]] && services=("${ALL_SERVICES[@]}")
 
     for svc in "${services[@]}"; do
+        if is_embedded "${svc}"; then
+            msg "${svc}  embedded — nothing to remove"
+            continue
+        fi
         local name="arni-dev-${svc}"
         if container_exists "${name}"; then
             msg "${svc}  removing ${name}..."
@@ -236,14 +262,24 @@ cmd_rm() {
     done
 }
 
+is_embedded() {
+    local svc="$1"
+    for e in "${EMBEDDED_SERVICES[@]}"; do [[ "$e" == "$svc" ]] && return 0; done
+    return 1
+}
+
 cmd_status() {
     printf "%-12s  %-30s  %s\n" "SERVICE" "CONTAINER" "STATUS"
     printf "%-12s  %-30s  %s\n" "-------" "---------" "------"
     for svc in "${ALL_SERVICES[@]}"; do
-        local name="arni-dev-${svc}"
-        local status
-        status=$(podman inspect --format '{{.State.Status}}' "${name}" 2>/dev/null || echo "absent")
-        printf "%-12s  %-30s  %s\n" "${svc}" "${name}" "${status}"
+        if is_embedded "${svc}"; then
+            printf "%-12s  %-30s  %s\n" "${svc}" "(embedded)" "embedded — no container"
+        else
+            local name="arni-dev-${svc}"
+            local status
+            status=$(podman inspect --format '{{.State.Status}}' "${name}" 2>/dev/null || echo "absent")
+            printf "%-12s  %-30s  %s\n" "${svc}" "${name}" "${status}"
+        fi
     done
 }
 
@@ -252,6 +288,10 @@ cmd_logs() {
     if [[ -z "${svc}" ]]; then
         err "Usage: $0 logs <SERVICE>"
         exit 1
+    fi
+    if is_embedded "${svc}"; then
+        msg "${svc}  embedded — no container logs available"
+        exit 0
     fi
     local name="arni-dev-${svc}"
     if ! container_exists "${name}"; then
@@ -275,7 +315,8 @@ COMMANDS
   logs   <SERVICE>      Tail logs for a service
 
 SERVICES
-  postgres  MySQL  mssql  mongodb  oracle
+  Containerised:  postgres  mysql  mssql  mongodb  oracle
+  Embedded:       sqlite  duckdb  (in-process — no container)
 
 EXAMPLES
   $(basename "$0") start                  # start all services
@@ -292,6 +333,7 @@ PORTS
 DATA
   Persistent data lives under ~/.arni/data/<service>/
   Re-creating a container reuses existing data volumes.
+  SQLite and DuckDB are embedded — data lives in the application process.
 
 EOF
     exit 0

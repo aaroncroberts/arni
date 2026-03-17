@@ -636,8 +636,16 @@ mod sqlite_tests {
             .expect("read_table should succeed");
 
         // Column names must match (order may differ for some adapters; sort both)
-        let mut original_cols: Vec<&str> = original.get_column_names().into_iter().map(|s| s.as_str()).collect();
-        let mut read_back_cols: Vec<&str> = read_back.get_column_names().into_iter().map(|s| s.as_str()).collect();
+        let mut original_cols: Vec<&str> = original
+            .get_column_names()
+            .into_iter()
+            .map(|s| s.as_str())
+            .collect();
+        let mut read_back_cols: Vec<&str> = read_back
+            .get_column_names()
+            .into_iter()
+            .map(|s| s.as_str())
+            .collect();
         original_cols.sort_unstable();
         read_back_cols.sort_unstable();
         assert_eq!(
@@ -728,7 +736,11 @@ mod sqlite_tests {
         let read_back = DbAdapter::read_table(&adapter, "rt_replace", None)
             .await
             .unwrap();
-        assert_eq!(read_back.height(), 3, "table should have 3 rows after replace");
+        assert_eq!(
+            read_back.height(),
+            3,
+            "table should have 3 rows after replace"
+        );
     }
 
     #[tokio::test]
@@ -756,7 +768,11 @@ mod sqlite_tests {
         let read_back = DbAdapter::read_table(&adapter, "rt_append", None)
             .await
             .unwrap();
-        assert_eq!(read_back.height(), 4, "table should have 4 rows after append");
+        assert_eq!(
+            read_back.height(),
+            4,
+            "table should have 4 rows after append"
+        );
     }
 
     #[tokio::test]
@@ -769,12 +785,9 @@ mod sqlite_tests {
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
         // Create table schema first, then export empty DataFrame into it
-        DbAdapter::execute_query(
-            &adapter,
-            "CREATE TABLE rt_empty (id INTEGER, name TEXT)",
-        )
-        .await
-        .unwrap();
+        DbAdapter::execute_query(&adapter, "CREATE TABLE rt_empty (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
 
         let empty_df = DataFrame::new(
             0,
@@ -797,6 +810,359 @@ mod sqlite_tests {
             read_back.height(),
             0,
             "reading back empty table should yield 0 rows"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BULK OPERATIONS (in-memory, no external database required)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn connected_memory() -> SqliteAdapter {
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter)
+            .await
+            .expect("in-memory connect should succeed");
+        adapter
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_multi_row_returns_count() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let adapter = connected_memory().await;
+
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_ins").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_ins (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, score INTEGER)",
+        )
+        .await
+        .unwrap();
+
+        let columns = vec!["name".to_string(), "score".to_string()];
+        let rows = vec![
+            vec![QueryValue::Text("Alice".to_string()), QueryValue::Int(90)],
+            vec![QueryValue::Text("Bob".to_string()), QueryValue::Int(85)],
+            vec![QueryValue::Text("Carol".to_string()), QueryValue::Int(92)],
+        ];
+
+        let n = DbAdapter::bulk_insert(&adapter, "bk_ins", &columns, &rows, None)
+            .await
+            .expect("bulk_insert should succeed");
+        assert_eq!(n, 3);
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) FROM bk_ins")
+            .await
+            .unwrap();
+        assert!(matches!(result.rows[0][0], QueryValue::Int(3)));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_empty_rows_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+
+        let adapter = connected_memory().await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_empty").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_empty (id INTEGER PRIMARY KEY, val INTEGER)",
+        )
+        .await
+        .unwrap();
+
+        let n = DbAdapter::bulk_insert(&adapter, "bk_empty", &["val".to_string()], &[], None)
+            .await
+            .expect("empty bulk_insert should succeed");
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_null_value_round_trips() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let adapter = connected_memory().await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_null").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_null (id INTEGER PRIMARY KEY, note TEXT)",
+        )
+        .await
+        .unwrap();
+
+        DbAdapter::bulk_insert(
+            &adapter,
+            "bk_null",
+            &["note".to_string()],
+            &[vec![QueryValue::Null]],
+            None,
+        )
+        .await
+        .unwrap();
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT note FROM bk_null")
+            .await
+            .unwrap();
+        assert!(matches!(result.rows[0][0], QueryValue::Null));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_update_matching_rows_only() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let adapter = connected_memory().await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_upd").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_upd (id INTEGER PRIMARY KEY, status TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO bk_upd VALUES (1,'pending'), (2,'pending'), (3,'done')",
+        )
+        .await
+        .unwrap();
+
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("status".to_string(), QueryValue::Text("active".to_string()));
+        let filter = FilterExpr::Eq("id".to_string(), QueryValue::Int(1));
+
+        let n = DbAdapter::bulk_update(&adapter, "bk_upd", &[(set_clauses, filter)], None)
+            .await
+            .expect("bulk_update should succeed");
+        assert_eq!(n, 1);
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT status FROM bk_upd WHERE id = 2")
+            .await
+            .unwrap();
+        assert!(
+            matches!(&result.rows[0][0], QueryValue::Text(s) if s == "pending"),
+            "id=2 should remain pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_delete_matching_rows_only() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+
+        let adapter = connected_memory().await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_del").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_del (id INTEGER PRIMARY KEY, tag TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO bk_del VALUES (1,'a'), (2,'b'), (3,'a')",
+        )
+        .await
+        .unwrap();
+
+        let filter = FilterExpr::Eq("tag".to_string(), QueryValue::Text("a".to_string()));
+        let n = DbAdapter::bulk_delete(&adapter, "bk_del", &[filter], None)
+            .await
+            .expect("bulk_delete should succeed");
+        assert_eq!(n, 2);
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) FROM bk_del")
+            .await
+            .unwrap();
+        assert!(matches!(result.rows[0][0], QueryValue::Int(1)));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FILTEREXPR INTEGRATION TESTS
+    //
+    // Verify complex FilterExpr trees (And, Or, Not, In, IsNull, IsNotNull)
+    // work correctly end-to-end through bulk_update and bulk_delete.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_update_with_and_filter_matches_only_correct_rows() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let adapter = connected_memory().await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE flt_and (id INTEGER PRIMARY KEY, score INTEGER, active INTEGER)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO flt_and VALUES (1, 90, 1), (2, 70, 1), (3, 90, 0), (4, 80, 1)",
+        )
+        .await
+        .unwrap();
+
+        // Update where score >= 90 AND active = 1 → should match only id=1
+        let filter = FilterExpr::And(vec![
+            FilterExpr::Gte("score".to_string(), QueryValue::Int(90)),
+            FilterExpr::Eq("active".to_string(), QueryValue::Int(1)),
+        ]);
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("score".to_string(), QueryValue::Int(100));
+
+        let n = DbAdapter::bulk_update(&adapter, "flt_and", &[(set_clauses, filter)], None)
+            .await
+            .expect("bulk_update with And filter should succeed");
+
+        assert_eq!(n, 1, "And filter should match exactly 1 row (id=1)");
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT id, score FROM flt_and ORDER BY id")
+                .await
+                .unwrap();
+        assert!(
+            matches!(result.rows[0][1], QueryValue::Int(100)),
+            "id=1 score should be 100"
+        );
+        assert!(
+            matches!(result.rows[1][1], QueryValue::Int(70)),
+            "id=2 score should be unchanged"
+        );
+        assert!(
+            matches!(result.rows[2][1], QueryValue::Int(90)),
+            "id=3 score should be unchanged"
+        );
+        assert!(
+            matches!(result.rows[3][1], QueryValue::Int(80)),
+            "id=4 score should be unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_delete_with_or_filter_removes_correct_rows() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+
+        let adapter = connected_memory().await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE flt_or (id INTEGER PRIMARY KEY, tag TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO flt_or VALUES (1,'a'), (2,'b'), (3,'c'), (4,'a')",
+        )
+        .await
+        .unwrap();
+
+        // Delete where tag = 'a' OR tag = 'c' → rows 1, 3, 4
+        let filter = FilterExpr::Or(vec![
+            FilterExpr::Eq("tag".to_string(), QueryValue::Text("a".to_string())),
+            FilterExpr::Eq("tag".to_string(), QueryValue::Text("c".to_string())),
+        ]);
+
+        let n = DbAdapter::bulk_delete(&adapter, "flt_or", &[filter], None)
+            .await
+            .expect("bulk_delete with Or filter should succeed");
+
+        assert_eq!(n, 3, "Or filter should delete 3 rows (id=1,3,4)");
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT id FROM flt_or")
+            .await
+            .unwrap();
+        assert_eq!(result.rows.len(), 1, "1 row should remain");
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(2)),
+            "id=2 should remain"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_delete_in_empty_list_deletes_zero_rows() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+
+        let adapter = connected_memory().await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE flt_in_empty (id INTEGER PRIMARY KEY)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(&adapter, "INSERT INTO flt_in_empty VALUES (1), (2), (3)")
+            .await
+            .unwrap();
+
+        // In(...) with empty list — should not produce SQL "IN ()" syntax error
+        let filter = FilterExpr::In("id".to_string(), vec![]);
+
+        let n = DbAdapter::bulk_delete(&adapter, "flt_in_empty", &[filter], None)
+            .await
+            .expect("In() with empty list should not error");
+
+        assert_eq!(n, 0, "empty In() list should match 0 rows");
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) FROM flt_in_empty")
+            .await
+            .unwrap();
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(3)),
+            "all 3 rows should remain"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_update_is_null_and_is_not_null_filters() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let adapter = connected_memory().await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE flt_null (id INTEGER PRIMARY KEY, note TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO flt_null VALUES (1, NULL), (2, 'hi'), (3, NULL)",
+        )
+        .await
+        .unwrap();
+
+        // Update rows where note IS NULL (id=1 and id=3)
+        let null_filter = FilterExpr::IsNull("note".to_string());
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("note".to_string(), QueryValue::Text("filled".to_string()));
+
+        let n = DbAdapter::bulk_update(&adapter, "flt_null", &[(set_clauses, null_filter)], None)
+            .await
+            .expect("bulk_update with IsNull filter should succeed");
+
+        assert_eq!(n, 2, "IsNull should match 2 rows (id=1 and id=3)");
+
+        // Delete rows where note IS NOT NULL (now all 3 rows have a non-null note)
+        let not_null_filter = FilterExpr::IsNotNull("note".to_string());
+        let del_n = DbAdapter::bulk_delete(&adapter, "flt_null", &[not_null_filter], None)
+            .await
+            .expect("bulk_delete with IsNotNull filter should succeed");
+
+        assert_eq!(del_n, 3, "IsNotNull should now match all 3 rows");
+    }
+
+    // ── adapter-specific feature tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sqlite_get_server_info_version_non_empty() {
+        use arni_data::adapter::DbAdapter;
+
+        let adapter = connected_memory().await;
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        assert!(
+            !info.version.is_empty(),
+            "server version field must not be empty"
         );
     }
 }

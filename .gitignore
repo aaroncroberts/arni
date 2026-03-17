@@ -30,6 +30,7 @@ target
 .beads/dolt-server.port
 .beads/dolt/
 .beads/export-state/
+.beads/.beads-credential-key
 
 # Dolt database files (added by bd init)
 .dolt/

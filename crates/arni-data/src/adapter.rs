@@ -1787,10 +1787,7 @@ mod tests {
     fn query_value_literal_text_multiple_quotes() {
         // Multiple single quotes all get doubled
         let val = QueryValue::Text("it's a dog's life".to_string());
-        assert_eq!(
-            query_value_to_sql_literal(&val),
-            "'it''s a dog''s life'"
-        );
+        assert_eq!(query_value_to_sql_literal(&val), "'it''s a dog''s life'");
     }
 
     // ── filter_to_sql — additional compound variants ──────────────────────────
@@ -1850,10 +1847,7 @@ mod tests {
                 QueryValue::Int(100),
             ))),
         ]);
-        assert_eq!(
-            filter_to_sql(&f),
-            "((a = 1 OR b <> 2) AND NOT (c > 100))"
-        );
+        assert_eq!(filter_to_sql(&f), "((a = 1 OR b <> 2) AND NOT (c > 100))");
     }
 
     #[test]

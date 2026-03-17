@@ -693,4 +693,139 @@ mod mongodb_tests {
             result
         );
     }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    async fn connected_mongo(
+        cfg: &arni_data::adapter::ConnectionConfig,
+    ) -> arni_data::adapters::mongodb::MongoDbAdapter {
+        use arni_data::adapters::mongodb::MongoDbAdapter;
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = MongoDbAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, cfg, password.as_deref())
+            .await
+            .expect("mongodb connect should succeed");
+        adapter
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BULK OPERATIONS
+    //
+    // MongoDB bulk operations map to insert_many / update_many / delete_many
+    // on collections. Collection names are unique per test to avoid interference.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_mongodb_bulk_insert_multi_row_returns_count() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = mongo_config!();
+        let adapter = connected_mongo(&cfg).await;
+
+        let collection = "arni_mg_bulk_ins_count";
+        let columns = vec!["name".to_string(), "score".to_string()];
+        let rows = vec![
+            vec![QueryValue::Text("Alice".to_string()), QueryValue::Int(90)],
+            vec![QueryValue::Text("Bob".to_string()), QueryValue::Int(85)],
+            vec![QueryValue::Text("Carol".to_string()), QueryValue::Int(92)],
+        ];
+
+        let n = DbAdapter::bulk_insert(&adapter, collection, &columns, &rows, None)
+            .await
+            .expect("bulk_insert into MongoDB collection should succeed");
+
+        assert_eq!(n, 3, "bulk_insert should report 3 documents inserted");
+    }
+
+    #[tokio::test]
+    async fn test_mongodb_bulk_insert_empty_rows_returns_zero() {
+        let cfg = mongo_config!();
+        let adapter = connected_mongo(&cfg).await;
+
+        let collection = "arni_mg_bulk_ins_empty";
+        let n = DbAdapter::bulk_insert(&adapter, collection, &["field".to_string()], &[], None)
+            .await
+            .expect("empty bulk_insert should succeed");
+
+        assert_eq!(n, 0, "empty rows should return 0");
+    }
+
+    #[tokio::test]
+    async fn test_mongodb_bulk_insert_null_value_stored() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = mongo_config!();
+        let adapter = connected_mongo(&cfg).await;
+
+        let collection = "arni_mg_bulk_ins_null";
+        let columns = vec!["note".to_string()];
+        let rows = vec![vec![QueryValue::Null]];
+
+        let n = DbAdapter::bulk_insert(&adapter, collection, &columns, &rows, None)
+            .await
+            .expect("inserting null value should succeed");
+
+        assert_eq!(n, 1, "one document with null field should be inserted");
+    }
+
+    #[tokio::test]
+    async fn test_mongodb_bulk_update_matching_documents_only() {
+        use arni_data::adapter::{FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let cfg = mongo_config!();
+        let adapter = connected_mongo(&cfg).await;
+
+        let collection = "arni_mg_bulk_update";
+
+        // Seed three documents
+        let columns = vec!["id".to_string(), "status".to_string()];
+        let seed = vec![
+            vec![QueryValue::Int(1), QueryValue::Text("pending".to_string())],
+            vec![QueryValue::Int(2), QueryValue::Text("pending".to_string())],
+            vec![QueryValue::Int(3), QueryValue::Text("done".to_string())],
+        ];
+        DbAdapter::bulk_insert(&adapter, collection, &columns, &seed, None)
+            .await
+            .expect("seed insert should succeed");
+
+        // Update only where id = 1
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("status".to_string(), QueryValue::Text("active".to_string()));
+        let filter = FilterExpr::Eq("id".to_string(), QueryValue::Int(1));
+
+        let n = DbAdapter::bulk_update(&adapter, collection, &[(set_clauses, filter)], None)
+            .await
+            .expect("bulk_update should succeed");
+
+        assert_eq!(n, 1, "only one document should be modified");
+    }
+
+    #[tokio::test]
+    async fn test_mongodb_bulk_delete_matching_documents_only() {
+        use arni_data::adapter::{FilterExpr, QueryValue};
+
+        let cfg = mongo_config!();
+        let adapter = connected_mongo(&cfg).await;
+
+        let collection = "arni_mg_bulk_delete";
+
+        // Seed: 3 docs, two with tag='a', one with tag='b'
+        let columns = vec!["id".to_string(), "tag".to_string()];
+        let seed = vec![
+            vec![QueryValue::Int(1), QueryValue::Text("a".to_string())],
+            vec![QueryValue::Int(2), QueryValue::Text("b".to_string())],
+            vec![QueryValue::Int(3), QueryValue::Text("a".to_string())],
+        ];
+        DbAdapter::bulk_insert(&adapter, collection, &columns, &seed, None)
+            .await
+            .expect("seed insert should succeed");
+
+        let filter = FilterExpr::Eq("tag".to_string(), QueryValue::Text("a".to_string()));
+        let n = DbAdapter::bulk_delete(&adapter, collection, &[filter], None)
+            .await
+            .expect("bulk_delete should succeed");
+
+        assert_eq!(n, 2, "should delete 2 documents where tag='a'");
+    }
 }

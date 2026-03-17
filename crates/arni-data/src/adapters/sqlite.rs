@@ -1069,6 +1069,6 @@ mod tests {
         let config = make_config(":memory:");
         let adapter = SqliteAdapter::new(config.clone());
         let result = adapter.test_connection(&config, None).await;
-        assert_eq!(result.unwrap(), true, ":memory: should connect successfully");
+        assert!(result.unwrap(), ":memory: should connect successfully");
     }
 }
