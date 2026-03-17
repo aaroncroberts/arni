@@ -1760,4 +1760,37 @@ mod mysql_tests {
 
         DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // test_connection() INTEGRATION TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_mysql_test_connection_valid_credentials_returns_true() {
+        use arni_data::adapters::mysql::MySqlAdapter;
+
+        let cfg = mysql_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let adapter = MySqlAdapter::new(cfg.clone());
+
+        let result = DbAdapter::test_connection(&adapter, &cfg, password.as_deref())
+            .await
+            .expect("test_connection should not error with valid credentials");
+
+        assert!(result, "test_connection should return true with valid credentials");
+    }
+
+    #[tokio::test]
+    async fn test_mysql_test_connection_wrong_password_returns_false() {
+        use arni_data::adapters::mysql::MySqlAdapter;
+
+        let cfg = mysql_config!();
+        let adapter = MySqlAdapter::new(cfg.clone());
+
+        let result = DbAdapter::test_connection(&adapter, &cfg, Some("totally_wrong_password_xyz"))
+            .await
+            .expect("test_connection with wrong password should return Ok(false), not Err");
+
+        assert!(!result, "test_connection should return false with wrong password");
+    }
 }

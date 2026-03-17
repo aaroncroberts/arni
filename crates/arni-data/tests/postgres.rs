@@ -1591,4 +1591,65 @@ mod postgres_tests {
 
         DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // test_connection() INTEGRATION TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_test_connection_valid_credentials_returns_true() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let password = cfg.parameters.get("password").cloned();
+        let adapter = PostgresAdapter::new(cfg.clone());
+
+        let result = DbAdapter::test_connection(&adapter, &cfg, password.as_deref())
+            .await
+            .expect("test_connection should not error with valid credentials");
+
+        assert!(result, "test_connection should return true with valid credentials");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_test_connection_wrong_password_returns_false() {
+        use arni_data::adapters::postgres::PostgresAdapter;
+
+        let cfg = pg_config!();
+        let adapter = PostgresAdapter::new(cfg.clone());
+
+        let result = DbAdapter::test_connection(&adapter, &cfg, Some("totally_wrong_password_xyz"))
+            .await
+            .expect("test_connection with wrong password should return Ok(false), not Err");
+
+        assert!(!result, "test_connection should return false with wrong password");
+    }
+
+    #[tokio::test]
+    async fn test_postgres_test_connection_unreachable_host_returns_false() {
+        use arni_data::adapter::ConnectionConfig;
+        use arni_data::adapters::postgres::PostgresAdapter;
+        use std::collections::HashMap;
+
+        // Port 1 on localhost is refused instantly
+        let cfg = ConnectionConfig {
+            id: "unreachable".to_string(),
+            name: "unreachable".to_string(),
+            db_type: arni_data::adapter::DatabaseType::Postgres,
+            host: Some("127.0.0.1".to_string()),
+            port: Some(1),
+            database: "test_db".to_string(),
+            username: Some("test_user".to_string()),
+            use_ssl: false,
+            parameters: HashMap::new(),
+            pool_config: None,
+        };
+        let adapter = PostgresAdapter::new(cfg.clone());
+
+        let result = DbAdapter::test_connection(&adapter, &cfg, Some("password"))
+            .await
+            .expect("test_connection with unreachable host should return Ok(false), not Err");
+
+        assert!(!result, "test_connection should return false for unreachable host");
+    }
 }
