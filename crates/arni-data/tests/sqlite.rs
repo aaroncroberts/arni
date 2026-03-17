@@ -962,4 +962,157 @@ mod sqlite_tests {
             .unwrap();
         assert!(matches!(result.rows[0][0], QueryValue::Int(1)));
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FILTEREXPR INTEGRATION TESTS
+    //
+    // Verify complex FilterExpr trees (And, Or, Not, In, IsNull, IsNotNull)
+    // work correctly end-to-end through bulk_update and bulk_delete.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_update_with_and_filter_matches_only_correct_rows() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let adapter = connected_memory().await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE flt_and (id INTEGER PRIMARY KEY, score INTEGER, active INTEGER)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO flt_and VALUES (1, 90, 1), (2, 70, 1), (3, 90, 0), (4, 80, 1)",
+        )
+        .await
+        .unwrap();
+
+        // Update where score >= 90 AND active = 1 → should match only id=1
+        let filter = FilterExpr::And(vec![
+            FilterExpr::Gte("score".to_string(), QueryValue::Int(90)),
+            FilterExpr::Eq("active".to_string(), QueryValue::Int(1)),
+        ]);
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("score".to_string(), QueryValue::Int(100));
+
+        let n = DbAdapter::bulk_update(&adapter, "flt_and", &[(set_clauses, filter)], None)
+            .await
+            .expect("bulk_update with And filter should succeed");
+
+        assert_eq!(n, 1, "And filter should match exactly 1 row (id=1)");
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT id, score FROM flt_and ORDER BY id")
+                .await
+                .unwrap();
+        assert!(matches!(result.rows[0][1], QueryValue::Int(100)), "id=1 score should be 100");
+        assert!(matches!(result.rows[1][1], QueryValue::Int(70)), "id=2 score should be unchanged");
+        assert!(matches!(result.rows[2][1], QueryValue::Int(90)), "id=3 score should be unchanged");
+        assert!(matches!(result.rows[3][1], QueryValue::Int(80)), "id=4 score should be unchanged");
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_delete_with_or_filter_removes_correct_rows() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+
+        let adapter = connected_memory().await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE flt_or (id INTEGER PRIMARY KEY, tag TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO flt_or VALUES (1,'a'), (2,'b'), (3,'c'), (4,'a')",
+        )
+        .await
+        .unwrap();
+
+        // Delete where tag = 'a' OR tag = 'c' → rows 1, 3, 4
+        let filter = FilterExpr::Or(vec![
+            FilterExpr::Eq("tag".to_string(), QueryValue::Text("a".to_string())),
+            FilterExpr::Eq("tag".to_string(), QueryValue::Text("c".to_string())),
+        ]);
+
+        let n = DbAdapter::bulk_delete(&adapter, "flt_or", &[filter], None)
+            .await
+            .expect("bulk_delete with Or filter should succeed");
+
+        assert_eq!(n, 3, "Or filter should delete 3 rows (id=1,3,4)");
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT id FROM flt_or").await.unwrap();
+        assert_eq!(result.rows.len(), 1, "1 row should remain");
+        assert!(matches!(result.rows[0][0], QueryValue::Int(2)), "id=2 should remain");
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_delete_in_empty_list_deletes_zero_rows() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+
+        let adapter = connected_memory().await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE flt_in_empty (id INTEGER PRIMARY KEY)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(&adapter, "INSERT INTO flt_in_empty VALUES (1), (2), (3)")
+            .await
+            .unwrap();
+
+        // In(...) with empty list — should not produce SQL "IN ()" syntax error
+        let filter = FilterExpr::In("id".to_string(), vec![]);
+
+        let n = DbAdapter::bulk_delete(&adapter, "flt_in_empty", &[filter], None)
+            .await
+            .expect("In() with empty list should not error");
+
+        assert_eq!(n, 0, "empty In() list should match 0 rows");
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) FROM flt_in_empty").await.unwrap();
+        assert!(matches!(result.rows[0][0], QueryValue::Int(3)), "all 3 rows should remain");
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_update_is_null_and_is_not_null_filters() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let adapter = connected_memory().await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE flt_null (id INTEGER PRIMARY KEY, note TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO flt_null VALUES (1, NULL), (2, 'hi'), (3, NULL)",
+        )
+        .await
+        .unwrap();
+
+        // Update rows where note IS NULL (id=1 and id=3)
+        let null_filter = FilterExpr::IsNull("note".to_string());
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("note".to_string(), QueryValue::Text("filled".to_string()));
+
+        let n = DbAdapter::bulk_update(&adapter, "flt_null", &[(set_clauses, null_filter)], None)
+            .await
+            .expect("bulk_update with IsNull filter should succeed");
+
+        assert_eq!(n, 2, "IsNull should match 2 rows (id=1 and id=3)");
+
+        // Delete rows where note IS NOT NULL (now all 3 rows have a non-null note)
+        let not_null_filter = FilterExpr::IsNotNull("note".to_string());
+        let del_n = DbAdapter::bulk_delete(&adapter, "flt_null", &[not_null_filter], None)
+            .await
+            .expect("bulk_delete with IsNotNull filter should succeed");
+
+        assert_eq!(del_n, 3, "IsNotNull should now match all 3 rows");
+    }
 }
