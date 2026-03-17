@@ -1139,4 +1139,93 @@ mod tests {
         let like_pattern = format!("%{}", escape_like_pattern("PS_"));
         assert_eq!(like_pattern, "%PS\\_");
     }
+
+    // ── Not-connected error path tests ─────────────────────────────────────────
+    // DuckDB is in-process so these run without any external infrastructure.
+
+    #[tokio::test]
+    async fn test_execute_query_not_connected_returns_error() {
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let result = adapter.execute_query("SELECT 1").await;
+        assert!(
+            matches!(result, Err(DataError::Connection(_))),
+            "expected DataError::Connection when not connected, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_tables_not_connected_returns_error() {
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let result = DbAdapter::list_tables(&adapter, None).await;
+        assert!(
+            matches!(result, Err(DataError::Connection(_))),
+            "expected DataError::Connection, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_databases_not_connected_returns_error() {
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let result = DbAdapter::list_databases(&adapter).await;
+        assert!(
+            matches!(result, Err(DataError::Connection(_))),
+            "expected DataError::Connection, got: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_export_dataframe_not_connected_returns_error() {
+        use polars::prelude::*;
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let df = DataFrame::new(1, vec![
+            Column::new("id".into(), &[1i64]),
+        ])
+        .unwrap();
+        let result = DbAdapter::export_dataframe(&adapter, &df, "t", None, false).await;
+        assert!(
+            matches!(result, Err(DataError::Connection(_))),
+            "expected DataError::Connection, got: {:?}",
+            result
+        );
+    }
+
+    // ── Invalid SQL error path (connected, in-memory) ─────────────────────────
+
+    #[tokio::test]
+    async fn test_execute_query_invalid_sql_returns_err() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .expect("in-memory connect should succeed");
+
+        let result = adapter.execute_query("THIS IS NOT VALID SQL !!!").await;
+        assert!(
+            result.is_err(),
+            "invalid SQL should return Err, got Ok"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            !msg.is_empty(),
+            "error message should not be empty for invalid SQL"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_df_invalid_sql_returns_err() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .expect("in-memory connect should succeed");
+
+        let result = DbAdapter::query_df(&adapter, "SELECT * FROM nonexistent_table_xyz").await;
+        assert!(
+            result.is_err(),
+            "querying a nonexistent table should return Err"
+        );
+    }
 }

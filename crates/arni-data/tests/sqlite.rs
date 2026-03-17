@@ -603,4 +603,200 @@ mod sqlite_tests {
             result
         );
     }
+
+    // ── DataFrame round-trip tests ────────────────────────────────────────────
+    //
+    // These tests write a DataFrame via export_dataframe(), read it back via
+    // read_table(), and assert that the schema and values are preserved.
+    // SQLite stores booleans as 0/1 integers, so the column type changes;
+    // we compare values after casting.
+
+    #[tokio::test]
+    async fn test_sqlite_round_trip_schema_matches() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let original = df! {
+            "id"    => [1i64, 2, 3],
+            "name"  => ["alice", "bob", "carol"],
+            "score" => [9.5f64, 8.0, 7.25],
+        }
+        .unwrap();
+
+        DbAdapter::export_dataframe(&adapter, &original, "rt_schema", None, true)
+            .await
+            .expect("export should succeed");
+
+        let read_back = DbAdapter::read_table(&adapter, "rt_schema", None)
+            .await
+            .expect("read_table should succeed");
+
+        // Column names must match (order may differ for some adapters; sort both)
+        let mut original_cols: Vec<&str> = original.get_column_names().into_iter().map(|s| s.as_str()).collect();
+        let mut read_back_cols: Vec<&str> = read_back.get_column_names().into_iter().map(|s| s.as_str()).collect();
+        original_cols.sort_unstable();
+        read_back_cols.sort_unstable();
+        assert_eq!(
+            original_cols, read_back_cols,
+            "column names should match after round-trip"
+        );
+
+        assert_eq!(
+            read_back.height(),
+            original.height(),
+            "row count should match after round-trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_round_trip_values_preserved() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let original = df! {
+            "id"    => [10i64, 20, 30],
+            "label" => ["x", "y", "z"],
+            "val"   => [1.1f64, 2.2, 3.3],
+        }
+        .unwrap();
+
+        DbAdapter::export_dataframe(&adapter, &original, "rt_values", None, true)
+            .await
+            .unwrap();
+
+        let read_back = DbAdapter::read_table(&adapter, "rt_values", None)
+            .await
+            .unwrap();
+
+        // Verify integer column values
+        let orig_ids = original
+            .column("id")
+            .unwrap()
+            .cast(&DataType::Int64)
+            .unwrap();
+        let read_ids = read_back
+            .column("id")
+            .unwrap()
+            .cast(&DataType::Int64)
+            .unwrap();
+        assert_eq!(orig_ids, read_ids, "id column values should round-trip");
+
+        // Verify string column values
+        let orig_labels = original.column("label").unwrap();
+        let read_labels = read_back
+            .column("label")
+            .unwrap()
+            .cast(&DataType::String)
+            .unwrap();
+        assert_eq!(
+            orig_labels.cast(&DataType::String).unwrap(),
+            read_labels,
+            "label column values should round-trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_round_trip_replace_true_no_duplicates() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df = df! { "n" => [1i64, 2, 3] }.unwrap();
+
+        // Write once
+        DbAdapter::export_dataframe(&adapter, &df, "rt_replace", None, true)
+            .await
+            .unwrap();
+
+        // Write again with replace=true — should replace, not append
+        let rows = DbAdapter::export_dataframe(&adapter, &df, "rt_replace", None, true)
+            .await
+            .expect("second export with replace=true should succeed");
+        assert_eq!(rows, 3, "replace=true should write exactly 3 rows");
+
+        let read_back = DbAdapter::read_table(&adapter, "rt_replace", None)
+            .await
+            .unwrap();
+        assert_eq!(read_back.height(), 3, "table should have 3 rows after replace");
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_round_trip_replace_false_appends() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let df = df! { "n" => [1i64, 2] }.unwrap();
+
+        // Create table first
+        DbAdapter::export_dataframe(&adapter, &df, "rt_append", None, true)
+            .await
+            .unwrap();
+
+        // Append with replace=false
+        let rows = DbAdapter::export_dataframe(&adapter, &df, "rt_append", None, false)
+            .await
+            .expect("append should succeed");
+        assert_eq!(rows, 2, "append should insert 2 more rows");
+
+        let read_back = DbAdapter::read_table(&adapter, "rt_append", None)
+            .await
+            .unwrap();
+        assert_eq!(read_back.height(), 4, "table should have 4 rows after append");
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_round_trip_empty_dataframe() {
+        use arni_data::adapter::DbAdapter;
+        use polars::prelude::*;
+
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        // Create table schema first, then export empty DataFrame into it
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE rt_empty (id INTEGER, name TEXT)",
+        )
+        .await
+        .unwrap();
+
+        let empty_df = DataFrame::new(
+            0,
+            vec![
+                Column::new("id".into(), &[] as &[i32]),
+                Column::new("name".into(), &[] as &[&str]),
+            ],
+        )
+        .unwrap();
+
+        let rows = DbAdapter::export_dataframe(&adapter, &empty_df, "rt_empty", None, false)
+            .await
+            .expect("empty export should succeed");
+        assert_eq!(rows, 0, "exporting empty DataFrame should insert 0 rows");
+
+        let read_back = DbAdapter::read_table(&adapter, "rt_empty", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_back.height(),
+            0,
+            "reading back empty table should yield 0 rows"
+        );
+    }
 }
