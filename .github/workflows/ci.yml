@@ -49,9 +49,6 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install libduckdb-dev
-        run: sudo apt-get install -y libduckdb-dev
-
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -80,9 +77,6 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ubuntu-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install libduckdb-dev
-        run: sudo apt-get install -y libduckdb-dev
 
       - name: Check compilation
         run: cargo check --verbose
@@ -117,9 +111,6 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: integration-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install libduckdb-dev
-        run: sudo apt-get install -y libduckdb-dev
 
       - name: Install podman-compose
         run: pip install podman-compose
@@ -230,9 +221,6 @@ jobs:
             ~/.cargo/git
           key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install libduckdb-dev
-        run: sudo apt-get install -y libduckdb-dev
-
       - name: Build release
         run: cargo build --release --verbose
 
@@ -256,9 +244,6 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: coverage-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install libduckdb-dev
-        run: sudo apt-get install -y libduckdb-dev
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin
