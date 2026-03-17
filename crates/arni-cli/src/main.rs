@@ -2,12 +2,13 @@ mod app_config;
 mod config;
 mod daemon;
 mod db;
+mod discovery;
 mod json_output;
 mod logging_config;
 
 use arni_data::adapter::{ConnectionConfig, DatabaseType, TableSearchMode};
 use arni_data::export::{to_bytes, to_file, DataFormat};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
 use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as CTable};
 use config::{ConfigStore, ConnectionEntry};
@@ -24,10 +25,17 @@ const COMPOSE_FILE: &str = "compose.yml";
 
 #[derive(Parser)]
 #[command(name = "arni")]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author,
+    version,
+    about = "Unified database access — every query returns a Polars DataFrame"
+)]
+#[command(
+    long_about = "Unified database access for Rust.\n\nConnect to PostgreSQL, MySQL, MongoDB, Oracle, SQL Server, DuckDB, or SQLite\nthrough a single trait-based API and receive every result as a Polars DataFrame.\n\nFor agent/script use, add --json to any command to receive a machine-readable\n{ok, …} envelope instead of human-readable formatted output.\n\nDiscovery flags (require no subcommand):\n  arni --list-tools       JSON list of all commands with argument schemas\n  arni --capabilities     JSON of supported database types and features\n  arni --schema <cmd>     JSON input/output schema for a specific command"
+)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Skip ASCII banner display
     #[arg(long, global = true)]
@@ -42,6 +50,23 @@ struct Cli {
     /// as `{ok:false, error:{code, message}}` and exit with code 1.
     #[arg(long = "json", global = true)]
     json_output: bool,
+
+    /// List all available commands with their argument schemas (JSON).
+    /// Useful for agents that need to self-discover what arni can do.
+    /// Output: [{name, description, args:[{name, type, required, description}]}]
+    #[arg(long, global = true, conflicts_with = "capabilities")]
+    list_tools: bool,
+
+    /// Describe supported database types and features (JSON).
+    /// Output: {version, database_types:[], features:[]}
+    #[arg(long, global = true, conflicts_with = "list_tools")]
+    capabilities: bool,
+
+    /// Show the input/output JSON schema for a specific command.
+    /// Example: arni --schema query
+    /// Output: {command, input:{…}, output:{…}}
+    #[arg(long, value_name = "COMMAND", global = true)]
+    schema: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -275,12 +300,49 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let json_mode = cli.json_output;
 
+    // ── Discovery flags: short-circuit before any subcommand dispatch ─────────
+    if cli.list_tools {
+        json_output::emit(&discovery::list_tools());
+        return Ok(());
+    }
+    if cli.capabilities {
+        json_output::emit(&discovery::capabilities());
+        return Ok(());
+    }
+    if let Some(ref cmd_name) = cli.schema {
+        match discovery::schema(cmd_name) {
+            Some(v) => {
+                json_output::emit(&v);
+                return Ok(());
+            }
+            None => {
+                let msg = format!(
+                    "Unknown command '{}'. Valid: connect, query, metadata, export, config, daemon, dev",
+                    cmd_name
+                );
+                if json_mode {
+                    json_output::emit(&json_output::error("UNKNOWN_COMMAND", &msg));
+                    std::process::exit(1);
+                } else {
+                    return Err(msg.into());
+                }
+            }
+        }
+    }
+
     // Suppress banner in JSON mode (stdout must contain only valid JSON).
     if !cli.no_banner && !json_mode {
         print_banner();
     }
 
-    let result = run_command(cli.command, json_mode).await;
+    // Require a subcommand when no discovery flag was supplied.
+    let Some(command) = cli.command else {
+        Cli::command().print_help()?;
+        println!();
+        return Ok(());
+    };
+
+    let result = run_command(command, json_mode).await;
 
     if let Err(e) = result {
         if json_mode {
