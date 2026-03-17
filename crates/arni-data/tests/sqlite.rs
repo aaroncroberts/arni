@@ -799,4 +799,167 @@ mod sqlite_tests {
             "reading back empty table should yield 0 rows"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BULK OPERATIONS (in-memory, no external database required)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn connected_memory() -> SqliteAdapter {
+        let cfg = memory_config();
+        let mut adapter = SqliteAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter)
+            .await
+            .expect("in-memory connect should succeed");
+        adapter
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_multi_row_returns_count() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let adapter = connected_memory().await;
+
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_ins").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_ins (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, score INTEGER)",
+        )
+        .await
+        .unwrap();
+
+        let columns = vec!["name".to_string(), "score".to_string()];
+        let rows = vec![
+            vec![QueryValue::Text("Alice".to_string()), QueryValue::Int(90)],
+            vec![QueryValue::Text("Bob".to_string()), QueryValue::Int(85)],
+            vec![QueryValue::Text("Carol".to_string()), QueryValue::Int(92)],
+        ];
+
+        let n = DbAdapter::bulk_insert(&adapter, "bk_ins", &columns, &rows, None)
+            .await
+            .expect("bulk_insert should succeed");
+        assert_eq!(n, 3);
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) FROM bk_ins")
+            .await
+            .unwrap();
+        assert!(matches!(result.rows[0][0], QueryValue::Int(3)));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_empty_rows_returns_zero() {
+        use arni_data::adapter::DbAdapter;
+
+        let adapter = connected_memory().await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_empty").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_empty (id INTEGER PRIMARY KEY, val INTEGER)",
+        )
+        .await
+        .unwrap();
+
+        let n = DbAdapter::bulk_insert(&adapter, "bk_empty", &["val".to_string()], &[], None)
+            .await
+            .expect("empty bulk_insert should succeed");
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_insert_null_value_round_trips() {
+        use arni_data::adapter::{DbAdapter, QueryValue};
+
+        let adapter = connected_memory().await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_null").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_null (id INTEGER PRIMARY KEY, note TEXT)",
+        )
+        .await
+        .unwrap();
+
+        DbAdapter::bulk_insert(
+            &adapter,
+            "bk_null",
+            &["note".to_string()],
+            &[vec![QueryValue::Null]],
+            None,
+        )
+        .await
+        .unwrap();
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT note FROM bk_null")
+            .await
+            .unwrap();
+        assert!(matches!(result.rows[0][0], QueryValue::Null));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_update_matching_rows_only() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let adapter = connected_memory().await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_upd").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_upd (id INTEGER PRIMARY KEY, status TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO bk_upd VALUES (1,'pending'), (2,'pending'), (3,'done')",
+        )
+        .await
+        .unwrap();
+
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("status".to_string(), QueryValue::Text("active".to_string()));
+        let filter = FilterExpr::Eq("id".to_string(), QueryValue::Int(1));
+
+        let n = DbAdapter::bulk_update(&adapter, "bk_upd", &[(set_clauses, filter)], None)
+            .await
+            .expect("bulk_update should succeed");
+        assert_eq!(n, 1);
+
+        let result =
+            DbAdapter::execute_query(&adapter, "SELECT status FROM bk_upd WHERE id = 2")
+                .await
+                .unwrap();
+        assert!(
+            matches!(&result.rows[0][0], QueryValue::Text(s) if s == "pending"),
+            "id=2 should remain pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_bulk_delete_matching_rows_only() {
+        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+
+        let adapter = connected_memory().await;
+        let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_del").await;
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE bk_del (id INTEGER PRIMARY KEY, tag TEXT)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO bk_del VALUES (1,'a'), (2,'b'), (3,'a')",
+        )
+        .await
+        .unwrap();
+
+        let filter = FilterExpr::Eq("tag".to_string(), QueryValue::Text("a".to_string()));
+        let n = DbAdapter::bulk_delete(&adapter, "bk_del", &[filter], None)
+            .await
+            .expect("bulk_delete should succeed");
+        assert_eq!(n, 2);
+
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) FROM bk_del")
+            .await
+            .unwrap();
+        assert!(matches!(result.rows[0][0], QueryValue::Int(1)));
+    }
 }
