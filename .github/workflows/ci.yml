@@ -49,6 +49,14 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install DuckDB 1.4.4
+        run: |
+          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
+          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
+          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
+          sudo ldconfig
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -77,6 +85,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ubuntu-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install DuckDB 1.4.4
+        run: |
+          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
+          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
+          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
+          sudo ldconfig
 
       - name: Check compilation
         run: cargo check --verbose
@@ -111,6 +127,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: integration-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install DuckDB 1.4.4
+        run: |
+          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
+          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
+          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
+          sudo ldconfig
 
       - name: Install podman-compose
         run: pip install podman-compose
@@ -221,6 +245,14 @@ jobs:
             ~/.cargo/git
           key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install DuckDB 1.4.4
+        run: |
+          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
+          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
+          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
+          sudo ldconfig
+
       - name: Build release
         run: cargo build --release --verbose
 
@@ -244,6 +276,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: coverage-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install DuckDB 1.4.4
+        run: |
+          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
+          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
+          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
+          sudo ldconfig
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin
