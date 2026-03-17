@@ -1228,4 +1228,18 @@ mod tests {
             "querying a nonexistent table should return Err"
         );
     }
+
+    // ── test_connection() unit tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_connection_memory_returns_true() {
+        let config = make_config(":memory:");
+        let adapter = DuckDbAdapter::new(config.clone());
+        let result = adapter.test_connection(&config, None).await;
+        assert_eq!(
+            result.unwrap(),
+            true,
+            ":memory: DuckDB should open successfully"
+        );
+    }
 }

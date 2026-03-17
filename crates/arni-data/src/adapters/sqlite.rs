@@ -1049,4 +1049,26 @@ mod tests {
         let like_pattern = format!("%{}", escape_like_pattern("PS_"));
         assert_eq!(like_pattern, "%PS\\_");
     }
+
+    // ── test_connection() unit tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_connection_empty_path_returns_err() {
+        // validate_database_path("") is called first — no network I/O needed.
+        let config = make_config("");
+        let adapter = SqliteAdapter::new(config.clone());
+        let result = adapter.test_connection(&config, None).await;
+        assert!(
+            result.is_err(),
+            "Empty path should return Err before attempting connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_connection_memory_returns_true() {
+        let config = make_config(":memory:");
+        let adapter = SqliteAdapter::new(config.clone());
+        let result = adapter.test_connection(&config, None).await;
+        assert_eq!(result.unwrap(), true, ":memory: should connect successfully");
+    }
 }

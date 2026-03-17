@@ -1291,4 +1291,29 @@ mod tests {
         assert!(re.is_match("DATA_PS_"), "DATA_PS_ should match PS_$");
         assert!(!re.is_match("DATA_PS_X"), "DATA_PS_X should not match PS_$");
     }
+
+    // ── test_connection() unit tests ────────────────────────────────────────
+
+    /// test_connection() for MongoDB always attempts a network ping before returning.
+    /// This test is marked #[ignore] because it requires a live MongoDB instance
+    /// or will incur server-selection timeout delays.
+    ///
+    /// To run: cargo test --features mongodb test_connection_unreachable -- --ignored
+    #[tokio::test]
+    #[ignore]
+    async fn test_connection_unreachable_returns_false() {
+        // Unreachable host — test_connection should return Ok(false), not panic.
+        let config = make_config("192.0.2.1", "test_db"); // TEST-NET-1, guaranteed unreachable
+        let adapter = MongoDbAdapter::new(config.clone());
+        let result = adapter.test_connection(&config, None).await;
+        assert!(
+            result.is_ok(),
+            "test_connection should not return Err on network failure"
+        );
+        assert_eq!(
+            result.unwrap(),
+            false,
+            "Unreachable host should yield false"
+        );
+    }
 }
