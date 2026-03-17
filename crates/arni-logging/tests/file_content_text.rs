@@ -38,7 +38,9 @@ fn logged_messages_appear_in_text_file() {
     // Text format is NOT raw JSON — it should not start every line with '{'.
     let first_non_empty = content.lines().find(|l| !l.trim().is_empty());
     assert!(
-        first_non_empty.map(|l| !l.trim_start().starts_with('{')).unwrap_or(true),
+        first_non_empty
+            .map(|l| !l.trim_start().starts_with('{'))
+            .unwrap_or(true),
         "text format should not produce JSON lines; got:\n{content}"
     );
 }

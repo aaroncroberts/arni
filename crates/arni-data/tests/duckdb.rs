@@ -816,8 +816,16 @@ mod duckdb_tests {
             .await
             .expect("read_table should succeed");
 
-        let mut original_cols: Vec<&str> = original.get_column_names().into_iter().map(|s| s.as_str()).collect();
-        let mut read_back_cols: Vec<&str> = read_back.get_column_names().into_iter().map(|s| s.as_str()).collect();
+        let mut original_cols: Vec<&str> = original
+            .get_column_names()
+            .into_iter()
+            .map(|s| s.as_str())
+            .collect();
+        let mut read_back_cols: Vec<&str> = read_back
+            .get_column_names()
+            .into_iter()
+            .map(|s| s.as_str())
+            .collect();
         original_cols.sort_unstable();
         read_back_cols.sort_unstable();
         assert_eq!(
@@ -877,7 +885,10 @@ mod duckdb_tests {
             .unwrap()
             .cast(&DataType::String)
             .unwrap();
-        assert_eq!(orig_labels, read_labels, "label column values should round-trip");
+        assert_eq!(
+            orig_labels, read_labels,
+            "label column values should round-trip"
+        );
     }
 
     #[tokio::test]
@@ -903,7 +914,11 @@ mod duckdb_tests {
         let read_back = DbAdapter::read_table(&adapter, "rt_replace", None)
             .await
             .unwrap();
-        assert_eq!(read_back.height(), 3, "table should have 3 rows after replace");
+        assert_eq!(
+            read_back.height(),
+            3,
+            "table should have 3 rows after replace"
+        );
     }
 
     #[tokio::test]
@@ -929,7 +944,11 @@ mod duckdb_tests {
         let read_back = DbAdapter::read_table(&adapter, "rt_append", None)
             .await
             .unwrap();
-        assert_eq!(read_back.height(), 4, "table should have 4 rows after append");
+        assert_eq!(
+            read_back.height(),
+            4,
+            "table should have 4 rows after append"
+        );
     }
 
     #[tokio::test]
@@ -942,12 +961,9 @@ mod duckdb_tests {
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
         // DuckDB requires the table to exist before we can export 0 rows into it.
-        DbAdapter::execute_query(
-            &adapter,
-            "CREATE TABLE rt_empty (id BIGINT, name VARCHAR)",
-        )
-        .await
-        .unwrap();
+        DbAdapter::execute_query(&adapter, "CREATE TABLE rt_empty (id BIGINT, name VARCHAR)")
+            .await
+            .unwrap();
 
         let empty_df = DataFrame::new(
             0,
@@ -1023,6 +1039,9 @@ mod duckdb_tests {
             .await
             .expect("get_server_info should succeed");
 
-        assert!(!info.version.is_empty(), "server version field must not be empty");
+        assert!(
+            !info.version.is_empty(),
+            "server version field must not be empty"
+        );
     }
 }

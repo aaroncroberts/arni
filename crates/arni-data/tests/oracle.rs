@@ -1457,10 +1457,9 @@ mod oracle_tests {
 
         assert_eq!(n, 3, "bulk_insert should return 3 rows affected");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+            .await
+            .unwrap();
         assert!(
             matches!(result.rows[0][0], QueryValue::Int(3)),
             "expected 3 rows in table; got {:?}",
@@ -1541,8 +1540,9 @@ mod oracle_tests {
             .await
             .expect("inserting NULL should succeed");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}"))
+            .await
+            .unwrap();
         assert_eq!(result.rows.len(), 1);
         assert!(
             matches!(result.rows[0][0], QueryValue::Null),
@@ -1652,8 +1652,9 @@ mod oracle_tests {
 
         assert_eq!(n, 2, "should delete 2 rows where tag='a'");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+            .await
+            .unwrap();
         assert!(
             matches!(result.rows[0][0], QueryValue::Int(1)),
             "1 row should remain"
@@ -1707,10 +1708,15 @@ mod oracle_tests {
             .collect();
         orig_cols.sort_unstable();
         back_cols.sort_unstable();
-        assert_eq!(orig_cols, back_cols, "column names must match after round-trip");
+        assert_eq!(
+            orig_cols, back_cols,
+            "column names must match after round-trip"
+        );
         assert_eq!(read_back.height(), 3, "row count must be preserved");
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE")).await.unwrap();
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1756,6 +1762,8 @@ mod oracle_tests {
             .collect();
         assert_eq!(orig_ids, back_ids, "NUMBER column values must round-trip");
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE")).await.unwrap();
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE"))
+            .await
+            .unwrap();
     }
 }

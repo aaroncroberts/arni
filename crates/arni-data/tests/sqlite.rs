@@ -636,8 +636,16 @@ mod sqlite_tests {
             .expect("read_table should succeed");
 
         // Column names must match (order may differ for some adapters; sort both)
-        let mut original_cols: Vec<&str> = original.get_column_names().into_iter().map(|s| s.as_str()).collect();
-        let mut read_back_cols: Vec<&str> = read_back.get_column_names().into_iter().map(|s| s.as_str()).collect();
+        let mut original_cols: Vec<&str> = original
+            .get_column_names()
+            .into_iter()
+            .map(|s| s.as_str())
+            .collect();
+        let mut read_back_cols: Vec<&str> = read_back
+            .get_column_names()
+            .into_iter()
+            .map(|s| s.as_str())
+            .collect();
         original_cols.sort_unstable();
         read_back_cols.sort_unstable();
         assert_eq!(
@@ -728,7 +736,11 @@ mod sqlite_tests {
         let read_back = DbAdapter::read_table(&adapter, "rt_replace", None)
             .await
             .unwrap();
-        assert_eq!(read_back.height(), 3, "table should have 3 rows after replace");
+        assert_eq!(
+            read_back.height(),
+            3,
+            "table should have 3 rows after replace"
+        );
     }
 
     #[tokio::test]
@@ -756,7 +768,11 @@ mod sqlite_tests {
         let read_back = DbAdapter::read_table(&adapter, "rt_append", None)
             .await
             .unwrap();
-        assert_eq!(read_back.height(), 4, "table should have 4 rows after append");
+        assert_eq!(
+            read_back.height(),
+            4,
+            "table should have 4 rows after append"
+        );
     }
 
     #[tokio::test]
@@ -769,12 +785,9 @@ mod sqlite_tests {
         ConnectionTrait::connect(&mut adapter).await.unwrap();
 
         // Create table schema first, then export empty DataFrame into it
-        DbAdapter::execute_query(
-            &adapter,
-            "CREATE TABLE rt_empty (id INTEGER, name TEXT)",
-        )
-        .await
-        .unwrap();
+        DbAdapter::execute_query(&adapter, "CREATE TABLE rt_empty (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
 
         let empty_df = DataFrame::new(
             0,
@@ -922,10 +935,9 @@ mod sqlite_tests {
             .expect("bulk_update should succeed");
         assert_eq!(n, 1);
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT status FROM bk_upd WHERE id = 2")
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT status FROM bk_upd WHERE id = 2")
+            .await
+            .unwrap();
         assert!(
             matches!(&result.rows[0][0], QueryValue::Text(s) if s == "pending"),
             "id=2 should remain pending"
@@ -1007,10 +1019,22 @@ mod sqlite_tests {
             DbAdapter::execute_query(&adapter, "SELECT id, score FROM flt_and ORDER BY id")
                 .await
                 .unwrap();
-        assert!(matches!(result.rows[0][1], QueryValue::Int(100)), "id=1 score should be 100");
-        assert!(matches!(result.rows[1][1], QueryValue::Int(70)), "id=2 score should be unchanged");
-        assert!(matches!(result.rows[2][1], QueryValue::Int(90)), "id=3 score should be unchanged");
-        assert!(matches!(result.rows[3][1], QueryValue::Int(80)), "id=4 score should be unchanged");
+        assert!(
+            matches!(result.rows[0][1], QueryValue::Int(100)),
+            "id=1 score should be 100"
+        );
+        assert!(
+            matches!(result.rows[1][1], QueryValue::Int(70)),
+            "id=2 score should be unchanged"
+        );
+        assert!(
+            matches!(result.rows[2][1], QueryValue::Int(90)),
+            "id=3 score should be unchanged"
+        );
+        assert!(
+            matches!(result.rows[3][1], QueryValue::Int(80)),
+            "id=4 score should be unchanged"
+        );
     }
 
     #[tokio::test]
@@ -1043,9 +1067,14 @@ mod sqlite_tests {
 
         assert_eq!(n, 3, "Or filter should delete 3 rows (id=1,3,4)");
 
-        let result = DbAdapter::execute_query(&adapter, "SELECT id FROM flt_or").await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, "SELECT id FROM flt_or")
+            .await
+            .unwrap();
         assert_eq!(result.rows.len(), 1, "1 row should remain");
-        assert!(matches!(result.rows[0][0], QueryValue::Int(2)), "id=2 should remain");
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(2)),
+            "id=2 should remain"
+        );
     }
 
     #[tokio::test]
@@ -1072,9 +1101,13 @@ mod sqlite_tests {
 
         assert_eq!(n, 0, "empty In() list should match 0 rows");
 
-        let result =
-            DbAdapter::execute_query(&adapter, "SELECT COUNT(*) FROM flt_in_empty").await.unwrap();
-        assert!(matches!(result.rows[0][0], QueryValue::Int(3)), "all 3 rows should remain");
+        let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) FROM flt_in_empty")
+            .await
+            .unwrap();
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(3)),
+            "all 3 rows should remain"
+        );
     }
 
     #[tokio::test]
@@ -1127,6 +1160,9 @@ mod sqlite_tests {
             .await
             .expect("get_server_info should succeed");
 
-        assert!(!info.version.is_empty(), "server version field must not be empty");
+        assert!(
+            !info.version.is_empty(),
+            "server version field must not be empty"
+        );
     }
 }

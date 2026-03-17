@@ -1406,9 +1406,7 @@ mod mssql_tests {
         let table = "arni_ms_bulk_insert_count";
         let _ = DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
-            ),
+            &format!("IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"),
         )
         .await;
         DbAdapter::execute_query(
@@ -1433,10 +1431,9 @@ mod mssql_tests {
 
         assert_eq!(n, 3, "bulk_insert should return 3 rows affected");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
-                .await
-                .unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+            .await
+            .unwrap();
         assert!(
             matches!(result.rows[0][0], QueryValue::Int(3)),
             "expected 3 rows in table; got {:?}",
@@ -1456,9 +1453,7 @@ mod mssql_tests {
         let table = "arni_ms_bulk_insert_empty";
         let _ = DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
-            ),
+            &format!("IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"),
         )
         .await;
         DbAdapter::execute_query(
@@ -1505,9 +1500,7 @@ mod mssql_tests {
         let table = "arni_ms_bulk_insert_null";
         let _ = DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
-            ),
+            &format!("IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"),
         )
         .await;
         DbAdapter::execute_query(
@@ -1524,8 +1517,9 @@ mod mssql_tests {
             .await
             .expect("inserting NULL should succeed");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}"))
+            .await
+            .unwrap();
         assert_eq!(result.rows.len(), 1);
         assert!(
             matches!(result.rows[0][0], QueryValue::Null),
@@ -1549,9 +1543,7 @@ mod mssql_tests {
         let table = "arni_ms_bulk_update";
         let _ = DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
-            ),
+            &format!("IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"),
         )
         .await;
         DbAdapter::execute_query(
@@ -1562,9 +1554,7 @@ mod mssql_tests {
         .unwrap();
         DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "INSERT INTO {table} VALUES (1, 'pending'), (2, 'pending'), (3, 'done')"
-            ),
+            &format!("INSERT INTO {table} VALUES (1, 'pending'), (2, 'pending'), (3, 'done')"),
         )
         .await
         .unwrap();
@@ -1611,9 +1601,7 @@ mod mssql_tests {
         let table = "arni_ms_bulk_delete";
         let _ = DbAdapter::execute_query(
             &adapter,
-            &format!(
-                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
-            ),
+            &format!("IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"),
         )
         .await;
         DbAdapter::execute_query(
@@ -1637,8 +1625,9 @@ mod mssql_tests {
 
         assert_eq!(n, 2, "should delete 2 rows where tag='a'");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+            .await
+            .unwrap();
         assert!(
             matches!(result.rows[0][0], QueryValue::Int(1)),
             "1 row should remain after deleting tag='a' rows"
@@ -1682,14 +1671,27 @@ mod mssql_tests {
             .await
             .expect("read_table should succeed");
 
-        let mut orig_cols: Vec<String> = original.get_column_names().iter().map(|s| s.to_string()).collect();
-        let mut back_cols: Vec<String> = read_back.get_column_names().iter().map(|s| s.to_string()).collect();
+        let mut orig_cols: Vec<String> = original
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut back_cols: Vec<String> = read_back
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         orig_cols.sort_unstable();
         back_cols.sort_unstable();
-        assert_eq!(orig_cols, back_cols, "column names must match after round-trip");
+        assert_eq!(
+            orig_cols, back_cols,
+            "column names must match after round-trip"
+        );
         assert_eq!(read_back.height(), 3, "row count must be preserved");
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1723,7 +1725,9 @@ mod mssql_tests {
 
         assert_eq!(read_back.height(), 3, "all 3 unicode rows must round-trip");
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1742,7 +1746,10 @@ mod mssql_tests {
             .await
             .expect("test_connection should not error with valid credentials");
 
-        assert!(result, "test_connection should return true with valid credentials");
+        assert!(
+            result,
+            "test_connection should return true with valid credentials"
+        );
     }
 
     #[tokio::test]
@@ -1756,6 +1763,9 @@ mod mssql_tests {
             .await
             .expect("test_connection with wrong password should return Ok(false), not Err");
 
-        assert!(!result, "test_connection should return false with wrong password");
+        assert!(
+            !result,
+            "test_connection should return false with wrong password"
+        );
     }
 }

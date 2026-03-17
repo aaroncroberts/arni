@@ -1407,8 +1407,9 @@ mod postgres_tests {
             .await
             .expect("inserting NULL should succeed");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}"))
+            .await
+            .unwrap();
         assert_eq!(result.rows.len(), 1);
         assert!(
             matches!(result.rows[0][0], QueryValue::Null),
@@ -1507,8 +1508,9 @@ mod postgres_tests {
 
         assert_eq!(n, 2, "should delete 2 rows where tag='a'");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+            .await
+            .unwrap();
         assert!(
             matches!(result.rows[0][0], QueryValue::Int(1)),
             "1 row should remain"
@@ -1548,14 +1550,27 @@ mod postgres_tests {
             .await
             .expect("read_table should succeed");
 
-        let mut orig_cols: Vec<String> = original.get_column_names().iter().map(|s| s.to_string()).collect();
-        let mut back_cols: Vec<String> = read_back.get_column_names().iter().map(|s| s.to_string()).collect();
+        let mut orig_cols: Vec<String> = original
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut back_cols: Vec<String> = read_back
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         orig_cols.sort_unstable();
         back_cols.sort_unstable();
-        assert_eq!(orig_cols, back_cols, "column names must match after round-trip");
+        assert_eq!(
+            orig_cols, back_cols,
+            "column names must match after round-trip"
+        );
         assert_eq!(read_back.height(), 3, "row count must be preserved");
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1581,15 +1596,29 @@ mod postgres_tests {
 
         let read_back = DbAdapter::read_table(&adapter, table, None).await.unwrap();
 
-        let orig_ids: Vec<i64> = original.column("id").unwrap()
-            .cast(&DataType::Int64).unwrap()
-            .i64().unwrap().into_no_null_iter().collect();
-        let back_ids: Vec<i64> = read_back.column("id").unwrap()
-            .cast(&DataType::Int64).unwrap()
-            .i64().unwrap().into_no_null_iter().collect();
+        let orig_ids: Vec<i64> = original
+            .column("id")
+            .unwrap()
+            .cast(&DataType::Int64)
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+        let back_ids: Vec<i64> = read_back
+            .column("id")
+            .unwrap()
+            .cast(&DataType::Int64)
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
         assert_eq!(orig_ids, back_ids, "id column values must round-trip");
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1608,7 +1637,10 @@ mod postgres_tests {
             .await
             .expect("test_connection should not error with valid credentials");
 
-        assert!(result, "test_connection should return true with valid credentials");
+        assert!(
+            result,
+            "test_connection should return true with valid credentials"
+        );
     }
 
     #[tokio::test]
@@ -1622,7 +1654,10 @@ mod postgres_tests {
             .await
             .expect("test_connection with wrong password should return Ok(false), not Err");
 
-        assert!(!result, "test_connection should return false with wrong password");
+        assert!(
+            !result,
+            "test_connection should return false with wrong password"
+        );
     }
 
     #[tokio::test]
@@ -1650,6 +1685,9 @@ mod postgres_tests {
             .await
             .expect("test_connection with unreachable host should return Ok(false), not Err");
 
-        assert!(!result, "test_connection should return false for unreachable host");
+        assert!(
+            !result,
+            "test_connection should return false for unreachable host"
+        );
     }
 }

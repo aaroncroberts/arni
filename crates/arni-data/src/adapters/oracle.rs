@@ -1726,7 +1726,9 @@ mod tests {
         config.host = Some("127.0.0.1".to_string());
         config.port = Some(1); // Port 1 → ECONNREFUSED immediately
         let adapter = OracleAdapter::new(config.clone());
-        let result = adapter.test_connection(&config, Some("wrong_password")).await;
+        let result = adapter
+            .test_connection(&config, Some("wrong_password"))
+            .await;
         assert!(
             result.is_ok(),
             "test_connection should not return Err on network failure"

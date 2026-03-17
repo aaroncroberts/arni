@@ -1820,11 +1820,17 @@ mod tests {
 
         // build_connection_string now returns a postgres:// URL (password redacted).
         let conn_str = adapter.build_connection_string(None).unwrap();
-        assert!(conn_str.starts_with("postgres://"), "expected URL format, got: {conn_str}");
+        assert!(
+            conn_str.starts_with("postgres://"),
+            "expected URL format, got: {conn_str}"
+        );
         assert!(conn_str.contains("localhost"), "URL should contain host");
         assert!(conn_str.contains("5432"), "URL should contain port");
         assert!(conn_str.contains("test_db"), "URL should contain database");
-        assert!(conn_str.contains("test_user"), "URL should contain username");
+        assert!(
+            conn_str.contains("test_user"),
+            "URL should contain username"
+        );
     }
 
     #[test]
@@ -1835,7 +1841,10 @@ mod tests {
         // Password is intentionally omitted from the display URL for safety.
         let conn_str = adapter.build_connection_string(Some("secret123")).unwrap();
         assert!(conn_str.starts_with("postgres://"), "expected URL format");
-        assert!(!conn_str.contains("secret123"), "password should be redacted from display URL");
+        assert!(
+            !conn_str.contains("secret123"),
+            "password should be redacted from display URL"
+        );
     }
 
     #[test]
@@ -1844,7 +1853,10 @@ mod tests {
         let adapter = PostgresAdapter::new(config);
         // build_connect_options must not error for a complete config.
         let opts = adapter.build_connect_options(Some("test_password"));
-        assert!(opts.is_ok(), "build_connect_options should succeed for a complete config");
+        assert!(
+            opts.is_ok(),
+            "build_connect_options should succeed for a complete config"
+        );
     }
 
     #[test]

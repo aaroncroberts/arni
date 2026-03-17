@@ -28,11 +28,9 @@ fn init_arni_logging_creates_log_file() {
     );
 
     // The file should have the "arni" prefix configured in init_arni_logging.
-    let has_arni_file = entries.iter().any(|e| {
-        e.file_name()
-            .to_string_lossy()
-            .starts_with("arni")
-    });
+    let has_arni_file = entries
+        .iter()
+        .any(|e| e.file_name().to_string_lossy().starts_with("arni"));
     assert!(
         has_arni_file,
         "expected a file starting with 'arni', got: {:?}",

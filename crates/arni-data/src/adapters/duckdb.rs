@@ -1180,10 +1180,7 @@ mod tests {
     async fn test_export_dataframe_not_connected_returns_error() {
         use polars::prelude::*;
         let adapter = DuckDbAdapter::new(make_config(":memory:"));
-        let df = DataFrame::new(1, vec![
-            Column::new("id".into(), &[1i64]),
-        ])
-        .unwrap();
+        let df = DataFrame::new(1, vec![Column::new("id".into(), &[1i64])]).unwrap();
         let result = DbAdapter::export_dataframe(&adapter, &df, "t", None, false).await;
         assert!(
             matches!(result, Err(DataError::Connection(_))),
@@ -1203,10 +1200,7 @@ mod tests {
             .expect("in-memory connect should succeed");
 
         let result = adapter.execute_query("THIS IS NOT VALID SQL !!!").await;
-        assert!(
-            result.is_err(),
-            "invalid SQL should return Err, got Ok"
-        );
+        assert!(result.is_err(), "invalid SQL should return Err, got Ok");
         let msg = result.unwrap_err().to_string();
         assert!(
             !msg.is_empty(),

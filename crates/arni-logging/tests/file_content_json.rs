@@ -31,7 +31,11 @@ fn logged_messages_appear_as_json_lines() {
     let log_path = std::fs::read_dir(dir.path())
         .expect("read_dir")
         .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().starts_with("arni-json-test"))
+        .find(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("arni-json-test")
+        })
         .expect("json log file should exist")
         .path();
 
@@ -39,7 +43,11 @@ fn logged_messages_appear_as_json_lines() {
     assert!(!content.is_empty(), "log file should not be empty");
 
     // Every non-empty line must parse as valid JSON.
-    for (i, line) in content.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
+    for (i, line) in content
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty())
+    {
         let parsed: serde_json::Value = serde_json::from_str(line)
             .unwrap_or_else(|e| panic!("line {} is not valid JSON: {e}\n  content: {line}", i + 1));
 

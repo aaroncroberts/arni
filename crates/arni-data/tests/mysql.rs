@@ -1474,8 +1474,7 @@ mod mysql_tests {
         let adapter = connected_mysql(&cfg).await;
 
         let table = "arni_my_bulk_insert_count";
-        let _ =
-            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
         DbAdapter::execute_query(
             &adapter,
             &format!(
@@ -1498,8 +1497,9 @@ mod mysql_tests {
 
         assert_eq!(n, 3, "bulk_insert should return 3 rows affected");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+            .await
+            .unwrap();
         // MySQL COUNT(*) returns i64
         assert!(
             matches!(result.rows[0][0], QueryValue::Int(3)),
@@ -1518,8 +1518,7 @@ mod mysql_tests {
         let adapter = connected_mysql(&cfg).await;
 
         let table = "arni_my_bulk_insert_empty";
-        let _ =
-            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
         DbAdapter::execute_query(
             &adapter,
             &format!("CREATE TABLE {table} (id INT AUTO_INCREMENT PRIMARY KEY, val INT)"),
@@ -1527,15 +1526,9 @@ mod mysql_tests {
         .await
         .unwrap();
 
-        let n = DbAdapter::bulk_insert(
-            &adapter,
-            table,
-            &["val".to_string()],
-            &[],
-            None,
-        )
-        .await
-        .expect("bulk_insert with empty rows should succeed");
+        let n = DbAdapter::bulk_insert(&adapter, table, &["val".to_string()], &[], None)
+            .await
+            .expect("bulk_insert with empty rows should succeed");
 
         assert_eq!(n, 0, "empty rows should return 0");
 
@@ -1566,8 +1559,7 @@ mod mysql_tests {
         let adapter = connected_mysql(&cfg).await;
 
         let table = "arni_my_bulk_insert_null";
-        let _ =
-            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
         DbAdapter::execute_query(
             &adapter,
             &format!("CREATE TABLE {table} (id INT AUTO_INCREMENT PRIMARY KEY, note TEXT)"),
@@ -1582,8 +1574,9 @@ mod mysql_tests {
             .await
             .expect("inserting NULL should succeed");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}"))
+            .await
+            .unwrap();
         assert_eq!(result.rows.len(), 1);
         assert!(
             matches!(result.rows[0][0], QueryValue::Null),
@@ -1605,8 +1598,7 @@ mod mysql_tests {
         let adapter = connected_mysql(&cfg).await;
 
         let table = "arni_my_bulk_update";
-        let _ =
-            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
         DbAdapter::execute_query(
             &adapter,
             &format!("CREATE TABLE {table} (id INT PRIMARY KEY, status VARCHAR(20))"),
@@ -1655,8 +1647,7 @@ mod mysql_tests {
         let adapter = connected_mysql(&cfg).await;
 
         let table = "arni_my_bulk_delete";
-        let _ =
-            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
         DbAdapter::execute_query(
             &adapter,
             &format!("CREATE TABLE {table} (id INT PRIMARY KEY, tag VARCHAR(10))"),
@@ -1677,8 +1668,9 @@ mod mysql_tests {
 
         assert_eq!(n, 2, "should delete 2 rows where tag='a'");
 
-        let result =
-            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        let result = DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+            .await
+            .unwrap();
         assert!(
             matches!(result.rows[0][0], QueryValue::Int(1)),
             "1 row should remain"
@@ -1718,14 +1710,27 @@ mod mysql_tests {
             .await
             .expect("read_table should succeed");
 
-        let mut orig_cols: Vec<String> = original.get_column_names().iter().map(|s| s.to_string()).collect();
-        let mut back_cols: Vec<String> = read_back.get_column_names().iter().map(|s| s.to_string()).collect();
+        let mut orig_cols: Vec<String> = original
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut back_cols: Vec<String> = read_back
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         orig_cols.sort_unstable();
         back_cols.sort_unstable();
-        assert_eq!(orig_cols, back_cols, "column names must match after round-trip");
+        assert_eq!(
+            orig_cols, back_cols,
+            "column names must match after round-trip"
+        );
         assert_eq!(read_back.height(), 3, "row count must be preserved");
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1750,15 +1755,29 @@ mod mysql_tests {
 
         let read_back = DbAdapter::read_table(&adapter, table, None).await.unwrap();
 
-        let orig_ids: Vec<i64> = original.column("id").unwrap()
-            .cast(&DataType::Int64).unwrap()
-            .i64().unwrap().into_no_null_iter().collect();
-        let back_ids: Vec<i64> = read_back.column("id").unwrap()
-            .cast(&DataType::Int64).unwrap()
-            .i64().unwrap().into_no_null_iter().collect();
+        let orig_ids: Vec<i64> = original
+            .column("id")
+            .unwrap()
+            .cast(&DataType::Int64)
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+        let back_ids: Vec<i64> = read_back
+            .column("id")
+            .unwrap()
+            .cast(&DataType::Int64)
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
         assert_eq!(orig_ids, back_ids, "id column values must round-trip");
 
-        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1777,7 +1796,10 @@ mod mysql_tests {
             .await
             .expect("test_connection should not error with valid credentials");
 
-        assert!(result, "test_connection should return true with valid credentials");
+        assert!(
+            result,
+            "test_connection should return true with valid credentials"
+        );
     }
 
     #[tokio::test]
@@ -1791,6 +1813,9 @@ mod mysql_tests {
             .await
             .expect("test_connection with wrong password should return Ok(false), not Err");
 
-        assert!(!result, "test_connection should return false with wrong password");
+        assert!(
+            !result,
+            "test_connection should return false with wrong password"
+        );
     }
 }
