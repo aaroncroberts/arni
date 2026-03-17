@@ -2280,8 +2280,7 @@ mod tests {
 
         // Temporary tables may not show up in information_schema
         // If it works, validate the structure
-        if result.is_ok() {
-            let table_info = result.unwrap();
+        if let Ok(table_info) = result {
             assert_eq!(table_info.name, "test_describe");
             assert!(!table_info.columns.is_empty());
 
