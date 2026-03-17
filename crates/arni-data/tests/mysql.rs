@@ -1449,4 +1449,243 @@ mod mysql_tests {
             result
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BULK OPERATIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    async fn connected_mysql(
+        cfg: &arni_data::adapter::ConnectionConfig,
+    ) -> arni_data::adapters::mysql::MySqlAdapter {
+        use arni_data::adapters::mysql::MySqlAdapter;
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = MySqlAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, cfg, password.as_deref())
+            .await
+            .expect("mysql connect should succeed");
+        adapter
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_multi_row_returns_count() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = mysql_config!();
+        let adapter = connected_mysql(&cfg).await;
+
+        let table = "arni_my_bulk_insert_count";
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {table} (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), score INT)"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let columns = vec!["name".to_string(), "score".to_string()];
+        let rows = vec![
+            vec![QueryValue::Text("Alice".to_string()), QueryValue::Int(90)],
+            vec![QueryValue::Text("Bob".to_string()), QueryValue::Int(85)],
+            vec![QueryValue::Text("Carol".to_string()), QueryValue::Int(92)],
+        ];
+
+        let n = DbAdapter::bulk_insert(&adapter, table, &columns, &rows, None)
+            .await
+            .expect("bulk_insert should succeed");
+
+        assert_eq!(n, 3, "bulk_insert should return 3 rows affected");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        // MySQL COUNT(*) returns i64
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(3)),
+            "expected 3 rows in table, got {:?}",
+            result.rows[0][0]
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_empty_rows_returns_zero() {
+        let cfg = mysql_config!();
+        let adapter = connected_mysql(&cfg).await;
+
+        let table = "arni_my_bulk_insert_empty";
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id INT AUTO_INCREMENT PRIMARY KEY, val INT)"),
+        )
+        .await
+        .unwrap();
+
+        let n = DbAdapter::bulk_insert(
+            &adapter,
+            table,
+            &["val".to_string()],
+            &[],
+            None,
+        )
+        .await
+        .expect("bulk_insert with empty rows should succeed");
+
+        assert_eq!(n, 0, "empty rows should return 0");
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_column_count_mismatch_returns_err() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = mysql_config!();
+        let adapter = connected_mysql(&cfg).await;
+
+        let columns = vec!["a".to_string(), "b".to_string()];
+        let rows = vec![vec![QueryValue::Int(1)]]; // mismatch
+
+        let result = DbAdapter::bulk_insert(&adapter, "any_table", &columns, &rows, None).await;
+        assert!(result.is_err(), "column count mismatch should return Err");
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_null_values_stored_as_null() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = mysql_config!();
+        let adapter = connected_mysql(&cfg).await;
+
+        let table = "arni_my_bulk_insert_null";
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id INT AUTO_INCREMENT PRIMARY KEY, note TEXT)"),
+        )
+        .await
+        .unwrap();
+
+        let columns = vec!["note".to_string()];
+        let rows = vec![vec![QueryValue::Null]];
+
+        DbAdapter::bulk_insert(&adapter, table, &columns, &rows, None)
+            .await
+            .expect("inserting NULL should succeed");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}")).await.unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Null),
+            "NULL value should round-trip as NULL, got {:?}",
+            result.rows[0][0]
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_bulk_update_matching_rows_only() {
+        use arni_data::adapter::{FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let cfg = mysql_config!();
+        let adapter = connected_mysql(&cfg).await;
+
+        let table = "arni_my_bulk_update";
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id INT PRIMARY KEY, status VARCHAR(20))"),
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("INSERT INTO {table} VALUES (1,'pending'), (2,'pending'), (3,'done')"),
+        )
+        .await
+        .unwrap();
+
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("status".to_string(), QueryValue::Text("active".to_string()));
+        let filter = FilterExpr::Eq("id".to_string(), QueryValue::Int(1));
+
+        let n = DbAdapter::bulk_update(&adapter, table, &[(set_clauses, filter)], None)
+            .await
+            .expect("bulk_update should succeed");
+
+        assert_eq!(n, 1, "should update exactly 1 row");
+
+        let result = DbAdapter::execute_query(
+            &adapter,
+            &format!("SELECT id, status FROM {table} ORDER BY id"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert!(
+            matches!(&result.rows[1][1], QueryValue::Text(s) if s == "pending"),
+            "id=2 should remain 'pending'"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_bulk_delete_matching_rows_only() {
+        use arni_data::adapter::{FilterExpr, QueryValue};
+
+        let cfg = mysql_config!();
+        let adapter = connected_mysql(&cfg).await;
+
+        let table = "arni_my_bulk_delete";
+        let _ =
+            DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id INT PRIMARY KEY, tag VARCHAR(10))"),
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("INSERT INTO {table} VALUES (1,'a'), (2,'b'), (3,'a')"),
+        )
+        .await
+        .unwrap();
+
+        let filter = FilterExpr::Eq("tag".to_string(), QueryValue::Text("a".to_string()));
+        let n = DbAdapter::bulk_delete(&adapter, table, &[filter], None)
+            .await
+            .expect("bulk_delete should succeed");
+
+        assert_eq!(n, 2, "should delete 2 rows where tag='a'");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(1)),
+            "1 row should remain"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
 }

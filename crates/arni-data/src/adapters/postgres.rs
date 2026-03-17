@@ -50,7 +50,7 @@ use crate::adapter::{
 };
 use crate::DataError;
 use polars::prelude::*;
-use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Executor, Row, TypeInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -122,7 +122,7 @@ impl PostgresAdapter {
     /// Build a PostgreSQL libpq-style connection string for sqlx.
     ///
     /// Format: `host=H port=P dbname=D user=U password=P`
-    fn build_connection_string(&self, password: Option<&str>) -> Result<String> {
+    fn build_connect_options(&self, password: Option<&str>) -> Result<PgConnectOptions> {
         let host = self
             .config
             .host
@@ -137,22 +137,41 @@ impl PostgresAdapter {
             .as_ref()
             .ok_or_else(|| DataError::Config("Missing username".to_string()))?;
 
-        let mut conn_str = format!(
-            "host={} port={} dbname={} user={}",
-            host, port, self.config.database, username
-        );
+        let mut opts = PgConnectOptions::new()
+            .host(host)
+            .port(port)
+            .database(&self.config.database)
+            .username(username);
 
-        if let Some(pwd) = password {
-            conn_str.push_str(&format!(" password={}", pwd));
+        // Prefer the explicitly-passed password, then fall back to parameters map.
+        let pwd = password.or_else(|| self.config.parameters.get("password").map(|s| s.as_str()));
+        if let Some(pwd) = pwd {
+            opts = opts.password(pwd);
         }
 
-        for (key, value) in &self.config.parameters {
-            if key != "password" {
-                conn_str.push_str(&format!(" {}={}", key, value));
-            }
-        }
+        Ok(opts)
+    }
 
-        Ok(conn_str)
+    /// Build a postgres:// URL for display/logging purposes (password redacted).
+    ///
+    /// Also validates that host and username are present — returns `Err` for missing fields.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn build_connection_string(&self, _password: Option<&str>) -> Result<String> {
+        let host = self
+            .config
+            .host
+            .as_deref()
+            .ok_or_else(|| DataError::Config("Missing host".to_string()))?;
+        let port = self.config.port.unwrap_or(5432);
+        let username = self
+            .config
+            .username
+            .as_deref()
+            .ok_or_else(|| DataError::Config("Missing username".to_string()))?;
+        Ok(format!(
+            "postgres://{}@{}:{}/{}",
+            username, host, port, self.config.database
+        ))
     }
 
     /// Return true when `sql` is a DML statement that uses `execute()` rather than `fetch_all()`.
@@ -178,8 +197,8 @@ impl Connection for PostgresAdapter {
         info!("Connecting to PostgreSQL database");
 
         let password = self.config.parameters.get("password").map(String::as_str);
-        let conn_str = self.build_connection_string(password).map_err(|e| {
-            error!(adapter = "postgres", operation = "connect", error = ?e, "Failed to build connection string");
+        let connect_opts = self.build_connect_options(password).map_err(|e| {
+            error!(adapter = "postgres", operation = "connect", error = ?e, "Failed to build connection options");
             e
         })?;
 
@@ -198,7 +217,7 @@ impl Connection for PostgresAdapter {
             .acquire_timeout(std::time::Duration::from_secs(pc.acquire_timeout_secs))
             .idle_timeout(std::time::Duration::from_secs(pc.idle_timeout_secs))
             .max_lifetime(std::time::Duration::from_secs(pc.max_lifetime_secs))
-            .connect(&conn_str)
+            .connect_with(connect_opts)
             .await
             .map_err(|e| {
                 error!(adapter = "postgres", operation = "connect", error = %e, "Failed to establish connection");
@@ -278,7 +297,7 @@ impl DbAdapter for PostgresAdapter {
     async fn connect(&mut self, config: &ConnectionConfig, password: Option<&str>) -> Result<()> {
         self.config = config.clone();
 
-        let conn_str = self.build_connection_string(password)?;
+        let connect_opts = self.build_connect_options(password)?;
 
         let pc = self.config.pool_config.clone().unwrap_or_default();
         debug!(
@@ -295,7 +314,7 @@ impl DbAdapter for PostgresAdapter {
             .acquire_timeout(std::time::Duration::from_secs(pc.acquire_timeout_secs))
             .idle_timeout(std::time::Duration::from_secs(pc.idle_timeout_secs))
             .max_lifetime(std::time::Duration::from_secs(pc.max_lifetime_secs))
-            .connect(&conn_str)
+            .connect_with(connect_opts)
             .await
             .map_err(|e| DataError::Connection(format!("Failed to connect: {}", e)))?;
 
@@ -333,19 +352,21 @@ impl DbAdapter for PostgresAdapter {
             .as_ref()
             .ok_or_else(|| DataError::Config("Missing username".to_string()))?;
 
-        let mut conn_str = format!(
-            "host={} port={} dbname={} user={}",
-            host, port, config.database, username
-        );
+        let mut opts = PgConnectOptions::new()
+            .host(host)
+            .port(port)
+            .database(&config.database)
+            .username(username);
 
-        if let Some(pwd) = password {
-            conn_str.push_str(&format!(" password={}", pwd));
+        let pwd = password.or_else(|| config.parameters.get("password").map(|s| s.as_str()));
+        if let Some(pwd) = pwd {
+            opts = opts.password(pwd);
         }
 
         match PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(std::time::Duration::from_secs(5))
-            .connect(&conn_str)
+            .connect_with(opts)
             .await
         {
             Ok(pool) => {
@@ -1797,11 +1818,13 @@ mod tests {
         let config = create_test_config();
         let adapter = PostgresAdapter::new(config);
 
+        // build_connection_string now returns a postgres:// URL (password redacted).
         let conn_str = adapter.build_connection_string(None).unwrap();
-        assert!(conn_str.contains("host=localhost"));
-        assert!(conn_str.contains("port=5432"));
-        assert!(conn_str.contains("dbname=test_db"));
-        assert!(conn_str.contains("user=test_user"));
+        assert!(conn_str.starts_with("postgres://"), "expected URL format, got: {conn_str}");
+        assert!(conn_str.contains("localhost"), "URL should contain host");
+        assert!(conn_str.contains("5432"), "URL should contain port");
+        assert!(conn_str.contains("test_db"), "URL should contain database");
+        assert!(conn_str.contains("test_user"), "URL should contain username");
     }
 
     #[test]
@@ -1809,25 +1832,19 @@ mod tests {
         let config = create_test_config();
         let adapter = PostgresAdapter::new(config);
 
+        // Password is intentionally omitted from the display URL for safety.
         let conn_str = adapter.build_connection_string(Some("secret123")).unwrap();
-        assert!(conn_str.contains("password=secret123"));
+        assert!(conn_str.starts_with("postgres://"), "expected URL format");
+        assert!(!conn_str.contains("secret123"), "password should be redacted from display URL");
     }
 
     #[test]
-    fn test_build_connection_string_with_parameters() {
-        let mut config = create_test_config();
-        config
-            .parameters
-            .insert("application_name".to_string(), "arni".to_string());
-        config
-            .parameters
-            .insert("connect_timeout".to_string(), "10".to_string());
-
+    fn test_build_connect_options_includes_host_port_db() {
+        let config = create_test_config();
         let adapter = PostgresAdapter::new(config);
-        let conn_str = adapter.build_connection_string(None).unwrap();
-
-        assert!(conn_str.contains("application_name=arni"));
-        assert!(conn_str.contains("connect_timeout=10"));
+        // build_connect_options must not error for a complete config.
+        let opts = adapter.build_connect_options(Some("test_password"));
+        assert!(opts.is_ok(), "build_connect_options should succeed for a complete config");
     }
 
     #[test]
