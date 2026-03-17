@@ -1115,4 +1115,18 @@ mod sqlite_tests {
 
         assert_eq!(del_n, 3, "IsNotNull should now match all 3 rows");
     }
+
+    // ── adapter-specific feature tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_sqlite_get_server_info_version_non_empty() {
+        use arni_data::adapter::DbAdapter;
+
+        let adapter = connected_memory().await;
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        assert!(!info.version.is_empty(), "server version field must not be empty");
+    }
 }

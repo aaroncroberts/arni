@@ -972,4 +972,57 @@ mod duckdb_tests {
             "reading back empty table should yield 0 rows"
         );
     }
+
+    // ── adapter-specific feature tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_duckdb_analytic_row_number_query() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        DbAdapter::execute_query(
+            &adapter,
+            "CREATE TABLE analytic_tbl (grp TEXT, val INTEGER)",
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            "INSERT INTO analytic_tbl VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)",
+        )
+        .await
+        .unwrap();
+
+        let df = DbAdapter::query_df(
+            &adapter,
+            "SELECT grp, val, ROW_NUMBER() OVER (PARTITION BY grp ORDER BY val) AS rn \
+             FROM analytic_tbl ORDER BY grp, val",
+        )
+        .await
+        .expect("analytic query with ROW_NUMBER OVER should succeed");
+
+        assert_eq!(df.height(), 4, "analytic query should return 4 rows");
+        assert!(
+            df.get_column_names().iter().any(|c| c.as_str() == "rn"),
+            "result must include the 'rn' column from ROW_NUMBER()"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duckdb_get_server_info_version_non_empty() {
+        use arni_data::adapter::DbAdapter;
+
+        let cfg = memory_config();
+        let mut adapter = DuckDbAdapter::new(cfg);
+        ConnectionTrait::connect(&mut adapter).await.unwrap();
+
+        let info = DbAdapter::get_server_info(&adapter)
+            .await
+            .expect("get_server_info should succeed");
+
+        assert!(!info.version.is_empty(), "server version field must not be empty");
+    }
 }
