@@ -1377,4 +1377,275 @@ mod mssql_tests {
             result
         );
     }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    async fn connected_mssql(
+        cfg: &arni_data::adapter::ConnectionConfig,
+    ) -> arni_data::adapters::mssql::SqlServerAdapter {
+        use arni_data::adapters::mssql::SqlServerAdapter;
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = SqlServerAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, cfg, password.as_deref())
+            .await
+            .expect("mssql connect should succeed");
+        adapter
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BULK OPERATIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_mssql_bulk_insert_multi_row_returns_count() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = mssql_config!();
+        let adapter = connected_mssql(&cfg).await;
+
+        let table = "arni_ms_bulk_insert_count";
+        let _ = DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
+            ),
+        )
+        .await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {table} (id INT IDENTITY(1,1) PRIMARY KEY, name NVARCHAR(100), score INT)"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let columns = vec!["name".to_string(), "score".to_string()];
+        let rows = vec![
+            vec![QueryValue::Text("Alice".to_string()), QueryValue::Int(90)],
+            vec![QueryValue::Text("Bob".to_string()), QueryValue::Int(85)],
+            vec![QueryValue::Text("Carol".to_string()), QueryValue::Int(92)],
+        ];
+
+        let n = DbAdapter::bulk_insert(&adapter, table, &columns, &rows, None)
+            .await
+            .expect("bulk_insert should succeed");
+
+        assert_eq!(n, 3, "bulk_insert should return 3 rows affected");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+                .await
+                .unwrap();
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(3)),
+            "expected 3 rows in table; got {:?}",
+            result.rows[0][0]
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mssql_bulk_insert_empty_rows_returns_zero() {
+        let cfg = mssql_config!();
+        let adapter = connected_mssql(&cfg).await;
+
+        let table = "arni_ms_bulk_insert_empty";
+        let _ = DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
+            ),
+        )
+        .await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id INT IDENTITY(1,1) PRIMARY KEY, val INT)"),
+        )
+        .await
+        .unwrap();
+
+        let n = DbAdapter::bulk_insert(&adapter, table, &["val".to_string()], &[], None)
+            .await
+            .expect("empty bulk_insert should succeed");
+
+        assert_eq!(n, 0, "empty rows should return 0");
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mssql_bulk_insert_column_count_mismatch_returns_err() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = mssql_config!();
+        let adapter = connected_mssql(&cfg).await;
+
+        let columns = vec!["a".to_string(), "b".to_string()]; // 2 columns
+        let rows = vec![
+            vec![QueryValue::Int(1)], // only 1 value — mismatch
+        ];
+
+        let result = DbAdapter::bulk_insert(&adapter, "any_table", &columns, &rows, None).await;
+        assert!(result.is_err(), "column count mismatch should return Err");
+    }
+
+    #[tokio::test]
+    async fn test_mssql_bulk_insert_null_value_round_trips() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = mssql_config!();
+        let adapter = connected_mssql(&cfg).await;
+
+        let table = "arni_ms_bulk_insert_null";
+        let _ = DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
+            ),
+        )
+        .await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id INT IDENTITY(1,1) PRIMARY KEY, note NVARCHAR(MAX))"),
+        )
+        .await
+        .unwrap();
+
+        let columns = vec!["note".to_string()];
+        let rows = vec![vec![QueryValue::Null]];
+
+        DbAdapter::bulk_insert(&adapter, table, &columns, &rows, None)
+            .await
+            .expect("inserting NULL should succeed");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}")).await.unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Null),
+            "NULL value should round-trip as NULL; got {:?}",
+            result.rows[0][0]
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mssql_bulk_update_matching_rows_only() {
+        use arni_data::adapter::{FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let cfg = mssql_config!();
+        let adapter = connected_mssql(&cfg).await;
+
+        let table = "arni_ms_bulk_update";
+        let _ = DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
+            ),
+        )
+        .await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id INT PRIMARY KEY, status NVARCHAR(50))"),
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "INSERT INTO {table} VALUES (1, 'pending'), (2, 'pending'), (3, 'done')"
+            ),
+        )
+        .await
+        .unwrap();
+
+        // Update only id = 1
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("status".to_string(), QueryValue::Text("active".to_string()));
+        let filter = FilterExpr::Eq("id".to_string(), QueryValue::Int(1));
+
+        let n = DbAdapter::bulk_update(&adapter, table, &[(set_clauses, filter)], None)
+            .await
+            .expect("bulk_update should succeed");
+
+        assert_eq!(n, 1, "should update exactly 1 row");
+
+        let result = DbAdapter::execute_query(
+            &adapter,
+            &format!("SELECT id, status FROM {table} ORDER BY id"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert!(
+            matches!(&result.rows[1][1], QueryValue::Text(s) if s == "pending"),
+            "id=2 should remain 'pending'"
+        );
+        assert!(
+            matches!(&result.rows[2][1], QueryValue::Text(s) if s == "done"),
+            "id=3 should remain 'done'"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mssql_bulk_delete_matching_rows_only() {
+        use arni_data::adapter::{FilterExpr, QueryValue};
+
+        let cfg = mssql_config!();
+        let adapter = connected_mssql(&cfg).await;
+
+        let table = "arni_ms_bulk_delete";
+        let _ = DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "IF OBJECT_ID('{table}', 'U') IS NOT NULL DROP TABLE {table}"
+            ),
+        )
+        .await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id INT PRIMARY KEY, tag NVARCHAR(10))"),
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("INSERT INTO {table} VALUES (1,'a'), (2,'b'), (3,'a')"),
+        )
+        .await
+        .unwrap();
+
+        // Delete where tag = 'a' (2 rows)
+        let filter = FilterExpr::Eq("tag".to_string(), QueryValue::Text("a".to_string()));
+        let n = DbAdapter::bulk_delete(&adapter, table, &[filter], None)
+            .await
+            .expect("bulk_delete should succeed");
+
+        assert_eq!(n, 2, "should delete 2 rows where tag='a'");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(1)),
+            "1 row should remain after deleting tag='a' rows"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}"))
+            .await
+            .unwrap();
+    }
 }

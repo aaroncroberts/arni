@@ -1404,4 +1404,263 @@ mod oracle_tests {
             result
         );
     }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    async fn connected_oracle(
+        cfg: &arni_data::adapter::ConnectionConfig,
+    ) -> arni_data::adapters::oracle::OracleAdapter {
+        use arni_data::adapters::oracle::OracleAdapter;
+        let password = cfg.parameters.get("password").cloned();
+        let mut adapter = OracleAdapter::new(cfg.clone());
+        DbAdapter::connect(&mut adapter, cfg, password.as_deref())
+            .await
+            .expect("oracle connect should succeed");
+        adapter
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BULK OPERATIONS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_bulk_insert_multi_row_returns_count() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = oracle_config!();
+        let adapter = connected_oracle(&cfg).await;
+
+        let table = "ARNI_ORA_BULK_INS";
+        // Oracle: drop with PURGE to avoid recycle bin noise
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {table} (id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                 name VARCHAR2(100), score NUMBER)"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let columns = vec!["name".to_string(), "score".to_string()];
+        let rows = vec![
+            vec![QueryValue::Text("Alice".to_string()), QueryValue::Int(90)],
+            vec![QueryValue::Text("Bob".to_string()), QueryValue::Int(85)],
+            vec![QueryValue::Text("Carol".to_string()), QueryValue::Int(92)],
+        ];
+
+        let n = DbAdapter::bulk_insert(&adapter, table, &columns, &rows, None)
+            .await
+            .expect("bulk_insert should succeed");
+
+        assert_eq!(n, 3, "bulk_insert should return 3 rows affected");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}"))
+                .await
+                .unwrap();
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(3)),
+            "expected 3 rows in table; got {:?}",
+            result.rows[0][0]
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_bulk_insert_empty_rows_returns_zero() {
+        let cfg = oracle_config!();
+        let adapter = connected_oracle(&cfg).await;
+
+        let table = "ARNI_ORA_BULK_EMPTY";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {table} (id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, val NUMBER)"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let n = DbAdapter::bulk_insert(&adapter, table, &["val".to_string()], &[], None)
+            .await
+            .expect("empty bulk_insert should succeed");
+
+        assert_eq!(n, 0, "empty rows should return 0");
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_bulk_insert_column_count_mismatch_returns_err() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = oracle_config!();
+        let adapter = connected_oracle(&cfg).await;
+
+        let columns = vec!["a".to_string(), "b".to_string()];
+        let rows = vec![vec![QueryValue::Int(1)]]; // 1 value vs 2 columns
+
+        let result = DbAdapter::bulk_insert(&adapter, "ANY_TABLE", &columns, &rows, None).await;
+        assert!(result.is_err(), "column count mismatch should return Err");
+    }
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_bulk_insert_null_value_round_trips() {
+        use arni_data::adapter::QueryValue;
+
+        let cfg = oracle_config!();
+        let adapter = connected_oracle(&cfg).await;
+
+        let table = "ARNI_ORA_BULK_NULL";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "CREATE TABLE {table} (id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, note VARCHAR2(500))"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let columns = vec!["note".to_string()];
+        let rows = vec![vec![QueryValue::Null]];
+
+        DbAdapter::bulk_insert(&adapter, table, &columns, &rows, None)
+            .await
+            .expect("inserting NULL should succeed");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT note FROM {table}")).await.unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Null),
+            "NULL value should round-trip as NULL; got {:?}",
+            result.rows[0][0]
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_bulk_update_matching_rows_only() {
+        use arni_data::adapter::{FilterExpr, QueryValue};
+        use std::collections::HashMap;
+
+        let cfg = oracle_config!();
+        let adapter = connected_oracle(&cfg).await;
+
+        let table = "ARNI_ORA_BULK_UPD";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id NUMBER PRIMARY KEY, status VARCHAR2(50))"),
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "INSERT ALL \
+                 INTO {table} VALUES (1, 'pending') \
+                 INTO {table} VALUES (2, 'pending') \
+                 INTO {table} VALUES (3, 'done') \
+                 SELECT 1 FROM DUAL"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let mut set_clauses = HashMap::new();
+        set_clauses.insert("status".to_string(), QueryValue::Text("active".to_string()));
+        let filter = FilterExpr::Eq("id".to_string(), QueryValue::Int(1));
+
+        let n = DbAdapter::bulk_update(&adapter, table, &[(set_clauses, filter)], None)
+            .await
+            .expect("bulk_update should succeed");
+
+        assert_eq!(n, 1, "should update exactly 1 row");
+
+        let result = DbAdapter::execute_query(
+            &adapter,
+            &format!("SELECT id, status FROM {table} ORDER BY id"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert!(
+            matches!(&result.rows[1][1], QueryValue::Text(s) if s == "pending"),
+            "id=2 should remain 'pending'"
+        );
+        assert!(
+            matches!(&result.rows[2][1], QueryValue::Text(s) if s == "done"),
+            "id=3 should remain 'done'"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
+    async fn test_oracle_bulk_delete_matching_rows_only() {
+        use arni_data::adapter::{FilterExpr, QueryValue};
+
+        let cfg = oracle_config!();
+        let adapter = connected_oracle(&cfg).await;
+
+        let table = "ARNI_ORA_BULK_DEL";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE")).await;
+        DbAdapter::execute_query(
+            &adapter,
+            &format!("CREATE TABLE {table} (id NUMBER PRIMARY KEY, tag VARCHAR2(10))"),
+        )
+        .await
+        .unwrap();
+        DbAdapter::execute_query(
+            &adapter,
+            &format!(
+                "INSERT ALL \
+                 INTO {table} VALUES (1, 'a') \
+                 INTO {table} VALUES (2, 'b') \
+                 INTO {table} VALUES (3, 'a') \
+                 SELECT 1 FROM DUAL"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let filter = FilterExpr::Eq("tag".to_string(), QueryValue::Text("a".to_string()));
+        let n = DbAdapter::bulk_delete(&adapter, table, &[filter], None)
+            .await
+            .expect("bulk_delete should succeed");
+
+        assert_eq!(n, 2, "should delete 2 rows where tag='a'");
+
+        let result =
+            DbAdapter::execute_query(&adapter, &format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        assert!(
+            matches!(result.rows[0][0], QueryValue::Int(1)),
+            "1 row should remain"
+        );
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table} PURGE"))
+            .await
+            .unwrap();
+    }
 }
