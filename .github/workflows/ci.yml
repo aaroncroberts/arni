@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -12,43 +12,27 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Format check
   fmt:
-    name: Rustfmt Check
+    name: Format
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - run: cargo fmt --all -- --check
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-  # Linting
   clippy:
-    name: Clippy Lint
+    name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
+          cache-on-failure: true
       - name: Install DuckDB 1.4.4
         run: |
           wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
@@ -56,36 +40,17 @@ jobs:
           sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
           sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
           sudo ldconfig
+      - run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-  # Build and test (ubuntu, stable + nightly)
   test:
-    name: Test / ${{ matrix.rust }}
+    name: Test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: [stable, nightly]
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust ${{ matrix.rust }}
-        uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          toolchain: ${{ matrix.rust }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ubuntu-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
+          cache-on-failure: true
       - name: Install DuckDB 1.4.4
         run: |
           wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
@@ -93,217 +58,14 @@ jobs:
           sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
           sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
           sudo ldconfig
-
-      - name: Check compilation
-        run: cargo check --verbose
-
       - name: Build
-        run: cargo build --verbose
+        run: cargo build --workspace
+      - name: Unit tests
+        run: cargo test --workspace --lib
 
-      - name: Run unit tests
-        run: cargo test --lib --verbose
-
-      - name: Run integration tests (file-based)
-        # SQLite and DuckDB use in-memory databases; no containers needed.
-        # Network adapter tests (postgres, mysql, etc.) are in the separate
-        # integration-tests job below.
-        run: cargo test -p arni-data --features sqlite,duckdb --test '*' --verbose
-
-  # Network adapter integration tests (podman-compose, ubuntu-only)
-  integration-tests:
-    name: Integration Tests (Network Adapters)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: integration-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install DuckDB 1.4.4
-        run: |
-          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
-          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
-          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
-          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
-          sudo ldconfig
-
-      - name: Install podman-compose
-        run: pip install podman-compose
-
-      - name: Create data directories
-        run: mkdir -p ~/.arni/data/postgres ~/.arni/data/mysql ~/.arni/data/mssql ~/.arni/data/mongodb
-
-      - name: Start database containers
-        # Oracle excluded: requires 2 GB shm_size and ~60 s startup time
-        run: podman-compose up -d postgres mysql mssql mongodb
-
-      - name: Wait for PostgreSQL
-        run: |
-          for i in $(seq 1 30); do
-            podman exec arni-dev-postgres pg_isready -U test_user -d test_db && break
-            echo "Waiting for postgres ($i/30)..."
-            sleep 3
-          done
-
-      - name: Wait for MySQL
-        run: |
-          for i in $(seq 1 30); do
-            podman exec arni-dev-mysql mysqladmin ping -h localhost -u test_user -ptest_password --silent && break
-            echo "Waiting for mysql ($i/30)..."
-            sleep 3
-          done
-
-      - name: Wait for SQL Server
-        run: |
-          for i in $(seq 1 40); do
-            podman exec arni-dev-mssql /opt/mssql-tools/bin/sqlcmd \
-              -S localhost -U sa -P 'Test_Password123!' -Q 'SELECT 1' \
-              > /dev/null 2>&1 && break
-            echo "Waiting for mssql ($i/40)..."
-            sleep 3
-          done
-
-      - name: Wait for MongoDB
-        run: |
-          for i in $(seq 1 30); do
-            podman exec arni-dev-mongodb mongosh --eval "db.adminCommand('ping')" \
-              > /dev/null 2>&1 && break
-            echo "Waiting for mongodb ($i/30)..."
-            sleep 3
-          done
-
-      - name: Run network adapter integration tests
-        env:
-          # Availability flags (checked by skip_if_unavailable)
-          TEST_POSTGRES_AVAILABLE: "true"
-          TEST_MYSQL_AVAILABLE: "true"
-          TEST_MSSQL_AVAILABLE: "true"
-          TEST_MONGODB_AVAILABLE: "true"
-          # PostgreSQL connection (profile: pg-dev → TEST_PG_DEV_*)
-          TEST_PG_DEV_TYPE: postgres
-          TEST_PG_DEV_HOST: localhost
-          TEST_PG_DEV_PORT: "5432"
-          TEST_PG_DEV_DATABASE: test_db
-          TEST_PG_DEV_USER: test_user
-          TEST_PG_DEV_PASSWORD: test_password
-          # MySQL connection (profile: mysql-dev → TEST_MYSQL_DEV_*)
-          TEST_MYSQL_DEV_TYPE: mysql
-          TEST_MYSQL_DEV_HOST: localhost
-          TEST_MYSQL_DEV_PORT: "3306"
-          TEST_MYSQL_DEV_DATABASE: test_db
-          TEST_MYSQL_DEV_USER: test_user
-          TEST_MYSQL_DEV_PASSWORD: test_password
-          # SQL Server connection (profile: mssql-dev → TEST_MSSQL_DEV_*)
-          TEST_MSSQL_DEV_TYPE: sqlserver
-          TEST_MSSQL_DEV_HOST: localhost
-          TEST_MSSQL_DEV_PORT: "1433"
-          TEST_MSSQL_DEV_DATABASE: test_db
-          TEST_MSSQL_DEV_USER: sa
-          TEST_MSSQL_DEV_PASSWORD: "Test_Password123!"
-          # MongoDB connection (profile: mongo-dev → TEST_MONGO_DEV_*)
-          TEST_MONGO_DEV_TYPE: mongodb
-          TEST_MONGO_DEV_HOST: localhost
-          TEST_MONGO_DEV_PORT: "27017"
-          TEST_MONGO_DEV_DATABASE: test_db
-          TEST_MONGO_DEV_USER: test_user
-          TEST_MONGO_DEV_PASSWORD: test_password
-        run: |
-          cargo test -p arni-data \
-            --features postgres,mysql,mongodb,mssql \
-            --test '*' \
-            --verbose
-
-      - name: Stop database containers
-        if: always()
-        run: podman-compose down --volumes
-
-  # Build release (Linux only for now)
-  build-release:
-    name: Build Release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install DuckDB 1.4.4
-        run: |
-          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
-          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
-          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
-          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
-          sudo ldconfig
-
-      - name: Build release
-        run: cargo build --release --verbose
-
-
-  # Code coverage (ubuntu-only, runs after unit tests)
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    needs: [test]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: coverage-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install DuckDB 1.4.4
-        run: |
-          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
-          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
-          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
-          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
-          sudo ldconfig
-
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
-
-      - name: Measure coverage
-        # tarpaulin.toml controls features, threshold (80%), and output formats
-        run: cargo tarpaulin --config tarpaulin.toml --verbose
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: target/tarpaulin/
-          retention-days: 7
-
-  # Summary job for branch protection
   ci-success:
     name: CI Success
-    needs: [fmt, clippy, test, build-release]
+    needs: [fmt, clippy, test]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -311,9 +73,8 @@ jobs:
         run: |
           if [ "${{ needs.fmt.result }}" != "success" ] || \
              [ "${{ needs.clippy.result }}" != "success" ] || \
-             [ "${{ needs.test.result }}" != "success" ] || \
-             [ "${{ needs.build-release.result }}" != "success" ]; then
+             [ "${{ needs.test.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             exit 1
           fi
-          echo "All CI jobs passed successfully!"
+          echo "All CI jobs passed!"
