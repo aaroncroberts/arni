@@ -308,6 +308,47 @@ mod tests {
     }
 
     #[test]
+    fn float64_inf_is_null() {
+        let pos = Series::new("col".into(), &[f64::INFINITY]);
+        assert_eq!(
+            series_value_to_sql_literal(&pos, 0, true).unwrap(),
+            "NULL",
+            "positive f64 infinity should render as NULL"
+        );
+        let neg = Series::new("col".into(), &[f64::NEG_INFINITY]);
+        assert_eq!(
+            series_value_to_sql_literal(&neg, 0, true).unwrap(),
+            "NULL",
+            "negative f64 infinity should render as NULL"
+        );
+    }
+
+    #[test]
+    fn float32_inf_is_null() {
+        let pos = Series::new("col".into(), &[f32::INFINITY]);
+        assert_eq!(series_value_to_sql_literal(&pos, 0, true).unwrap(), "NULL");
+        let neg = Series::new("col".into(), &[f32::NEG_INFINITY]);
+        assert_eq!(series_value_to_sql_literal(&neg, 0, true).unwrap(), "NULL");
+    }
+
+    #[test]
+    fn bytes_render_as_hex_literal() {
+        let bytes: Vec<u8> = vec![0xCA, 0xFE, 0xBA, 0xBE];
+        let s = Series::new("col".into(), [bytes.as_slice()]);
+        assert_eq!(
+            series_value_to_sql_literal(&s, 0, true).unwrap(),
+            "X'cafebabe'"
+        );
+    }
+
+    #[test]
+    fn empty_bytes_render_as_empty_hex_literal() {
+        let empty: Vec<u8> = vec![];
+        let s = Series::new("col".into(), [empty.as_slice()]);
+        assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "X''");
+    }
+
+    #[test]
     fn detect_sql_type_select() {
         assert_eq!(detect_sql_type("SELECT 1"), "SELECT");
         assert_eq!(detect_sql_type("  select * from t"), "SELECT");
