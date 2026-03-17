@@ -26,7 +26,9 @@ Arni is a multi-database adapter library for Rust that provides a unified interf
 ```text
 arni/
 ├── crates/
-│   ├── arni-data/                 # Core adapter library (published)
+│   ├── arni/                      # Public library crate — re-export facade (use this)
+│   │   └── src/lib.rs             # pub use arni_data::* — all implementation in arni-data
+│   ├── arni-data/                 # Core adapter library (implementation)
 │   │   ├── src/
 │   │   │   ├── adapters/          # One file per database (postgres, mysql, sqlite, …)
 │   │   │   ├── adapter.rs         # DbAdapter trait, ConnectionConfig, shared types
@@ -38,8 +40,7 @@ arni/
 │   │       ├── main.rs            # Command definitions and handlers
 │   │       ├── db.rs              # Adapter factory + connect helper
 │   │       └── config.rs          # YAML connection profile store
-│   ├── arni-logging/              # Structured logging infrastructure
-│   └── arni/                      # Legacy placeholder crate (not used by CLI)
+│   └── arni-logging/              # Structured logging infrastructure
 ├── docs/                          # Architecture and usage documentation
 ├── scripts/                       # Dev/CI helper scripts
 ├── Cargo.toml                     # Workspace configuration
@@ -94,12 +95,12 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-arni-data = { version = "0.1", features = ["duckdb"] }  # or "postgres", "mysql", etc.
+arni = { version = "0.1", features = ["duckdb"] }  # or "postgres", "mysql", etc.
 ```
 
 ```rust
 use std::collections::HashMap;
-use arni_data::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
+use arni::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
 use polars::prelude::*;
 
 #[tokio::main]

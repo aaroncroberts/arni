@@ -9,7 +9,9 @@ This document explains how arni is structured internally and serves as the refer
 ```text
 arni/
 ├── crates/
-│   ├── arni-data/                 # Core library (the public API)
+│   ├── arni/                      # Public re-export facade (users depend on this)
+│   │   └── src/lib.rs             # pub use arni_data::* — all code lives in arni-data
+│   ├── arni-data/                 # Core library (implementation)
 │   │   ├── src/
 │   │   │   ├── adapter.rs         # DbAdapter trait, FilterExpr, supporting types
 │   │   │   ├── adapters/
@@ -236,7 +238,7 @@ Each database driver is gated behind a Cargo feature to keep compile times and b
 
 ```toml
 # Cargo.toml (user's project)
-arni-data = { version = "0.1", features = ["duckdb", "postgres"] }
+arni = { version = "0.1", features = ["duckdb", "postgres"] }
 ```
 
 In `crates/arni-data/Cargo.toml`:

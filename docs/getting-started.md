@@ -23,14 +23,14 @@ cargo new my-arni-app
 cd my-arni-app
 ```
 
-Edit `Cargo.toml` and add `arni-data`. Enable only the features you need — each database driver is opt-in:
+Edit `Cargo.toml` and add `arni`. Enable only the features you need — each database driver is opt-in:
 
 ```toml
 [dependencies]
-arni-data = { version = "0.1", features = ["duckdb"] }
-tokio      = { version = "1",  features = ["full"] }
-polars     = { version = "0.45" }
-anyhow     = "1"
+arni   = { version = "0.1", features = ["duckdb"] }
+tokio  = { version = "1",   features = ["full"] }
+polars = { version = "0.53" }
+anyhow = "1"
 ```
 
 ### Available Feature Flags
@@ -52,7 +52,7 @@ anyhow     = "1"
 
 ```rust
 use std::collections::HashMap;
-use arni_data::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
+use arni::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
 use polars::prelude::*;
 
 #[tokio::main]
@@ -118,19 +118,19 @@ Only the adapter type and its import change — the rest of the API is identical
 
 ```rust
 // DuckDB (zero setup)
-use arni_data::adapters::duckdb::DuckDbAdapter;
+use arni::adapters::duckdb::DuckDbAdapter;
 let mut adapter = DuckDbAdapter::new(config.clone());
 
 // PostgreSQL
-use arni_data::adapters::postgres::PostgresAdapter;
+use arni::adapters::postgres::PostgresAdapter;
 let mut adapter = PostgresAdapter::new(config.clone());
 
 // MySQL
-use arni_data::adapters::mysql::MySqlAdapter;
+use arni::adapters::mysql::MySqlAdapter;
 let mut adapter = MySqlAdapter::new(config.clone());
 
 // MongoDB
-use arni_data::adapters::mongodb::MongoDbAdapter;
+use arni::adapters::mongodb::MongoDbAdapter;
 let mut adapter = MongoDbAdapter::new(config.clone());
 ```
 
@@ -180,7 +180,7 @@ let server   = adapter.get_server_info().await?;
 Arni's bulk operations use the typed `FilterExpr` enum instead of raw SQL strings, so the same predicate works against any backend — SQL or MongoDB:
 
 ```rust
-use arni_data::{FilterExpr, QueryValue};
+use arni::{FilterExpr, QueryValue};
 use std::collections::HashMap;
 
 // Bulk update: set score = 100 where name = 'Alice'
@@ -306,13 +306,13 @@ adapter.connect(&config, None).await?;
 ### Feature not enabled
 
 ```text
-error[E0432]: unresolved import `arni_data::adapters::postgres`
+error[E0432]: unresolved import `arni::adapters::postgres`
 ```
 
 Add the feature flag to `Cargo.toml`:
 
 ```toml
-arni-data = { version = "0.1", features = ["postgres"] }
+arni = { version = "0.1", features = ["postgres"] }
 ```
 
 ### `DataError::NotSupported`
@@ -322,7 +322,7 @@ Some operations are database-specific (e.g., stored procedures don't exist in SQ
 ```rust
 match adapter.list_stored_procedures(None).await {
     Ok(procs) => { /* use procs */ }
-    Err(arni_data::DataError::NotSupported(_)) => { /* skip for this DB */ }
+    Err(arni::DataError::NotSupported(_)) => { /* skip for this DB */ }
     Err(e) => return Err(e.into()),
 }
 ```
