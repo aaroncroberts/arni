@@ -1,0 +1,36 @@
+# ~/.arni/logging.yml
+#
+# Arni logging configuration.
+# Copy this file to ~/.arni/logging.yml and adjust for your environment.
+#
+# The CLI writes a default logging.yml on first run if none exists.
+# Override the log level at runtime without editing this file:
+#   arni --log-level debug <command>
+
+# ── Log level ─────────────────────────────────────────────────────────────────
+# Default log level for all arni output.
+# Options: error | warn | info | debug | trace
+level: info
+
+# ── Rolling file appender ─────────────────────────────────────────────────────
+rolling:
+  # When to rotate the log file.
+  # Options:
+  #   daily   — one file per calendar day (recommended for production)
+  #   hourly  — rotate at the top of each hour (high-volume workloads)
+  #   never   — single continuous log file (simple local development)
+  strategy: daily
+
+  # Number of rotated log files to keep before the oldest is deleted.
+  # 0 = unlimited (keep all rotated files).
+  max_files: 30
+
+  # Maximum log file size in megabytes before triggering an early rotation.
+  # 0 = no size limit (rotation is time-driven only).
+  max_size_mb: 0
+
+# ── Log directory ─────────────────────────────────────────────────────────────
+# Directory where log files are written.
+# Default: ~/.arni/logs
+# Supports ~ expansion.
+# log_dir: ~/.arni/logs

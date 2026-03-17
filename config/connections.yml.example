@@ -1,0 +1,98 @@
+# ~/.arni/connections.yml
+#
+# Arni connection profiles.
+# Copy this file to ~/.arni/connections.yml and fill in your credentials.
+#
+# Each top-level key is the profile name used with `arni connect <name>` and
+# in test configuration (TEST_<ADAPTER>_AVAILABLE=true references these by name).
+#
+# Supported types: postgres | mysql | sqlite | mongodb | mssql | oracle | duckdb
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+
+pg-dev:
+  type: postgres
+  host: localhost
+  port: 5432
+  database: test_db
+  username: test_user
+  password: test_password
+  ssl: false
+
+pg-prod:
+  type: postgres
+  host: prod.example.com
+  port: 5432
+  database: production_db
+  username: app_user
+  password: "${POSTGRES_PASSWORD}"   # reference a shell env var
+  ssl: true
+
+# ── MySQL ─────────────────────────────────────────────────────────────────────
+
+mysql-dev:
+  type: mysql
+  host: localhost
+  port: 3306
+  database: test_db
+  username: test_user
+  password: test_password
+  ssl: false
+
+# ── SQL Server (MSSQL) ────────────────────────────────────────────────────────
+# Uses host port 1434 to avoid conflicts with other local SQL Server instances.
+
+mssql-dev:
+  type: sqlserver
+  host: localhost
+  port: 1434
+  database: master
+  username: sa
+  password: "Test_Password123!"
+  ssl: false
+
+# ── Oracle ────────────────────────────────────────────────────────────────────
+# Uses host port 1522 to avoid conflicts with other local Oracle instances.
+# Requires Oracle Instant Client — see ~/.arni/config.yml for oracle_lib_dir.
+
+oracle-dev:
+  type: oracle
+  host: localhost
+  port: 1522
+  database: FREE           # Oracle service name / SID
+  username: system
+  password: test_password
+  ssl: false
+
+# ── MongoDB ───────────────────────────────────────────────────────────────────
+# Uses host port 27018 to avoid conflicts with other local MongoDB instances.
+
+mongodb-dev:
+  type: mongodb
+  host: localhost
+  port: 27018
+  database: test_db
+  username: test_user
+  password: test_password
+  ssl: false
+
+# ── DuckDB ────────────────────────────────────────────────────────────────────
+# DuckDB is embedded — no host or credentials needed.
+
+duckdb-dev:
+  type: duckdb
+  database: ":memory:"     # in-memory; use a file path for persistence
+
+duckdb-analytics:
+  type: duckdb
+  database: ~/data/analytics.duckdb
+
+# ── SQLite ────────────────────────────────────────────────────────────────────
+
+sqlite-dev:
+  type: sqlite
+  database: ":memory:"
+
+sqlite-local:
+  type: sqlite
+  database: ~/data/local.db

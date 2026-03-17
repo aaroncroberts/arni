@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install DuckDB 1.4.4
+        run: |
+          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
+          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
+          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
+          echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/duckdb.conf
+          sudo ldconfig
+          echo "DUCKDB_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/usr/local/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" >> $GITHUB_ENV
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install DuckDB 1.4.4
+        run: |
+          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
+          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
+          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
+          echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/duckdb.conf
+          sudo ldconfig
+          echo "DUCKDB_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/usr/local/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" >> $GITHUB_ENV
+      - name: Build and test
+        run: cargo test --workspace --lib
+
+  ci-success:
+    name: CI Success
+    needs: [fmt, clippy, test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs
+        run: |
+          if [ "${{ needs.fmt.result }}" != "success" ] || \
+             [ "${{ needs.clippy.result }}" != "success" ] || \
+             [ "${{ needs.test.result }}" != "success" ]; then
+            echo "One or more CI jobs failed"
+            exit 1
+          fi
+          echo "All CI jobs passed!"

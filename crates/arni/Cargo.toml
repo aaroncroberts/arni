@@ -1,0 +1,29 @@
+[package]
+name = "arni"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Multi-database adapter library for Rust, returning Polars DataFrames"
+keywords = ["database", "adapter", "polars", "dataframe", "sql"]
+categories = ["database", "data-structures"]
+
+[lib]
+name = "arni"
+path = "src/lib.rs"
+
+[dependencies]
+arni-data = { path = "../arni-data", default-features = false }
+
+[features]
+default = []
+postgres   = ["arni-data/postgres"]
+mysql      = ["arni-data/mysql"]
+sqlite     = ["arni-data/sqlite"]
+mongodb    = ["arni-data/mongodb"]
+mssql      = ["arni-data/mssql"]
+oracle     = ["arni-data/oracle"]
+duckdb     = ["arni-data/duckdb"]
+all-databases = ["postgres", "mysql", "sqlite", "mongodb", "mssql", "oracle", "duckdb"]

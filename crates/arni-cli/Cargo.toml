@@ -1,0 +1,40 @@
+[package]
+name = "arni-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Command-line interface for the Arni multi-database library"
+
+[[bin]]
+name = "arni"
+path = "src/main.rs"
+
+[dependencies]
+# Local dependencies
+arni-data = { path = "../arni-data", features = ["all-databases"] }
+arni-logging = { path = "../arni-logging" }
+
+# Workspace dependencies
+tokio = { workspace = true, features = ["signal"] }
+clap = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+# polars available transitively via arni-data; no direct DataFrame use in CLI
+
+# CLI-specific dependencies
+figlet-rs = "0.1"
+colored = "3.1"
+polars = { workspace = true, features = ["csv"] }
+rpassword = "7"
+comfy-table = "7"
+
+[dev-dependencies]
+tempfile = { workspace = true }

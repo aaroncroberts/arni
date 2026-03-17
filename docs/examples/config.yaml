@@ -1,0 +1,57 @@
+# Example Arni Configuration File (YAML format)
+#
+# This file demonstrates how to configure database connections
+# for different database types supported by Arni.
+
+profiles:
+  # PostgreSQL connection
+  postgres_local:
+    type: postgres
+    host: localhost
+    port: 5432
+    database: mydb
+    username: postgres
+    password: secret
+
+  postgres_prod:
+    type: postgres
+    host: prod.example.com
+    port: 5432
+    database: production_db
+    username: app_user
+    password: ${POSTGRES_PASSWORD} # Use environment variables
+
+  # MongoDB connection
+  mongo_local:
+    type: mongodb
+    uri: mongodb://localhost:27017
+    database: mydb
+
+  mongo_atlas:
+    type: mongodb
+    uri: mongodb+srv://user:pass@cluster.mongodb.net
+    database: production
+
+  # Oracle connection
+  oracle_prod:
+    type: oracle
+    connection_string: "user/pass@//host:1521/service"
+
+  # SQL Server connection
+  mssql_local:
+    type: mssql
+    host: localhost
+    port: 1433
+    database: mydb
+    username: sa
+    password: YourStrong@Passw0rd
+
+  # DuckDB connection (file-based)
+  duckdb_local:
+    type: duckdb
+    path: ./data/analytics.duckdb
+
+  # DuckDB in-memory
+  duckdb_memory:
+    type: duckdb
+    path: ":memory:"
