@@ -1230,10 +1230,6 @@ mod tests {
         let config = make_config(":memory:");
         let adapter = DuckDbAdapter::new(config.clone());
         let result = adapter.test_connection(&config, None).await;
-        assert_eq!(
-            result.unwrap(),
-            true,
-            ":memory: DuckDB should open successfully"
-        );
+        assert!(result.unwrap(), ":memory: DuckDB should open successfully");
     }
 }

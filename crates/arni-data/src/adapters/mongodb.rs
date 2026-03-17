@@ -1310,10 +1310,6 @@ mod tests {
             result.is_ok(),
             "test_connection should not return Err on network failure"
         );
-        assert_eq!(
-            result.unwrap(),
-            false,
-            "Unreachable host should yield false"
-        );
+        assert!(!result.unwrap(), "Unreachable host should yield false");
     }
 }

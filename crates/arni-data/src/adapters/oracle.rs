@@ -1733,9 +1733,8 @@ mod tests {
             result.is_ok(),
             "test_connection should not return Err on network failure"
         );
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Unreachable Oracle listener should yield false"
         );
     }
