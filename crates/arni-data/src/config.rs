@@ -491,6 +491,11 @@ mod tests {
     use super::*;
     use crate::adapter::DatabaseType;
     use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    // Tests that mutate process-wide state (current dir, HOME env var) must run
+    // serially to avoid interfering with each other in the parallel test runner.
+    static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
@@ -1031,6 +1036,7 @@ profiles:
 
     #[test]
     fn test_load_from_default_paths_no_files() {
+        let _lock = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // This test assumes no default config files exist.
         // Override HOME/USERPROFILE so the function cannot find ~/.arni/config.*
         // even if such a file exists on the developer's machine.
@@ -1069,6 +1075,7 @@ profiles:
 
     #[test]
     fn test_load_from_default_paths_finds_file() {
+        let _lock = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         use std::io::Write;
 
         let yaml_content = r#"
