@@ -6,7 +6,7 @@ mod discovery;
 mod json_output;
 mod logging_config;
 
-use arni_data::adapter::{ConnectionConfig, DatabaseType, TableSearchMode};
+use arni_data::adapter::{ConnectionConfig, DatabaseType, FilterExpr, QueryValue, TableSearchMode};
 use arni_data::export::{to_bytes, to_file, DataFormat};
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
@@ -132,6 +132,18 @@ enum Commands {
         /// How to match the search pattern: starts, contains, or ends [default: contains]
         #[arg(long, default_value = "contains")]
         search_mode: String,
+
+        /// List foreign keys for a specific table (requires --table)
+        #[arg(long)]
+        fkeys: bool,
+
+        /// List stored procedures/functions
+        #[arg(long)]
+        procs: bool,
+
+        /// Show server version and configuration info
+        #[arg(long)]
+        server: bool,
     },
     /// Manage database connection profiles
     Config {
@@ -160,6 +172,94 @@ enum Commands {
         /// Path to the Unix domain socket (default: /tmp/arni.sock)
         #[arg(long)]
         socket: Option<std::path::PathBuf>,
+    },
+    /// Insert rows into a table from a JSON file
+    ///
+    /// The data file must contain a JSON array of objects where each object is a row.
+    /// All objects must have the same keys (column names).
+    ///
+    /// Example data file:
+    ///   [{"name":"Alice","score":92.5},{"name":"Bob","score":87.0}]
+    #[command(name = "bulk-insert")]
+    BulkInsert {
+        /// Connection profile name
+        #[arg(short, long)]
+        profile: String,
+        /// Target table name
+        #[arg(long)]
+        table: String,
+        /// Path to JSON file: array of row objects, e.g. [{"col":"val"}, ...]
+        #[arg(long)]
+        data: String,
+        /// Schema/database name (optional)
+        #[arg(long)]
+        schema: Option<String>,
+    },
+    /// Update rows matching a filter with new column values
+    ///
+    /// Filter JSON format: {"col":{"op":"value"}}
+    /// Ops: eq, ne, gt, gte, lt, lte, in (array), is_null, is_not_null
+    /// Compound: {"and":[...]}, {"or":[...]}, {"not":{...}}
+    ///
+    /// Examples:
+    ///   --filter '{"id":{"eq":42}}'
+    ///   --filter '{"and":[{"score":{"gte":80}},{"active":{"eq":true}}]}'
+    #[command(name = "bulk-update")]
+    BulkUpdate {
+        /// Connection profile name
+        #[arg(short, long)]
+        profile: String,
+        /// Target table name
+        #[arg(long)]
+        table: String,
+        /// Filter expression as JSON (see command help for format)
+        #[arg(long)]
+        filter: String,
+        /// Column values to set as JSON object: {"col":"value", ...}
+        #[arg(long)]
+        values: String,
+        /// Schema/database name (optional)
+        #[arg(long)]
+        schema: Option<String>,
+    },
+    /// Delete rows matching a filter
+    ///
+    /// Filter JSON format: {"col":{"op":"value"}}
+    /// Ops: eq, ne, gt, gte, lt, lte, in (array), is_null, is_not_null
+    /// Compound: {"and":[...]}, {"or":[...]}, {"not":{...}}
+    ///
+    /// Examples:
+    ///   --filter '{"active":{"eq":false}}'
+    ///   --filter '{"score":{"lt":50}}'
+    #[command(name = "bulk-delete")]
+    BulkDelete {
+        /// Connection profile name
+        #[arg(short, long)]
+        profile: String,
+        /// Target table name
+        #[arg(long)]
+        table: String,
+        /// Filter expression as JSON (see command help for format)
+        #[arg(long)]
+        filter: String,
+        /// Schema/database name (optional)
+        #[arg(long)]
+        schema: Option<String>,
+    },
+    /// Search for tables whose names match a pattern
+    #[command(name = "find-tables")]
+    FindTables {
+        /// Connection profile name
+        #[arg(short, long)]
+        profile: String,
+        /// Name pattern to search for
+        pattern: String,
+        /// Match strategy: contains (default), starts, ends
+        #[arg(long, default_value = "contains")]
+        mode: String,
+        /// Schema/database name (optional)
+        #[arg(long)]
+        schema: Option<String>,
     },
 }
 
@@ -377,6 +477,9 @@ async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn E
             table,
             search,
             search_mode,
+            fkeys,
+            procs,
+            server,
         } => {
             handle_metadata_command(
                 profile,
@@ -388,6 +491,9 @@ async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn E
                 table,
                 search,
                 search_mode,
+                fkeys,
+                procs,
+                server,
                 json_mode,
             )
             .await
@@ -403,6 +509,31 @@ async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn E
             daemon::run_daemon(path).await?;
             Ok(())
         }
+        Commands::BulkInsert {
+            profile,
+            table,
+            data,
+            schema,
+        } => handle_bulk_insert_command(profile, table, data, schema, json_mode).await,
+        Commands::BulkUpdate {
+            profile,
+            table,
+            filter,
+            values,
+            schema,
+        } => handle_bulk_update_command(profile, table, filter, values, schema, json_mode).await,
+        Commands::BulkDelete {
+            profile,
+            table,
+            filter,
+            schema,
+        } => handle_bulk_delete_command(profile, table, filter, schema, json_mode).await,
+        Commands::FindTables {
+            profile,
+            pattern,
+            mode,
+            schema,
+        } => handle_find_tables_command(profile, pattern, mode, schema, json_mode).await,
     }
 }
 
@@ -964,22 +1095,20 @@ async fn handle_metadata_command(
     table: Option<String>,
     search: Option<String>,
     search_mode: String,
+    fkeys: bool,
+    procs: bool,
+    server: bool,
     json_mode: bool,
 ) -> Result<(), Box<dyn Error>> {
-    // Validate --columns / --indexes require --table before connecting.
+    // Validate flags that require --table before connecting (fast-fail).
     if columns && table.is_none() {
         return Err("--columns requires --table <table_name>".into());
     }
     if indexes && table.is_none() {
         return Err("--indexes requires --table <table_name>".into());
     }
-
-    // Validate --columns / --indexes require --table before connecting.
-    if columns && table.is_none() {
-        return Err("--columns requires --table <table_name>".into());
-    }
-    if indexes && table.is_none() {
-        return Err("--indexes requires --table <table_name>".into());
+    if fkeys && table.is_none() {
+        return Err("--fkeys requires --table <table_name>".into());
     }
 
     let store = ConfigStore::load(None)?;
@@ -1041,7 +1170,7 @@ async fn handle_metadata_command(
         return Ok(());
     }
 
-    let any_flag = tables || columns || schemas || views || indexes;
+    let any_flag = tables || columns || schemas || views || indexes || fkeys || procs || server;
 
     // ── JSON mode: collect all requested sections into one envelope ───────────
     if json_mode {
@@ -1098,6 +1227,38 @@ async fn handle_metadata_command(
             out.insert(
                 "indexes".into(),
                 serde_json::to_value(&idx_list).unwrap_or_default(),
+            );
+        }
+        if fkeys {
+            let tbl = table.as_deref().unwrap(); // validated above
+            let fk_list = meta
+                .get_foreign_keys(tbl, None)
+                .await
+                .map_err(|e| format!("get_foreign_keys('{}') failed: {}", tbl, e))?;
+            out.insert("table".into(), serde_json::json!(tbl));
+            out.insert(
+                "foreign_keys".into(),
+                serde_json::to_value(&fk_list).unwrap_or_default(),
+            );
+        }
+        if procs {
+            let proc_list = meta
+                .list_stored_procedures(None)
+                .await
+                .map_err(|e| format!("list_stored_procedures failed: {}", e))?;
+            out.insert(
+                "procedures".into(),
+                serde_json::to_value(&proc_list).unwrap_or_default(),
+            );
+        }
+        if server {
+            let info = meta
+                .get_server_info()
+                .await
+                .map_err(|e| format!("get_server_info failed: {}", e))?;
+            out.insert(
+                "server".into(),
+                serde_json::to_value(&info).unwrap_or_default(),
             );
         }
 
@@ -1198,6 +1359,83 @@ async fn handle_metadata_command(
                 );
             }
         }
+        println!();
+    }
+
+    // --fkeys: show foreign keys for a table.
+    if fkeys {
+        let tbl = table
+            .as_deref()
+            .ok_or("--fkeys requires --table <table_name>")?;
+        let fk_list = meta
+            .get_foreign_keys(tbl, None)
+            .await
+            .map_err(|e| format!("get_foreign_keys('{}') failed: {}", tbl, e))?;
+        println!(
+            "{}",
+            format!("Foreign keys on '{}':", tbl).bright_white().bold()
+        );
+        if fk_list.is_empty() {
+            println!("  {}", "(no foreign keys found)".dimmed());
+        } else {
+            for fk in &fk_list {
+                let on_delete = fk
+                    .on_delete
+                    .as_deref()
+                    .map(|s| format!(" ON DELETE {}", s))
+                    .unwrap_or_default();
+                println!(
+                    "  • {} [{}] → {}.{}{}",
+                    fk.name.bright_cyan(),
+                    fk.columns.join(", "),
+                    fk.referenced_table.bright_white(),
+                    fk.referenced_columns.join(", "),
+                    on_delete.dimmed(),
+                );
+            }
+        }
+        println!();
+    }
+
+    // --procs: list stored procedures/functions.
+    if procs {
+        let proc_list = meta
+            .list_stored_procedures(None)
+            .await
+            .map_err(|e| format!("list_stored_procedures failed: {}", e))?;
+        println!("{}", "Stored Procedures / Functions:".bright_white().bold());
+        if proc_list.is_empty() {
+            println!("  {}", "(none found)".dimmed());
+        } else {
+            for p in &proc_list {
+                let ret = p
+                    .return_type
+                    .as_deref()
+                    .map(|r| format!(" → {}", r))
+                    .unwrap_or_default();
+                println!("  • {}{}", p.name.bright_cyan(), ret.dimmed());
+            }
+            println!(
+                "\n{} procedure(s).",
+                proc_list.len().to_string().bright_white()
+            );
+        }
+        println!();
+    }
+
+    // --server: show server version and configuration info.
+    if server {
+        let info = meta
+            .get_server_info()
+            .await
+            .map_err(|e| format!("get_server_info failed: {}", e))?;
+        println!("{}", "Server Info:".bright_white().bold());
+        println!("  {} {}", "Type:".dimmed(), info.server_type.cyan());
+        println!("  {} {}", "Version:".dimmed(), info.version.bright_white());
+        for (k, v) in &info.extra_info {
+            println!("  {}: {}", k.dimmed(), v);
+        }
+        println!();
     }
 
     Ok(())
@@ -1276,6 +1514,399 @@ async fn handle_export_command(
             rows,
             output.bright_white()
         );
+    }
+    Ok(())
+}
+
+// ─── Filter / QueryValue JSON parsers ─────────────────────────────────────────
+
+/// Convert a `serde_json::Value` to a `QueryValue`.
+fn json_to_query_value(v: &serde_json::Value) -> Result<QueryValue, Box<dyn Error>> {
+    match v {
+        serde_json::Value::Null => Ok(QueryValue::Null),
+        serde_json::Value::Bool(b) => Ok(QueryValue::Bool(*b)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(QueryValue::Int(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(QueryValue::Float(f))
+            } else {
+                Err("Unsupported numeric value in filter".into())
+            }
+        }
+        serde_json::Value::String(s) => Ok(QueryValue::Text(s.clone())),
+        _ => Err(format!("Cannot convert JSON value to QueryValue: {}", v).into()),
+    }
+}
+
+/// Parse a `FilterExpr` from a JSON `serde_json::Value`.
+///
+/// Supported shapes:
+/// - `{"col": {"eq"|"ne"|"gt"|"gte"|"lt"|"lte": value}}`
+/// - `{"col": {"in": [v1, v2, ...]}}`
+/// - `{"col": "is_null"}` or `{"col": "is_not_null"}`
+/// - `{"and": [expr, ...]}` / `{"or": [expr, ...]}` / `{"not": expr}`
+fn parse_filter_value(v: &serde_json::Value) -> Result<FilterExpr, Box<dyn Error>> {
+    let obj = v.as_object().ok_or("Filter must be a JSON object")?;
+    if obj.len() != 1 {
+        return Err(format!("Filter object must have exactly one key, got {}", obj.len()).into());
+    }
+    let (key, val) = obj.iter().next().unwrap();
+    match key.as_str() {
+        "and" => {
+            let arr = val.as_array().ok_or("'and' value must be a JSON array")?;
+            let exprs: Result<Vec<FilterExpr>, _> = arr.iter().map(parse_filter_value).collect();
+            Ok(FilterExpr::And(exprs?))
+        }
+        "or" => {
+            let arr = val.as_array().ok_or("'or' value must be a JSON array")?;
+            let exprs: Result<Vec<FilterExpr>, _> = arr.iter().map(parse_filter_value).collect();
+            Ok(FilterExpr::Or(exprs?))
+        }
+        "not" => {
+            let expr = parse_filter_value(val)?;
+            Ok(FilterExpr::Not(Box::new(expr)))
+        }
+        col => {
+            // Shorthand: {"col": "is_null"} / {"col": "is_not_null"}
+            if let Some(s) = val.as_str() {
+                return match s {
+                    "is_null" | "isnull" => Ok(FilterExpr::IsNull(col.to_string())),
+                    "is_not_null" | "isnotnull" => Ok(FilterExpr::IsNotNull(col.to_string())),
+                    _ => Err(format!(
+                        "Unknown string op '{}' for column '{}'. Use 'is_null' or 'is_not_null'.",
+                        s, col
+                    )
+                    .into()),
+                };
+            }
+            // Normal: {"col": {"op": value}}
+            let op_obj = val.as_object().ok_or_else(|| {
+                format!(
+                    "Column '{}' value must be an object like {{\"eq\": value}} or the string \"is_null\"",
+                    col
+                )
+            })?;
+            if op_obj.len() != 1 {
+                return Err(format!(
+                    "Column '{}' filter must have exactly one op, got {}",
+                    col,
+                    op_obj.len()
+                )
+                .into());
+            }
+            let (op, op_val) = op_obj.iter().next().unwrap();
+            match op.as_str() {
+                "eq" => Ok(FilterExpr::Eq(
+                    col.to_string(),
+                    json_to_query_value(op_val)?,
+                )),
+                "ne" => Ok(FilterExpr::Ne(
+                    col.to_string(),
+                    json_to_query_value(op_val)?,
+                )),
+                "gt" => Ok(FilterExpr::Gt(
+                    col.to_string(),
+                    json_to_query_value(op_val)?,
+                )),
+                "gte" => Ok(FilterExpr::Gte(
+                    col.to_string(),
+                    json_to_query_value(op_val)?,
+                )),
+                "lt" => Ok(FilterExpr::Lt(
+                    col.to_string(),
+                    json_to_query_value(op_val)?,
+                )),
+                "lte" => Ok(FilterExpr::Lte(
+                    col.to_string(),
+                    json_to_query_value(op_val)?,
+                )),
+                "in" => {
+                    let arr = op_val.as_array().ok_or("'in' value must be a JSON array")?;
+                    let values: Result<Vec<QueryValue>, _> =
+                        arr.iter().map(json_to_query_value).collect();
+                    Ok(FilterExpr::In(col.to_string(), values?))
+                }
+                _ => Err(format!(
+                    "Unknown op '{}' for column '{}'. Valid: eq, ne, gt, gte, lt, lte, in",
+                    op, col
+                )
+                .into()),
+            }
+        }
+    }
+}
+
+/// Parse a `FilterExpr` from a JSON string.
+fn parse_filter_json(s: &str) -> Result<FilterExpr, Box<dyn Error>> {
+    let v: serde_json::Value =
+        serde_json::from_str(s).map_err(|e| format!("Filter JSON parse error: {}", e))?;
+    parse_filter_value(&v)
+}
+
+/// Parse bulk-insert data from a JSON array of row objects.
+///
+/// Returns `(columns, rows)` where `columns` is derived from the first object's keys
+/// and every row is ordered to match that column list.
+#[allow(clippy::type_complexity)]
+fn parse_bulk_insert_data(
+    data: &serde_json::Value,
+) -> Result<(Vec<String>, Vec<Vec<QueryValue>>), Box<dyn Error>> {
+    let arr = data
+        .as_array()
+        .ok_or("Bulk insert data must be a JSON array of objects")?;
+    if arr.is_empty() {
+        return Err("Bulk insert data array is empty".into());
+    }
+    let columns: Vec<String> = arr[0]
+        .as_object()
+        .ok_or("Each row must be a JSON object")?
+        .keys()
+        .cloned()
+        .collect();
+    let mut rows: Vec<Vec<QueryValue>> = Vec::with_capacity(arr.len());
+    for (i, row_val) in arr.iter().enumerate() {
+        let row_obj = row_val
+            .as_object()
+            .ok_or_else(|| format!("Row {} is not a JSON object", i))?;
+        let row: Result<Vec<QueryValue>, _> = columns
+            .iter()
+            .map(|col| json_to_query_value(row_obj.get(col).unwrap_or(&serde_json::Value::Null)))
+            .collect();
+        rows.push(row?);
+    }
+    Ok((columns, rows))
+}
+
+// ─── Bulk-insert command handler ──────────────────────────────────────────────
+
+async fn handle_bulk_insert_command(
+    profile: String,
+    table: String,
+    data_path: String,
+    schema: Option<String>,
+    json_mode: bool,
+) -> Result<(), Box<dyn Error>> {
+    let raw = std::fs::read_to_string(&data_path)
+        .map_err(|e| format!("Cannot read data file '{}': {}", data_path, e))?;
+    let data: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("Data file '{}' is not valid JSON: {}", data_path, e))?;
+    let (columns, rows) = parse_bulk_insert_data(&data)?;
+
+    let store = ConfigStore::load(None)?;
+    let adapter = db::connect(&store, &profile).await.map_err(|e| {
+        format!(
+            "{}\nhint: run `arni config list` to see available profiles",
+            e
+        )
+    })?;
+
+    if !json_mode {
+        println!(
+            "Inserting {} row(s) into '{}'...",
+            rows.len().to_string().bright_white(),
+            table.bright_cyan()
+        );
+    }
+
+    let inserted = adapter
+        .bulk_insert(&table, &columns, &rows, schema.as_deref())
+        .await
+        .map_err(|e| format!("bulk_insert failed: {}", e))?;
+
+    tracing::info!(table = %table, rows = inserted, "bulk_insert completed");
+
+    if json_mode {
+        json_output::emit(&serde_json::json!({
+            "ok": true,
+            "table": table,
+            "rows_affected": inserted,
+        }));
+    } else {
+        println!(
+            "{} Inserted {} row(s) into '{}'.",
+            "✓".bright_green(),
+            inserted.to_string().bright_white(),
+            table.bright_cyan()
+        );
+    }
+    Ok(())
+}
+
+// ─── Bulk-update command handler ──────────────────────────────────────────────
+
+async fn handle_bulk_update_command(
+    profile: String,
+    table: String,
+    filter: String,
+    values: String,
+    schema: Option<String>,
+    json_mode: bool,
+) -> Result<(), Box<dyn Error>> {
+    let filter_expr = parse_filter_json(&filter)?;
+
+    let values_json: serde_json::Value =
+        serde_json::from_str(&values).map_err(|e| format!("--values JSON parse error: {}", e))?;
+    let values_obj = values_json
+        .as_object()
+        .ok_or("--values must be a JSON object: {\"col\": value, ...}")?;
+    let mut col_values: HashMap<String, QueryValue> = HashMap::new();
+    for (k, v) in values_obj {
+        col_values.insert(k.clone(), json_to_query_value(v)?);
+    }
+
+    let store = ConfigStore::load(None)?;
+    let adapter = db::connect(&store, &profile).await.map_err(|e| {
+        format!(
+            "{}\nhint: run `arni config list` to see available profiles",
+            e
+        )
+    })?;
+
+    if !json_mode {
+        println!(
+            "Updating rows in '{}' matching filter...",
+            table.bright_cyan()
+        );
+    }
+
+    let updated = adapter
+        .bulk_update(&table, &[(col_values, filter_expr)], schema.as_deref())
+        .await
+        .map_err(|e| format!("bulk_update failed: {}", e))?;
+
+    tracing::info!(table = %table, rows = updated, "bulk_update completed");
+
+    if json_mode {
+        json_output::emit(&serde_json::json!({
+            "ok": true,
+            "table": table,
+            "rows_affected": updated,
+        }));
+    } else {
+        println!(
+            "{} Updated {} row(s) in '{}'.",
+            "✓".bright_green(),
+            updated.to_string().bright_white(),
+            table.bright_cyan()
+        );
+    }
+    Ok(())
+}
+
+// ─── Bulk-delete command handler ──────────────────────────────────────────────
+
+async fn handle_bulk_delete_command(
+    profile: String,
+    table: String,
+    filter: String,
+    schema: Option<String>,
+    json_mode: bool,
+) -> Result<(), Box<dyn Error>> {
+    let filter_expr = parse_filter_json(&filter)?;
+
+    let store = ConfigStore::load(None)?;
+    let adapter = db::connect(&store, &profile).await.map_err(|e| {
+        format!(
+            "{}\nhint: run `arni config list` to see available profiles",
+            e
+        )
+    })?;
+
+    if !json_mode {
+        println!(
+            "Deleting rows from '{}' matching filter...",
+            table.bright_cyan()
+        );
+    }
+
+    let deleted = adapter
+        .bulk_delete(&table, &[filter_expr], schema.as_deref())
+        .await
+        .map_err(|e| format!("bulk_delete failed: {}", e))?;
+
+    tracing::info!(table = %table, rows = deleted, "bulk_delete completed");
+
+    if json_mode {
+        json_output::emit(&serde_json::json!({
+            "ok": true,
+            "table": table,
+            "rows_affected": deleted,
+        }));
+    } else {
+        println!(
+            "{} Deleted {} row(s) from '{}'.",
+            "✓".bright_green(),
+            deleted.to_string().bright_white(),
+            table.bright_cyan()
+        );
+    }
+    Ok(())
+}
+
+// ─── Find-tables command handler ──────────────────────────────────────────────
+
+async fn handle_find_tables_command(
+    profile: String,
+    pattern: String,
+    mode: String,
+    schema: Option<String>,
+    json_mode: bool,
+) -> Result<(), Box<dyn Error>> {
+    let search_mode = match mode.to_lowercase().as_str() {
+        "starts" | "starts-with" | "startswith" => TableSearchMode::StartsWith,
+        "ends" | "ends-with" | "endswith" => TableSearchMode::EndsWith,
+        _ => TableSearchMode::Contains,
+    };
+
+    let store = ConfigStore::load(None)?;
+    let adapter = db::connect(&store, &profile).await.map_err(|e| {
+        format!(
+            "{}\nhint: run `arni config list` to see available profiles",
+            e
+        )
+    })?;
+
+    let results = adapter
+        .metadata()
+        .find_tables(&pattern, schema.as_deref(), search_mode.clone())
+        .await
+        .map_err(|e| format!("find_tables failed: {}", e))?;
+
+    if json_mode {
+        let mode_str = match search_mode {
+            TableSearchMode::StartsWith => "starts",
+            TableSearchMode::Contains => "contains",
+            TableSearchMode::EndsWith => "ends",
+        };
+        json_output::emit(&serde_json::json!({
+            "ok": true,
+            "pattern": pattern,
+            "mode": mode_str,
+            "tables": results,
+        }));
+    } else {
+        let mode_label = match search_mode {
+            TableSearchMode::StartsWith => "starts with",
+            TableSearchMode::Contains => "contains",
+            TableSearchMode::EndsWith => "ends with",
+        };
+        println!(
+            "Tables matching '{}' ({}):",
+            pattern.bright_white(),
+            mode_label.cyan()
+        );
+        if results.is_empty() {
+            println!("  {}", "(none found)".dimmed());
+        } else {
+            for t in &results {
+                println!("  • {}", t.bright_cyan());
+            }
+            println!(
+                "\n{} table(s) found.",
+                results.len().to_string().bright_white()
+            );
+        }
     }
     Ok(())
 }
@@ -1500,5 +2131,169 @@ mod tests {
             .await
             .unwrap();
         assert!(result.contains("File exists"));
+    }
+
+    // ── json_to_query_value ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_json_to_query_value_null() {
+        let v = json_to_query_value(&serde_json::Value::Null).unwrap();
+        assert!(matches!(v, QueryValue::Null));
+    }
+
+    #[test]
+    fn test_json_to_query_value_bool() {
+        assert!(matches!(
+            json_to_query_value(&serde_json::json!(true)).unwrap(),
+            QueryValue::Bool(true)
+        ));
+        assert!(matches!(
+            json_to_query_value(&serde_json::json!(false)).unwrap(),
+            QueryValue::Bool(false)
+        ));
+    }
+
+    #[test]
+    fn test_json_to_query_value_int() {
+        let v = json_to_query_value(&serde_json::json!(42)).unwrap();
+        assert!(matches!(v, QueryValue::Int(42)));
+    }
+
+    #[test]
+    fn test_json_to_query_value_float() {
+        let v = json_to_query_value(&serde_json::json!(1.5)).unwrap();
+        assert!(matches!(v, QueryValue::Float(f) if (f - 1.5f64).abs() < f64::EPSILON));
+    }
+
+    #[test]
+    fn test_json_to_query_value_string() {
+        let v = json_to_query_value(&serde_json::json!("hello")).unwrap();
+        assert!(matches!(v, QueryValue::Text(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_json_to_query_value_array_returns_error() {
+        let result = json_to_query_value(&serde_json::json!([1, 2, 3]));
+        assert!(result.is_err());
+    }
+
+    // ── parse_filter_json ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_filter_eq_int() {
+        let f = parse_filter_json(r#"{"id": {"eq": 42}}"#).unwrap();
+        assert!(matches!(f, FilterExpr::Eq(col, QueryValue::Int(42)) if col == "id"));
+    }
+
+    #[test]
+    fn test_parse_filter_ne_string() {
+        let f = parse_filter_json(r#"{"status": {"ne": "active"}}"#).unwrap();
+        assert!(matches!(f, FilterExpr::Ne(col, QueryValue::Text(_)) if col == "status"));
+    }
+
+    #[test]
+    fn test_parse_filter_gt_float() {
+        let f = parse_filter_json(r#"{"score": {"gt": 80.5}}"#).unwrap();
+        assert!(matches!(f, FilterExpr::Gt(col, QueryValue::Float(_)) if col == "score"));
+    }
+
+    #[test]
+    fn test_parse_filter_lt() {
+        let f = parse_filter_json(r#"{"age": {"lt": 30}}"#).unwrap();
+        assert!(matches!(f, FilterExpr::Lt(col, QueryValue::Int(30)) if col == "age"));
+    }
+
+    #[test]
+    fn test_parse_filter_gte_lte() {
+        let f_gte = parse_filter_json(r#"{"x": {"gte": 1}}"#).unwrap();
+        let f_lte = parse_filter_json(r#"{"x": {"lte": 10}}"#).unwrap();
+        assert!(matches!(f_gte, FilterExpr::Gte(_, _)));
+        assert!(matches!(f_lte, FilterExpr::Lte(_, _)));
+    }
+
+    #[test]
+    fn test_parse_filter_in() {
+        let f = parse_filter_json(r#"{"id": {"in": [1, 2, 3]}}"#).unwrap();
+        assert!(matches!(f, FilterExpr::In(col, values) if col == "id" && values.len() == 3));
+    }
+
+    #[test]
+    fn test_parse_filter_is_null() {
+        let f = parse_filter_json(r#"{"deleted_at": "is_null"}"#).unwrap();
+        assert!(matches!(f, FilterExpr::IsNull(col) if col == "deleted_at"));
+    }
+
+    #[test]
+    fn test_parse_filter_is_not_null() {
+        let f = parse_filter_json(r#"{"email": "is_not_null"}"#).unwrap();
+        assert!(matches!(f, FilterExpr::IsNotNull(col) if col == "email"));
+    }
+
+    #[test]
+    fn test_parse_filter_and() {
+        let f = parse_filter_json(r#"{"and": [{"score": {"gte": 80}}, {"active": {"eq": true}}]}"#)
+            .unwrap();
+        assert!(matches!(f, FilterExpr::And(v) if v.len() == 2));
+    }
+
+    #[test]
+    fn test_parse_filter_or() {
+        let f = parse_filter_json(r#"{"or": [{"status": {"eq": "a"}}, {"status": {"eq": "b"}}]}"#)
+            .unwrap();
+        assert!(matches!(f, FilterExpr::Or(v) if v.len() == 2));
+    }
+
+    #[test]
+    fn test_parse_filter_not() {
+        let f = parse_filter_json(r#"{"not": {"active": {"eq": false}}}"#).unwrap();
+        assert!(matches!(f, FilterExpr::Not(_)));
+    }
+
+    #[test]
+    fn test_parse_filter_invalid_json_returns_error() {
+        assert!(parse_filter_json("not json").is_err());
+    }
+
+    #[test]
+    fn test_parse_filter_unknown_op_returns_error() {
+        assert!(parse_filter_json(r#"{"col": {"between": [1, 5]}}"#).is_err());
+    }
+
+    // ── parse_bulk_insert_data ───────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_bulk_insert_data_basic() {
+        let data = serde_json::json!([
+            {"name": "Alice", "score": 92},
+            {"name": "Bob",   "score": 87},
+        ]);
+        let (cols, rows) = parse_bulk_insert_data(&data).unwrap();
+        assert_eq!(cols.len(), 2);
+        assert_eq!(rows.len(), 2);
+        assert!(cols.contains(&"name".to_string()));
+        assert!(cols.contains(&"score".to_string()));
+    }
+
+    #[test]
+    fn test_parse_bulk_insert_data_empty_array_returns_error() {
+        let data = serde_json::json!([]);
+        assert!(parse_bulk_insert_data(&data).is_err());
+    }
+
+    #[test]
+    fn test_parse_bulk_insert_data_not_array_returns_error() {
+        let data = serde_json::json!({"name": "Alice"});
+        assert!(parse_bulk_insert_data(&data).is_err());
+    }
+
+    #[test]
+    fn test_parse_bulk_insert_data_missing_column_uses_null() {
+        let data = serde_json::json!([
+            {"name": "Alice", "score": 92},
+            {"name": "Bob"},
+        ]);
+        let (cols, rows) = parse_bulk_insert_data(&data).unwrap();
+        let score_idx = cols.iter().position(|c| c == "score").unwrap();
+        assert!(matches!(rows[1][score_idx], QueryValue::Null));
     }
 }

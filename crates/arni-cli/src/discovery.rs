@@ -108,6 +108,51 @@ pub fn list_tools() -> Value {
                 { "name": "clean",  "type": "subcommand", "required": false, "description": "Remove containers and optionally volumes (--volumes)" },
             ]
         },
+        {
+            "name": "bulk-insert",
+            "description": "Insert rows into a table from a JSON file. JSON must be an array of row objects.",
+            "args": [
+                { "name": "--profile", "type": "string", "required": true,  "description": "Connection profile name" },
+                { "name": "--table",   "type": "string", "required": true,  "description": "Target table name" },
+                { "name": "--data",    "type": "string", "required": true,  "description": "Path to JSON file: [{\"col\":\"val\"}, ...]" },
+                { "name": "--schema",  "type": "string", "required": false, "description": "Schema/database name" },
+                { "name": "--json",    "type": "flag",   "required": false, "description": "Emit {ok, table, rows_affected}" },
+            ]
+        },
+        {
+            "name": "bulk-update",
+            "description": "Update rows matching a filter. Filter ops: eq, ne, gt, gte, lt, lte, in, is_null, is_not_null, and, or, not.",
+            "args": [
+                { "name": "--profile", "type": "string", "required": true,  "description": "Connection profile name" },
+                { "name": "--table",   "type": "string", "required": true,  "description": "Target table name" },
+                { "name": "--filter",  "type": "string", "required": true,  "description": "Filter JSON, e.g. {\"id\":{\"eq\":42}}" },
+                { "name": "--values",  "type": "string", "required": true,  "description": "Column values JSON, e.g. {\"name\":\"x\"}" },
+                { "name": "--schema",  "type": "string", "required": false, "description": "Schema/database name" },
+                { "name": "--json",    "type": "flag",   "required": false, "description": "Emit {ok, table, rows_affected}" },
+            ]
+        },
+        {
+            "name": "bulk-delete",
+            "description": "Delete rows matching a filter. Filter ops: eq, ne, gt, gte, lt, lte, in, is_null, is_not_null, and, or, not.",
+            "args": [
+                { "name": "--profile", "type": "string", "required": true,  "description": "Connection profile name" },
+                { "name": "--table",   "type": "string", "required": true,  "description": "Target table name" },
+                { "name": "--filter",  "type": "string", "required": true,  "description": "Filter JSON, e.g. {\"active\":{\"eq\":false}}" },
+                { "name": "--schema",  "type": "string", "required": false, "description": "Schema/database name" },
+                { "name": "--json",    "type": "flag",   "required": false, "description": "Emit {ok, table, rows_affected}" },
+            ]
+        },
+        {
+            "name": "find-tables",
+            "description": "Search for tables whose names match a pattern.",
+            "args": [
+                { "name": "--profile", "type": "string", "required": true,  "description": "Connection profile name" },
+                { "name": "pattern",   "type": "string", "required": true,  "description": "Name fragment to search for" },
+                { "name": "--mode",    "type": "string", "required": false, "description": "Match strategy: contains (default), starts, ends" },
+                { "name": "--schema",  "type": "string", "required": false, "description": "Schema/database name" },
+                { "name": "--json",    "type": "flag",   "required": false, "description": "Emit {ok, pattern, mode, tables:[]}" },
+            ]
+        },
     ])
 }
 
@@ -263,6 +308,68 @@ pub fn schema(command: &str) -> Option<Value> {
                 "description": "Passes through podman-compose stdout/stderr. No JSON envelope."
             }
         }),
+        "bulk-insert" => json!({
+            "command": "bulk-insert",
+            "input": {
+                "--profile": { "type": "string", "required": true },
+                "--table":   { "type": "string", "required": true, "description": "Target table name" },
+                "--data":    { "type": "string", "required": true, "description": "Path to JSON file: [{\"col\":\"val\"}, ...]" },
+                "--schema":  { "type": "string", "required": false },
+                "--json":    { "type": "flag",   "required": false }
+            },
+            "output": {
+                "ok":           { "type": "boolean" },
+                "table":        { "type": "string" },
+                "rows_affected": { "type": "integer", "description": "Number of rows inserted" }
+            }
+        }),
+        "bulk-update" => json!({
+            "command": "bulk-update",
+            "input": {
+                "--profile": { "type": "string", "required": true },
+                "--table":   { "type": "string", "required": true },
+                "--filter":  { "type": "string", "required": true,  "description": "Filter JSON: {\"col\":{\"op\":value}}" },
+                "--values":  { "type": "string", "required": true,  "description": "Values JSON: {\"col\":value}" },
+                "--schema":  { "type": "string", "required": false },
+                "--json":    { "type": "flag",   "required": false }
+            },
+            "output": {
+                "ok":           { "type": "boolean" },
+                "table":        { "type": "string" },
+                "rows_affected": { "type": "integer", "description": "Number of rows updated" }
+            }
+        }),
+        "bulk-delete" => json!({
+            "command": "bulk-delete",
+            "input": {
+                "--profile": { "type": "string", "required": true },
+                "--table":   { "type": "string", "required": true },
+                "--filter":  { "type": "string", "required": true,  "description": "Filter JSON: {\"col\":{\"op\":value}}" },
+                "--schema":  { "type": "string", "required": false },
+                "--json":    { "type": "flag",   "required": false }
+            },
+            "output": {
+                "ok":           { "type": "boolean" },
+                "table":        { "type": "string" },
+                "rows_affected": { "type": "integer", "description": "Number of rows deleted" }
+            }
+        }),
+        "find-tables" => json!({
+            "command": "find-tables",
+            "input": {
+                "--profile": { "type": "string", "required": true },
+                "pattern":   { "type": "string", "required": true },
+                "--mode":    { "type": "string", "required": false, "enum": ["contains","starts","ends"], "default": "contains" },
+                "--schema":  { "type": "string", "required": false },
+                "--json":    { "type": "flag",   "required": false }
+            },
+            "output": {
+                "ok":      { "type": "boolean" },
+                "pattern": { "type": "string" },
+                "mode":    { "type": "string" },
+                "tables":  { "type": "array", "items": { "type": "string" } }
+            }
+        }),
         _ => return None,
     };
     Some(v)
@@ -275,10 +382,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_list_tools_is_array_of_seven_commands() {
+    fn test_list_tools_is_array_of_eleven_commands() {
         let v = list_tools();
         let arr = v.as_array().expect("list_tools must be an array");
-        assert_eq!(arr.len(), 7);
+        assert_eq!(arr.len(), 11);
     }
 
     #[test]
@@ -325,7 +432,17 @@ mod tests {
     #[test]
     fn test_schema_all_known_commands() {
         for cmd in [
-            "connect", "query", "metadata", "export", "config", "daemon", "dev",
+            "connect",
+            "query",
+            "metadata",
+            "export",
+            "config",
+            "daemon",
+            "dev",
+            "bulk-insert",
+            "bulk-update",
+            "bulk-delete",
+            "find-tables",
         ] {
             assert!(schema(cmd).is_some(), "schema missing for command '{cmd}'");
         }
