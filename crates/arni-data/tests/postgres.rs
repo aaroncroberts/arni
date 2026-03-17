@@ -1518,4 +1518,77 @@ mod postgres_tests {
             .await
             .unwrap();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DATAFRAME ROUND-TRIP TESTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn test_postgres_round_trip_schema_matches() {
+        use polars::prelude::*;
+
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_rt_schema";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        let original = df! {
+            "id"    => [1i64, 2, 3],
+            "name"  => ["alice", "bob", "carol"],
+            "score" => [9.5f64, 8.0, 7.25],
+        }
+        .unwrap();
+
+        DbAdapter::export_dataframe(&adapter, &original, table, None, true)
+            .await
+            .expect("export should succeed");
+
+        let read_back = DbAdapter::read_table(&adapter, table, None)
+            .await
+            .expect("read_table should succeed");
+
+        let mut orig_cols: Vec<String> = original.get_column_names().iter().map(|s| s.to_string()).collect();
+        let mut back_cols: Vec<String> = read_back.get_column_names().iter().map(|s| s.to_string()).collect();
+        orig_cols.sort_unstable();
+        back_cols.sort_unstable();
+        assert_eq!(orig_cols, back_cols, "column names must match after round-trip");
+        assert_eq!(read_back.height(), 3, "row count must be preserved");
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_postgres_round_trip_values_preserved() {
+        use polars::prelude::*;
+
+        let cfg = pg_config!();
+        let adapter = connected_adapter(&cfg).await;
+
+        let table = "arni_pg_rt_values";
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
+
+        let original = df! {
+            "id"    => [10i64, 20, 30],
+            "label" => ["x", "y", "z"],
+            "val"   => [1.1f64, 2.2, 3.3],
+        }
+        .unwrap();
+
+        DbAdapter::export_dataframe(&adapter, &original, table, None, true)
+            .await
+            .unwrap();
+
+        let read_back = DbAdapter::read_table(&adapter, table, None).await.unwrap();
+
+        let orig_ids: Vec<i64> = original.column("id").unwrap()
+            .cast(&DataType::Int64).unwrap()
+            .i64().unwrap().into_no_null_iter().collect();
+        let back_ids: Vec<i64> = read_back.column("id").unwrap()
+            .cast(&DataType::Int64).unwrap()
+            .i64().unwrap().into_no_null_iter().collect();
+        assert_eq!(orig_ids, back_ids, "id column values must round-trip");
+
+        DbAdapter::execute_query(&adapter, &format!("DROP TABLE {table}")).await.unwrap();
+    }
 }
