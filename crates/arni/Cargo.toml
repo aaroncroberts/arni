@@ -15,33 +15,15 @@ name = "arni"
 path = "src/lib.rs"
 
 [dependencies]
-# Workspace dependencies
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-async-trait = { workspace = true }
-polars = { workspace = true }
-serde = { workspace = true }
-serde_yaml = { workspace = true }
-toml = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-
-# Database drivers (optional — enabled via features like arni-data)
-tokio-postgres = { workspace = true, optional = true }
-mongodb = { workspace = true, optional = true }
-oracle = { workspace = true, optional = true }
-# tiberius = { workspace = true, optional = true }  # Re-enable when build issues resolved
-# duckdb = { workspace = true, optional = true }    # Re-enable when build issues resolved
-
-[dev-dependencies]
-mockall = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = ["test-util", "macros"] }
-tracing-subscriber = { workspace = true }
+arni-data = { path = "../arni-data", default-features = false }
 
 [features]
 default = []
-postgres = ["dep:tokio-postgres"]
-mongodb = ["dep:mongodb"]
-oracle = ["dep:oracle"]
-all-databases = ["postgres", "mongodb", "oracle"]
+postgres   = ["arni-data/postgres"]
+mysql      = ["arni-data/mysql"]
+sqlite     = ["arni-data/sqlite"]
+mongodb    = ["arni-data/mongodb"]
+mssql      = ["arni-data/mssql"]
+oracle     = ["arni-data/oracle"]
+duckdb     = ["arni-data/duckdb"]
+all-databases = ["postgres", "mysql", "sqlite", "mongodb", "mssql", "oracle", "duckdb"]
