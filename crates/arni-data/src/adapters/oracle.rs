@@ -1714,4 +1714,27 @@ mod tests {
         let like_pattern = format!("%{}", escape_like_pattern("PS_"));
         assert_eq!(like_pattern, "%PS\\_");
     }
+
+    // ── test_connection() unit tests ────────────────────────────────────────
+
+    /// Connect to port 1 on localhost — TCP connection refused is near-instant.
+    /// This tests that test_connection() returns Ok(false) without panicking
+    /// when the Oracle listener is unreachable.
+    #[tokio::test]
+    async fn test_connection_unreachable_returns_false() {
+        let mut config = make_config("service_name");
+        config.host = Some("127.0.0.1".to_string());
+        config.port = Some(1); // Port 1 → ECONNREFUSED immediately
+        let adapter = OracleAdapter::new(config.clone());
+        let result = adapter.test_connection(&config, Some("wrong_password")).await;
+        assert!(
+            result.is_ok(),
+            "test_connection should not return Err on network failure"
+        );
+        assert_eq!(
+            result.unwrap(),
+            false,
+            "Unreachable Oracle listener should yield false"
+        );
+    }
 }

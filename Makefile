@@ -90,6 +90,21 @@ dev-test: ## Watch and run tests on file changes
 dev-check: ## Watch and run cargo check on file changes
 	@./scripts/dev.sh --check
 
+db-start: ## Start all dev database containers (postgres, mysql, mssql, mongodb, oracle)
+	@./scripts/dev-containers.sh start
+
+db-stop: ## Stop all dev database containers
+	@./scripts/dev-containers.sh stop
+
+db-status: ## Show status of all dev database containers
+	@./scripts/dev-containers.sh status
+
+db-logs: ## Tail logs for a service — usage: make db-logs SERVICE=postgres
+	@./scripts/dev-containers.sh logs $(SERVICE)
+
+db-rm: ## Remove all dev database containers (data volumes preserved)
+	@./scripts/dev-containers.sh rm
+
 ##@ Workflows
 
 all: fmt clippy test build ## Format, lint, test, and build

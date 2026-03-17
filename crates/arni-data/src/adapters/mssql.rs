@@ -1617,4 +1617,18 @@ mod tests {
         let like_pattern = format!("%{}", escape_like_pattern("PS_"));
         assert_eq!(like_pattern, "%PS\\_");
     }
+
+    // ── test_connection() unit tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_connection_empty_database_returns_err() {
+        // validate_database_name("") is called first — no network I/O needed.
+        let config = make_config("");
+        let adapter = SqlServerAdapter::new(config.clone());
+        let result = adapter.test_connection(&config, None).await;
+        assert!(
+            result.is_err(),
+            "Empty database name should return Err before attempting connection"
+        );
+    }
 }

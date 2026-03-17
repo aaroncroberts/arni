@@ -2373,4 +2373,27 @@ mod tests {
         let like_pattern = format!("%{}", escape_like_pattern("PS_"));
         assert_eq!(like_pattern, "%PS\\_");
     }
+
+    // ── test_connection() unit tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_connection_missing_host_returns_err() {
+        let mut config = create_test_config();
+        config.host = None;
+        let adapter = MySqlAdapter::new(config.clone());
+        let result = adapter.test_connection(&config, None).await;
+        assert!(result.is_err(), "Missing host should return Err, not panic");
+    }
+
+    #[tokio::test]
+    async fn test_connection_missing_username_returns_err() {
+        let mut config = create_test_config();
+        config.username = None;
+        let adapter = MySqlAdapter::new(config.clone());
+        let result = adapter.test_connection(&config, None).await;
+        assert!(
+            result.is_err(),
+            "Missing username should return Err, not panic"
+        );
+    }
 }
