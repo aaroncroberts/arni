@@ -49,17 +49,19 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install libduckdb-dev
+        run: sudo apt-get install -y libduckdb-dev
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  # Build and test matrix
+  # Build and test (ubuntu, stable + nightly)
   test:
-    name: Test ${{ matrix.os }} / ${{ matrix.rust }}
-    runs-on: ${{ matrix.os }}
+    name: Test / ${{ matrix.rust }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable, nightly]
 
     steps:
@@ -77,7 +79,10 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ matrix.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ubuntu-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install libduckdb-dev
+        run: sudo apt-get install -y libduckdb-dev
 
       - name: Check compilation
         run: cargo check --verbose
@@ -112,6 +117,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: integration-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install libduckdb-dev
+        run: sudo apt-get install -y libduckdb-dev
 
       - name: Install podman-compose
         run: pip install podman-compose
@@ -222,6 +230,9 @@ jobs:
             ~/.cargo/git
           key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install libduckdb-dev
+        run: sudo apt-get install -y libduckdb-dev
+
       - name: Build release
         run: cargo build --release --verbose
 
@@ -245,6 +256,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: coverage-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install libduckdb-dev
+        run: sudo apt-get install -y libduckdb-dev
 
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin
