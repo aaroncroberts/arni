@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use arni_data::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
+use arni::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
 use polars::prelude::*;
 
 #[tokio::main]

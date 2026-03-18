@@ -17,7 +17,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use arni_data::export::{DataFormat, to_bytes};
+//! use arni::export::{DataFormat, to_bytes};
 //! use polars::prelude::*;
 //!
 //! let mut df = df!["name" => ["Alice", "Bob"], "score" => [92.5f64, 87.0]].unwrap();

@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use arni_data::registry::ConnectionRegistry;
+//! use arni::registry::ConnectionRegistry;
 //! use std::sync::Arc;
 //!
 //! let registry = Arc::new(ConnectionRegistry::new());

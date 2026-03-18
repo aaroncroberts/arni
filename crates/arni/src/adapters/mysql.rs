@@ -8,14 +8,14 @@
 //! This module is only available when the `mysql` feature is enabled:
 //!
 //! ```toml
-//! arni-data = { version = "0.1", features = ["mysql"] }
+//! arni = { version = "0.1", features = ["mysql"] }
 //! ```
 //!
 //! # Examples
 //!
 //! ```ignore
-//! use arni_data::adapters::mysql::MySqlAdapter;
-//! use arni_data::adapter::{Connection, ConnectionConfig, DatabaseType};
+//! use arni::adapters::mysql::MySqlAdapter;
+//! use arni::adapter::{Connection, ConnectionConfig, DatabaseType};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -181,7 +181,7 @@ impl ArniConfig {
     /// # Examples
     ///
     /// ```ignore
-    /// use arni_data::config::ArniConfig;
+    /// use arni::config::ArniConfig;
     ///
     /// let config = ArniConfig::load_from_file("config.yaml")?;
     /// ```
@@ -235,7 +235,7 @@ impl ArniConfig {
     /// # Examples
     ///
     /// ```ignore
-    /// use arni_data::config::ArniConfig;
+    /// use arni::config::ArniConfig;
     ///
     /// let config = ArniConfig::load_from_default_paths()?;
     /// ```

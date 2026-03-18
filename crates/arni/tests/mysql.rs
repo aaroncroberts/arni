@@ -14,7 +14,7 @@ mod common;
 #[cfg(feature = "mysql")]
 mod mysql_tests {
     use super::common;
-    use arni_data::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
+    use arni::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
 
     macro_rules! mysql_config {
         () => {{
@@ -37,7 +37,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_connect_and_disconnect() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -54,7 +54,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_double_disconnect_is_noop() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -78,7 +78,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_health_check_before_connect_returns_false_or_error() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let adapter = MySqlAdapter::new(cfg.clone());
@@ -93,7 +93,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_health_check_after_connect() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -112,7 +112,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_is_connected_false_before_connect() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let adapter = MySqlAdapter::new(cfg.clone());
@@ -125,7 +125,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_is_connected_true_after_connect() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -143,7 +143,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_is_connected_false_after_disconnect() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -164,7 +164,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_database_type() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let adapter = MySqlAdapter::new(cfg.clone());
@@ -180,7 +180,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_execute_select_1() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -198,7 +198,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_execute_multi_column_select() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -220,8 +220,8 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_execute_select_null_value() {
-        use arni_data::adapter::QueryValue;
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapter::QueryValue;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -245,7 +245,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_execute_empty_result() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -286,7 +286,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_create_table_insert_select_drop() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -332,7 +332,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_update_rows() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -378,7 +378,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_delete_rows() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -428,7 +428,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_rows_affected_on_insert() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -471,7 +471,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_invalid_sql_returns_error() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -486,7 +486,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_query_nonexistent_table_returns_error() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -508,7 +508,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_query_before_connect_returns_error() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let adapter = MySqlAdapter::new(cfg.clone());
@@ -525,7 +525,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_list_tables() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -543,7 +543,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_list_tables_contains_created_table() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -586,7 +586,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_describe_table() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -656,7 +656,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_describe_table_nullable_flag() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -711,7 +711,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_get_views() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -763,7 +763,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_get_indexes() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -817,7 +817,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_get_indexes_primary_key_present() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -856,7 +856,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_get_foreign_keys() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -934,7 +934,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_get_foreign_keys_empty_for_no_fk_table() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -970,7 +970,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_list_databases() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -991,7 +991,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_list_databases_contains_information_schema() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1017,7 +1017,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_list_stored_procedures() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1039,7 +1039,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_query_df_returns_correct_shape() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1081,7 +1081,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_query_df_empty_result() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1118,8 +1118,8 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_type_handling_int_varchar_float_bool() {
-        use arni_data::adapter::QueryValue;
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapter::QueryValue;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1195,8 +1195,8 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_type_handling_null_fields() {
-        use arni_data::adapter::QueryValue;
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapter::QueryValue;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1256,7 +1256,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_list_tables_with_explicit_schema() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1298,7 +1298,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_list_tables_with_wrong_schema_returns_empty_or_error() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1325,7 +1325,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_get_server_info() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1352,7 +1352,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_server_info_version_contains_mysql() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1378,7 +1378,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_get_view_definition() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1429,7 +1429,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_get_view_definition_nonexistent() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1455,9 +1455,9 @@ mod mysql_tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     async fn connected_mysql(
-        cfg: &arni_data::adapter::ConnectionConfig,
-    ) -> arni_data::adapters::mysql::MySqlAdapter {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        cfg: &arni::adapter::ConnectionConfig,
+    ) -> arni::adapters::mysql::MySqlAdapter {
+        use arni::adapters::mysql::MySqlAdapter;
         let password = cfg.parameters.get("password").cloned();
         let mut adapter = MySqlAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, cfg, password.as_deref())
@@ -1468,7 +1468,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_bulk_insert_multi_row_returns_count() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = mysql_config!();
         let adapter = connected_mysql(&cfg).await;
@@ -1539,7 +1539,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_bulk_insert_column_count_mismatch_returns_err() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = mysql_config!();
         let adapter = connected_mysql(&cfg).await;
@@ -1553,7 +1553,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_bulk_insert_null_values_stored_as_null() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = mysql_config!();
         let adapter = connected_mysql(&cfg).await;
@@ -1591,7 +1591,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_bulk_update_matching_rows_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
         use std::collections::HashMap;
 
         let cfg = mysql_config!();
@@ -1641,7 +1641,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_bulk_delete_matching_rows_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
 
         let cfg = mysql_config!();
         let adapter = connected_mysql(&cfg).await;
@@ -1786,7 +1786,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_test_connection_valid_credentials_returns_true() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1804,7 +1804,7 @@ mod mysql_tests {
 
     #[tokio::test]
     async fn test_mysql_test_connection_wrong_password_returns_false() {
-        use arni_data::adapters::mysql::MySqlAdapter;
+        use arni::adapters::mysql::MySqlAdapter;
 
         let cfg = mysql_config!();
         let adapter = MySqlAdapter::new(cfg.clone());

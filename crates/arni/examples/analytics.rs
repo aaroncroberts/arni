@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use arni_data::{
+use arni::{
     adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter, FilterExpr,
     QueryValue,
 };

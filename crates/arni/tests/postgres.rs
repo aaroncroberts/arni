@@ -14,7 +14,7 @@ mod common;
 #[cfg(feature = "postgres")]
 mod postgres_tests {
     use super::common;
-    use arni_data::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
+    use arni::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
 
     /// Load the test config for PostgreSQL, or skip the test if unavailable.
     macro_rules! pg_config {
@@ -36,9 +36,9 @@ mod postgres_tests {
 
     /// Build a connected adapter from the given config.
     async fn connected_adapter(
-        cfg: &arni_data::adapter::ConnectionConfig,
-    ) -> arni_data::adapters::postgres::PostgresAdapter {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        cfg: &arni::adapter::ConnectionConfig,
+    ) -> arni::adapters::postgres::PostgresAdapter {
+        use arni::adapters::postgres::PostgresAdapter;
         let password = cfg.parameters.get("password").cloned();
         let mut adapter = PostgresAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, cfg, password.as_deref())
@@ -53,7 +53,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_connect_and_disconnect() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -70,7 +70,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_double_connect_is_idempotent() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -93,7 +93,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_disconnect_when_not_connected_is_no_op() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let mut adapter = PostgresAdapter::new(cfg.clone());
@@ -109,7 +109,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_health_check_after_connect() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -127,7 +127,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_health_check_before_connect_is_false_or_error() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let adapter = PostgresAdapter::new(cfg.clone());
@@ -143,7 +143,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_health_check_after_disconnect_is_false_or_error() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -171,7 +171,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_is_connected_lifecycle() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -203,7 +203,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_database_type() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let adapter = PostgresAdapter::new(cfg.clone());
@@ -221,7 +221,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_execute_select_1() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -282,7 +282,7 @@ mod postgres_tests {
         assert_eq!(result.rows.len(), 1);
 
         // The single value should be represented as QueryValue::Null.
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
         let val = &result.rows[0][0];
         assert_eq!(
             val,
@@ -313,7 +313,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_create_table_insert_select_drop() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -384,7 +384,7 @@ mod postgres_tests {
             .expect("SELECT after UPDATE should succeed");
 
         assert_eq!(result.rows.len(), 1);
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
         assert_eq!(
             result.rows[0][0],
             QueryValue::Int(99),
@@ -442,7 +442,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_invalid_sql_returns_error() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -490,7 +490,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_list_tables() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1072,7 +1072,7 @@ mod postgres_tests {
             .await
             .expect("integer SELECT should succeed");
 
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
         assert_eq!(result.rows[0][0], QueryValue::Int(42));
     }
 
@@ -1085,7 +1085,7 @@ mod postgres_tests {
             .await
             .expect("float SELECT should succeed");
 
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
         match &result.rows[0][0] {
             QueryValue::Float(f) => {
                 assert!(
@@ -1106,7 +1106,7 @@ mod postgres_tests {
             .await
             .expect("text SELECT should succeed");
 
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
         assert_eq!(
             result.rows[0][0],
             QueryValue::Text("hello world".to_string())
@@ -1122,7 +1122,7 @@ mod postgres_tests {
             .await
             .expect("boolean SELECT should succeed");
 
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
         assert_eq!(
             result.rows[0][0],
             QueryValue::Bool(true),
@@ -1147,7 +1147,7 @@ mod postgres_tests {
         .await
         .expect("mixed-type SELECT should succeed");
 
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
         assert_eq!(result.columns.len(), 5);
         assert_eq!(result.rows.len(), 1);
 
@@ -1165,7 +1165,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_config_returns_original_config() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let adapter = PostgresAdapter::new(cfg.clone());
@@ -1178,7 +1178,7 @@ mod postgres_tests {
         );
         assert_eq!(
             returned.db_type,
-            arni_data::adapter::DatabaseType::Postgres,
+            arni::adapter::DatabaseType::Postgres,
             "config() db_type must be Postgres"
         );
     }
@@ -1295,7 +1295,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_bulk_insert_multi_row_returns_count() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
@@ -1370,7 +1370,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_bulk_insert_column_count_mismatch_returns_err() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
@@ -1386,7 +1386,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_bulk_insert_null_values_stored_as_null() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
@@ -1424,7 +1424,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_bulk_update_matching_rows_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
         use std::collections::HashMap;
 
         let cfg = pg_config!();
@@ -1480,7 +1480,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_bulk_delete_matching_rows_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
 
         let cfg = pg_config!();
         let adapter = connected_adapter(&cfg).await;
@@ -1627,7 +1627,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_test_connection_valid_credentials_returns_true() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1645,7 +1645,7 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_test_connection_wrong_password_returns_false() {
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapters::postgres::PostgresAdapter;
 
         let cfg = pg_config!();
         let adapter = PostgresAdapter::new(cfg.clone());
@@ -1662,15 +1662,15 @@ mod postgres_tests {
 
     #[tokio::test]
     async fn test_postgres_test_connection_unreachable_host_returns_false() {
-        use arni_data::adapter::ConnectionConfig;
-        use arni_data::adapters::postgres::PostgresAdapter;
+        use arni::adapter::ConnectionConfig;
+        use arni::adapters::postgres::PostgresAdapter;
         use std::collections::HashMap;
 
         // Port 1 on localhost is refused instantly
         let cfg = ConnectionConfig {
             id: "unreachable".to_string(),
             name: "unreachable".to_string(),
-            db_type: arni_data::adapter::DatabaseType::Postgres,
+            db_type: arni::adapter::DatabaseType::Postgres,
             host: Some("127.0.0.1".to_string()),
             port: Some(1),
             database: "test_db".to_string(),

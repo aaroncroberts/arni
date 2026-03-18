@@ -8,14 +8,14 @@
 //! This module is only available when the `postgres` feature is enabled:
 //!
 //! ```toml
-//! arni-data = { version = "0.1", features = ["postgres"] }
+//! arni = { version = "0.1", features = ["postgres"] }
 //! ```
 //!
 //! # Examples
 //!
 //! ```ignore
-//! use arni_data::adapters::postgres::PostgresAdapter;
-//! use arni_data::adapter::{Connection, ConnectionConfig, DatabaseType};
+//! use arni::adapters::postgres::PostgresAdapter;
+//! use arni::adapter::{Connection, ConnectionConfig, DatabaseType};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

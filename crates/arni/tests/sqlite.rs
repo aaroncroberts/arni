@@ -12,9 +12,9 @@ mod common;
 
 #[cfg(feature = "sqlite")]
 mod sqlite_tests {
-    use arni_data::adapter::{Connection as ConnectionTrait, ConnectionConfig, DatabaseType};
-    use arni_data::adapters::sqlite::SqliteAdapter;
-    use arni_data::FilterExpr;
+    use arni::adapter::{Connection as ConnectionTrait, ConnectionConfig, DatabaseType};
+    use arni::adapters::sqlite::SqliteAdapter;
+    use arni::FilterExpr;
     use std::collections::HashMap;
 
     fn memory_config() -> ConnectionConfig {
@@ -74,7 +74,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_execute_query_before_connect_returns_error() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let adapter = SqliteAdapter::new(cfg);
@@ -87,7 +87,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_execute_select_1() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -102,7 +102,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_create_table_and_insert() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -135,7 +135,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_list_tables_empty_db() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -152,7 +152,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_list_tables_after_create() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -174,7 +174,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_describe_table() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -218,7 +218,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_read_table_returns_dataframe() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -244,7 +244,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_query_df_returns_dataframe() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -260,7 +260,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_read_table_not_connected_returns_error() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let adapter = SqliteAdapter::new(cfg);
@@ -272,7 +272,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_list_databases() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -288,7 +288,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_invalid_sql_returns_error() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -300,7 +300,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_database_type() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let adapter = SqliteAdapter::new(cfg);
@@ -311,7 +311,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_export_dataframe_not_connected_returns_error() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -324,7 +324,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_export_dataframe_creates_and_inserts() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -350,7 +350,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_export_dataframe_replace() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -376,7 +376,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_export_dataframe_empty_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -398,7 +398,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_insert_basic() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -422,7 +422,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_insert_empty_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -440,7 +440,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_insert_mismatch_returns_error() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -456,7 +456,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_update_basic() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
         use std::collections::HashMap;
 
         let cfg = memory_config();
@@ -490,7 +490,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_update_empty_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -506,7 +506,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_delete_basic() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -537,7 +537,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_delete_empty_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -553,7 +553,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_get_view_definition() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -587,7 +587,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_get_view_definition_nonexistent() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = SqliteAdapter::new(cfg);
@@ -613,7 +613,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_round_trip_schema_matches() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -662,7 +662,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_round_trip_values_preserved() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -713,7 +713,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_round_trip_replace_true_no_duplicates() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -745,7 +745,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_round_trip_replace_false_appends() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -777,7 +777,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_round_trip_empty_dataframe() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -828,7 +828,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_insert_multi_row_returns_count() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let adapter = connected_memory().await;
 
@@ -860,7 +860,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_insert_empty_rows_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let adapter = connected_memory().await;
         let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_empty").await;
@@ -879,7 +879,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_insert_null_value_round_trips() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let adapter = connected_memory().await;
         let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_null").await;
@@ -908,7 +908,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_update_matching_rows_only() {
-        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use arni::adapter::{DbAdapter, FilterExpr, QueryValue};
         use std::collections::HashMap;
 
         let adapter = connected_memory().await;
@@ -946,7 +946,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_delete_matching_rows_only() {
-        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use arni::adapter::{DbAdapter, FilterExpr, QueryValue};
 
         let adapter = connected_memory().await;
         let _ = DbAdapter::execute_query(&adapter, "DROP TABLE IF EXISTS bk_del").await;
@@ -984,7 +984,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_update_with_and_filter_matches_only_correct_rows() {
-        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use arni::adapter::{DbAdapter, FilterExpr, QueryValue};
         use std::collections::HashMap;
 
         let adapter = connected_memory().await;
@@ -1039,7 +1039,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_delete_with_or_filter_removes_correct_rows() {
-        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use arni::adapter::{DbAdapter, FilterExpr, QueryValue};
 
         let adapter = connected_memory().await;
         DbAdapter::execute_query(
@@ -1079,7 +1079,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_delete_in_empty_list_deletes_zero_rows() {
-        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use arni::adapter::{DbAdapter, FilterExpr, QueryValue};
 
         let adapter = connected_memory().await;
         DbAdapter::execute_query(
@@ -1112,7 +1112,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_bulk_update_is_null_and_is_not_null_filters() {
-        use arni_data::adapter::{DbAdapter, FilterExpr, QueryValue};
+        use arni::adapter::{DbAdapter, FilterExpr, QueryValue};
         use std::collections::HashMap;
 
         let adapter = connected_memory().await;
@@ -1153,7 +1153,7 @@ mod sqlite_tests {
 
     #[tokio::test]
     async fn test_sqlite_get_server_info_version_non_empty() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let adapter = connected_memory().await;
         let info = DbAdapter::get_server_info(&adapter)

@@ -23,7 +23,7 @@ pub type Result<T> = std::result::Result<T, crate::DataError>;
 ///
 /// # Examples
 /// ```
-/// use arni_data::adapter::PoolConfig;
+/// use arni::adapter::PoolConfig;
 /// let cfg = PoolConfig { max_connections: 20, acquire_timeout_secs: 10, ..Default::default() };
 /// assert_eq!(cfg.min_connections, 1);
 /// ```
@@ -105,7 +105,7 @@ pub enum TableSearchMode {
 ///
 /// # Examples
 /// ```
-/// use arni_data::adapter::escape_like_pattern;
+/// use arni::adapter::escape_like_pattern;
 /// assert_eq!(escape_like_pattern("PS_"), "PS\\_");
 /// assert_eq!(escape_like_pattern("50%"), "50\\%");
 /// assert_eq!(escape_like_pattern("plain"), "plain");
@@ -200,7 +200,7 @@ impl fmt::Display for QueryValue {
 /// # Examples
 ///
 /// ```ignore
-/// use arni_data::{FilterExpr, QueryValue};
+/// use arni::{FilterExpr, QueryValue};
 ///
 /// // id = 42
 /// let f = FilterExpr::Eq("id".to_string(), QueryValue::Int(42));
@@ -520,7 +520,7 @@ pub struct ProcedureInfo {
 /// # Examples
 ///
 /// ```ignore
-/// use arni_data::adapter::{Connection, ConnectionConfig, DatabaseType};
+/// use arni::adapter::{Connection, ConnectionConfig, DatabaseType};
 ///
 /// async fn example(mut conn: impl Connection) -> Result<()> {
 ///     // Establish connection
@@ -709,8 +709,8 @@ impl<'a> AdapterMetadata<'a> {
     ///
     /// # Examples
     /// ```no_run
-    /// # async fn example(adapter: &dyn arni_data::DbAdapter) -> arni_data::Result<()> {
-    /// use arni_data::adapter::TableSearchMode;
+    /// # async fn example(adapter: &dyn arni::DbAdapter) -> arni::Result<()> {
+    /// use arni::adapter::TableSearchMode;
     /// let metadata = adapter.metadata();
     /// // find all tables whose name starts with the literal string "PS_"
     /// let tables = metadata.find_tables("PS_", None, TableSearchMode::StartsWith).await?;
@@ -743,7 +743,7 @@ impl<'a> AdapterMetadata<'a> {
 /// # Examples
 ///
 /// ```ignore
-/// use arni_data::adapter::{DbAdapter, ConnectionConfig};
+/// use arni::adapter::{DbAdapter, ConnectionConfig};
 ///
 /// async fn example(adapter: &mut impl DbAdapter) -> Result<()> {
 ///     let config = ConnectionConfig { /* ... */ };

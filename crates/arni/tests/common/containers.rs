@@ -30,7 +30,7 @@
 
 #![allow(dead_code)]
 
-use arni_data::adapter::{ConnectionConfig, DatabaseType};
+use arni::adapter::{ConnectionConfig, DatabaseType};
 use std::collections::HashMap;
 
 // ─── Dev-container constants ───────────────────────────────────────────────────
@@ -265,7 +265,7 @@ fn build_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arni_data::adapter::DatabaseType;
+    use arni::adapter::DatabaseType;
 
     #[test]
     fn test_postgres_config_defaults() {

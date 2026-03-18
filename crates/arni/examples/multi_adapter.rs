@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use arni_data::{
+use arni::{
     adapters::duckdb::DuckDbAdapter, adapters::sqlite::SqliteAdapter, ConnectionConfig,
     DatabaseType, DbAdapter,
 };

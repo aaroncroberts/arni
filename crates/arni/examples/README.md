@@ -50,7 +50,7 @@ The same code works with a server-based adapter — only the config and import c
 
 ```rust
 // swap DuckDbAdapter for PostgresAdapter
-use arni_data::adapters::postgres::PostgresAdapter;
+use arni::adapters::postgres::PostgresAdapter;
 
 let config = ConnectionConfig {
     id: "prod".to_string(),

@@ -6,9 +6,9 @@ mod filter;
 mod json_output;
 mod logging_config;
 
-use arni_data::adapter::{ConnectionConfig, DatabaseType, QueryValue, TableSearchMode};
+use arni::adapter::{ConnectionConfig, DatabaseType, QueryValue, TableSearchMode};
 use filter::{json_to_query_value, parse_bulk_insert_data, parse_filter_json};
-use arni_data::export::{to_bytes, to_file, DataFormat};
+use arni::export::{to_bytes, to_file, DataFormat};
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
 use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as CTable};
@@ -1788,7 +1788,7 @@ fn df_to_table(df: &DataFrame) -> String {
 }
 
 /// Print a formatted describe-table view.
-fn print_table_info(info: &arni_data::TableInfo) {
+fn print_table_info(info: &arni::TableInfo) {
     const W_NAME: usize = 25;
     const W_TYPE: usize = 20;
 
@@ -1834,7 +1834,7 @@ fn print_table_info(info: &arni_data::TableInfo) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arni_data::adapter::{FilterExpr, QueryValue};
+    use arni::adapter::{FilterExpr, QueryValue};
     use crate::filter::{json_to_query_value, parse_bulk_insert_data, parse_filter_json};
 
     // ── parse_db_type ────────────────────────────────────────────────────────

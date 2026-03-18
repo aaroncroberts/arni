@@ -1,7 +1,7 @@
 //! Shared utilities used by multiple SQL adapters.
 //!
 //! Functions here avoid duplication across the per-database adapter modules.
-//! They are `pub(crate)` — internal to arni-data, not part of the public API.
+//! They are `pub(crate)` — internal to arni, not part of the public API.
 
 use crate::adapter::QueryValue;
 use crate::DataError;

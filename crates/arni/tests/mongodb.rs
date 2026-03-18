@@ -14,7 +14,7 @@ mod common;
 #[cfg(feature = "mongodb")]
 mod mongodb_tests {
     use super::common;
-    use arni_data::adapter::{Connection as ConnectionTrait, DbAdapter};
+    use arni::adapter::{Connection as ConnectionTrait, DbAdapter};
 
     macro_rules! mongo_config {
         () => {{
@@ -35,7 +35,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_connect_and_disconnect() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -52,7 +52,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_disconnect_when_not_connected_is_ok() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let mut adapter = MongoDbAdapter::new(cfg);
@@ -65,7 +65,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_reconnect_after_disconnect() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -90,7 +90,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_health_check_before_connect_returns_false() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
@@ -104,7 +104,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_health_check_after_connect() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -121,7 +121,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_health_check_after_disconnect_returns_false() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -144,7 +144,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_is_connected_initially_false() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
@@ -156,7 +156,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_is_connected_state_transitions() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -186,8 +186,8 @@ mod mongodb_tests {
 
     #[test]
     fn test_mongodb_database_type_no_connection() {
-        use arni_data::adapter::{ConnectionConfig, DatabaseType};
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapter::{ConnectionConfig, DatabaseType};
+        use arni::adapters::mongodb::MongoDbAdapter;
         use std::collections::HashMap;
 
         let config = ConnectionConfig {
@@ -208,8 +208,8 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_database_type_with_config_macro() {
-        use arni_data::adapter::DatabaseType;
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapter::DatabaseType;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
@@ -220,7 +220,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_list_databases_after_connect() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -252,7 +252,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_list_databases_before_connect_returns_error() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
@@ -268,7 +268,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_list_tables_returns_collections() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -287,7 +287,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_list_tables_before_connect_returns_error() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
@@ -301,7 +301,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_list_tables_schema_param_ignored() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -325,7 +325,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_execute_query_before_connect_returns_error() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
@@ -341,7 +341,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_execute_query_invalid_json_returns_error() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -368,7 +368,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_execute_query_missing_collection_field_returns_error() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -387,7 +387,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_execute_query_empty_collection_returns_empty_result() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -412,7 +412,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_execute_query_with_filter() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -437,7 +437,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_execute_query_with_limit() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -460,7 +460,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_execute_query_system_collection_invalid_returns_error() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -483,7 +483,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_get_views_returns_empty_vec() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -504,7 +504,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_get_foreign_keys_returns_empty_vec() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -525,7 +525,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_list_stored_procedures_returns_empty_vec() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -546,7 +546,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_describe_table_on_empty_collection_returns_empty_columns() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -576,7 +576,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_execute_query_before_connect_error_message() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
@@ -597,7 +597,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_list_tables_before_connect_error_message() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let adapter = MongoDbAdapter::new(cfg);
@@ -617,8 +617,8 @@ mod mongodb_tests {
 
     #[test]
     fn test_mongodb_config_accessor() {
-        use arni_data::adapter::{ConnectionConfig, DatabaseType};
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapter::{ConnectionConfig, DatabaseType};
+        use arni::adapters::mongodb::MongoDbAdapter;
         use std::collections::HashMap;
 
         let config = ConnectionConfig {
@@ -645,7 +645,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_config_preserved_after_connect() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -664,7 +664,7 @@ mod mongodb_tests {
         );
         assert_eq!(
             returned.db_type,
-            arni_data::adapter::DatabaseType::MongoDB,
+            arni::adapter::DatabaseType::MongoDB,
             "config db_type should remain MongoDB"
         );
     }
@@ -673,7 +673,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_get_view_definition() {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        use arni::adapters::mongodb::MongoDbAdapter;
 
         let cfg = mongo_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -697,9 +697,9 @@ mod mongodb_tests {
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     async fn connected_mongo(
-        cfg: &arni_data::adapter::ConnectionConfig,
-    ) -> arni_data::adapters::mongodb::MongoDbAdapter {
-        use arni_data::adapters::mongodb::MongoDbAdapter;
+        cfg: &arni::adapter::ConnectionConfig,
+    ) -> arni::adapters::mongodb::MongoDbAdapter {
+        use arni::adapters::mongodb::MongoDbAdapter;
         let password = cfg.parameters.get("password").cloned();
         let mut adapter = MongoDbAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, cfg, password.as_deref())
@@ -717,7 +717,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_bulk_insert_multi_row_returns_count() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = mongo_config!();
         let adapter = connected_mongo(&cfg).await;
@@ -752,7 +752,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_bulk_insert_null_value_stored() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = mongo_config!();
         let adapter = connected_mongo(&cfg).await;
@@ -770,7 +770,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_bulk_update_matching_documents_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
         use std::collections::HashMap;
 
         let cfg = mongo_config!();
@@ -803,7 +803,7 @@ mod mongodb_tests {
 
     #[tokio::test]
     async fn test_mongodb_bulk_delete_matching_documents_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
 
         let cfg = mongo_config!();
         let adapter = connected_mongo(&cfg).await;

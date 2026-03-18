@@ -1,11 +1,11 @@
-//! Error types for arni-data operations
+//! Error types for arni operations
 //!
 //! This module provides the [`DataError`] type for representing all possible errors
 //! that can occur during database operations.
 
 use thiserror::Error;
 
-/// Result type for arni-data operations
+/// Result type for arni operations
 pub type Result<T> = std::result::Result<T, DataError>;
 
 /// Main error type for data operations

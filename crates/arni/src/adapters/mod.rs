@@ -16,10 +16,10 @@
 //!
 //! ```toml
 //! # Enable specific database support
-//! arni-data = { version = "0.1", features = ["postgres"] }
+//! arni = { version = "0.1", features = ["postgres"] }
 //!
 //! # Or enable all databases
-//! arni-data = { version = "0.1", features = ["all-databases"] }
+//! arni = { version = "0.1", features = ["all-databases"] }
 //! ```
 
 pub(crate) mod common;

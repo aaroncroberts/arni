@@ -166,36 +166,6 @@ dependencies = [
 name = "arni"
 version = "0.1.0"
 dependencies = [
- "arni-data",
-]
-
-[[package]]
-name = "arni-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arni-data",
- "arni-logging",
- "clap",
- "colored",
- "comfy-table",
- "figlet-rs",
- "polars",
- "rpassword",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "arni-data"
-version = "0.1.0"
-dependencies = [
  "anyhow",
  "arni-logging",
  "async-trait",
@@ -219,6 +189,29 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+]
+
+[[package]]
+name = "arni-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arni",
+ "arni-logging",
+ "clap",
+ "colored",
+ "comfy-table",
+ "figlet-rs",
+ "polars",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

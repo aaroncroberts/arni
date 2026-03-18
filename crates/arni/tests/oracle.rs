@@ -16,7 +16,7 @@ mod common;
 #[cfg(feature = "oracle")]
 mod oracle_tests {
     use super::common;
-    use arni_data::adapter::{Connection as ConnectionTrait, DbAdapter};
+    use arni::adapter::{Connection as ConnectionTrait, DbAdapter};
 
     macro_rules! oracle_config {
         () => {{
@@ -38,7 +38,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_connect_and_disconnect() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -56,7 +56,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_disconnect_when_not_connected_is_ok() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let mut adapter = OracleAdapter::new(cfg);
@@ -70,7 +70,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_reconnect_after_disconnect() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -96,7 +96,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_health_check_before_connect_returns_false() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let adapter = OracleAdapter::new(cfg);
@@ -111,7 +111,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_health_check_after_connect() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -129,7 +129,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_health_check_after_disconnect_returns_false() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -150,7 +150,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_is_connected_state_transitions() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -180,9 +180,9 @@ mod oracle_tests {
 
     #[test]
     fn test_oracle_database_type() {
-        use arni_data::adapter::DatabaseType;
-        use arni_data::adapter::{ConnectionConfig, DbAdapter};
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapter::DatabaseType;
+        use arni::adapter::{ConnectionConfig, DbAdapter};
+        use arni::adapters::oracle::OracleAdapter;
         use std::collections::HashMap;
 
         let config = ConnectionConfig {
@@ -206,7 +206,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_execute_select_1_from_dual() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -226,7 +226,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_execute_multi_column_select_from_dual() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -246,7 +246,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_execute_null_from_dual() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -261,7 +261,7 @@ mod oracle_tests {
         assert_eq!(result.columns.len(), 1, "should have 1 column");
         assert_eq!(result.rows.len(), 1, "should have 1 row");
 
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
         assert_eq!(
             result.rows[0][0],
             QueryValue::Null,
@@ -274,7 +274,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_crud_lifecycle() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -380,7 +380,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_invalid_sql_returns_error() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -396,7 +396,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_select_nonexistent_table_returns_error() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -416,7 +416,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_execute_query_before_connect_returns_error() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let adapter = OracleAdapter::new(cfg);
@@ -433,8 +433,8 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_list_databases_returns_not_supported() {
-        use arni_data::adapters::oracle::OracleAdapter;
-        use arni_data::DataError;
+        use arni::adapters::oracle::OracleAdapter;
+        use arni::DataError;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -459,7 +459,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_list_tables_no_schema() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -479,7 +479,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_list_tables_with_schema() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -500,7 +500,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_list_tables_contains_created_table() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -548,7 +548,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_describe_table_columns() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -617,7 +617,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_describe_nonexistent_table_returns_error() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -640,7 +640,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_get_views_returns_vec() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -660,7 +660,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_get_views_contains_created_view() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -735,7 +735,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_get_indexes_returns_vec() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -796,7 +796,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_get_foreign_keys_returns_vec() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -871,7 +871,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_get_foreign_keys_empty_for_no_fk_table() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -918,7 +918,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_list_stored_procedures_returns_vec() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -938,7 +938,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_list_stored_procedures_language_is_plsql() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -991,7 +991,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_query_df_returns_dataframe() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1011,7 +1011,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_query_df_multi_row() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1083,8 +1083,8 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_number_type() {
-        use arni_data::adapter::QueryValue;
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapter::QueryValue;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1155,8 +1155,8 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_varchar2_type() {
-        use arni_data::adapter::QueryValue;
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapter::QueryValue;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1213,7 +1213,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_date_type() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1268,7 +1268,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_get_server_info() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1296,7 +1296,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_server_info_version_contains_oracle() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1323,7 +1323,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_get_view_definition() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1385,7 +1385,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_get_view_definition_nonexistent() {
-        use arni_data::adapters::oracle::OracleAdapter;
+        use arni::adapters::oracle::OracleAdapter;
 
         let cfg = oracle_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1408,9 +1408,9 @@ mod oracle_tests {
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     async fn connected_oracle(
-        cfg: &arni_data::adapter::ConnectionConfig,
-    ) -> arni_data::adapters::oracle::OracleAdapter {
-        use arni_data::adapters::oracle::OracleAdapter;
+        cfg: &arni::adapter::ConnectionConfig,
+    ) -> arni::adapters::oracle::OracleAdapter {
+        use arni::adapters::oracle::OracleAdapter;
         let password = cfg.parameters.get("password").cloned();
         let mut adapter = OracleAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, cfg, password.as_deref())
@@ -1426,7 +1426,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_bulk_insert_multi_row_returns_count() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = oracle_config!();
         let adapter = connected_oracle(&cfg).await;
@@ -1502,7 +1502,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_bulk_insert_column_count_mismatch_returns_err() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = oracle_config!();
         let adapter = connected_oracle(&cfg).await;
@@ -1517,7 +1517,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_bulk_insert_null_value_round_trips() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = oracle_config!();
         let adapter = connected_oracle(&cfg).await;
@@ -1558,7 +1558,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_bulk_update_matching_rows_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
         use std::collections::HashMap;
 
         let cfg = oracle_config!();
@@ -1619,7 +1619,7 @@ mod oracle_tests {
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_bulk_delete_matching_rows_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
 
         let cfg = oracle_config!();
         let adapter = connected_oracle(&cfg).await;

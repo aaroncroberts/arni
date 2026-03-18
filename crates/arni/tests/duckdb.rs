@@ -12,9 +12,9 @@ mod common;
 
 #[cfg(feature = "duckdb")]
 mod duckdb_tests {
-    use arni_data::adapter::{Connection as ConnectionTrait, ConnectionConfig, DatabaseType};
-    use arni_data::adapters::duckdb::DuckDbAdapter;
-    use arni_data::FilterExpr;
+    use arni::adapter::{Connection as ConnectionTrait, ConnectionConfig, DatabaseType};
+    use arni::adapters::duckdb::DuckDbAdapter;
+    use arni::FilterExpr;
     use std::collections::HashMap;
 
     fn memory_config() -> ConnectionConfig {
@@ -91,7 +91,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_execute_query_before_connect_returns_error() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let adapter = DuckDbAdapter::new(cfg);
@@ -104,7 +104,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_execute_select_1() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -119,7 +119,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_create_table_and_insert() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -153,7 +153,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_list_tables_empty_db() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -170,7 +170,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_list_tables_after_create() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -192,7 +192,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_describe_table() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -234,7 +234,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_read_table_returns_dataframe() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -260,7 +260,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_query_df_returns_dataframe() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -276,7 +276,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_read_table_not_connected_returns_error() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let adapter = DuckDbAdapter::new(cfg);
@@ -288,7 +288,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_invalid_sql_returns_error() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -300,7 +300,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_database_type() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let adapter = DuckDbAdapter::new(cfg);
@@ -309,7 +309,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_arithmetic_query() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -332,7 +332,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_export_dataframe_not_connected_returns_error() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -353,7 +353,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_export_dataframe_creates_table_and_inserts() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -376,12 +376,12 @@ mod duckdb_tests {
         let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM export_basic")
             .await
             .unwrap();
-        assert_eq!(result.rows[0][0], arni_data::adapter::QueryValue::Int(3));
+        assert_eq!(result.rows[0][0], arni::adapter::QueryValue::Int(3));
     }
 
     #[tokio::test]
     async fn test_duckdb_export_dataframe_replace() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -404,12 +404,12 @@ mod duckdb_tests {
         let result = DbAdapter::execute_query(&adapter, "SELECT COUNT(*) AS n FROM replace_test")
             .await
             .unwrap();
-        assert_eq!(result.rows[0][0], arni_data::adapter::QueryValue::Int(2));
+        assert_eq!(result.rows[0][0], arni::adapter::QueryValue::Int(2));
     }
 
     #[tokio::test]
     async fn test_duckdb_export_dataframe_empty_df_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -433,7 +433,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_export_dataframe_with_nulls() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -457,7 +457,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_insert_not_connected_returns_error() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let adapter = DuckDbAdapter::new(cfg);
@@ -473,7 +473,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_insert_empty_rows_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -492,7 +492,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_insert_empty_columns_returns_error() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -508,7 +508,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_insert_column_count_mismatch_returns_error() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -531,7 +531,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_insert_basic() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -562,7 +562,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_insert_with_nulls() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -589,7 +589,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_update_empty_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -603,7 +603,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_update_basic() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
         use std::collections::HashMap;
 
         let cfg = memory_config();
@@ -646,7 +646,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_delete_empty_returns_zero() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -660,7 +660,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_delete_basic() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -697,7 +697,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_bulk_delete_multiple_clauses() {
-        use arni_data::adapter::{DbAdapter, QueryValue};
+        use arni::adapter::{DbAdapter, QueryValue};
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -734,7 +734,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_get_view_definition() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -768,7 +768,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_get_view_definition_nonexistent() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -794,7 +794,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_round_trip_schema_matches() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -841,7 +841,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_round_trip_values_preserved() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -893,7 +893,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_round_trip_replace_true_no_duplicates() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -923,7 +923,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_round_trip_replace_false_appends() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -953,7 +953,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_round_trip_empty_dataframe() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
         use polars::prelude::*;
 
         let cfg = memory_config();
@@ -993,7 +993,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_analytic_row_number_query() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);
@@ -1029,7 +1029,7 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_get_server_info_version_non_empty() {
-        use arni_data::adapter::DbAdapter;
+        use arni::adapter::DbAdapter;
 
         let cfg = memory_config();
         let mut adapter = DuckDbAdapter::new(cfg);

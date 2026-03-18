@@ -14,7 +14,7 @@ mod common;
 #[cfg(feature = "mssql")]
 mod mssql_tests {
     use super::common;
-    use arni_data::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
+    use arni::adapter::{Connection as ConnectionTrait, DatabaseType, DbAdapter};
 
     macro_rules! mssql_config {
         () => {{
@@ -65,7 +65,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_connect_and_disconnect() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -82,7 +82,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_reconnect_after_disconnect() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -110,7 +110,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_health_check_before_connect_returns_false() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let adapter = SqlServerAdapter::new(cfg.clone());
@@ -125,7 +125,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_health_check_after_connect() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -144,7 +144,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_is_connected_before_connect() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let adapter = SqlServerAdapter::new(cfg.clone());
@@ -159,7 +159,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_database_type() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let adapter = SqlServerAdapter::new(cfg.clone());
@@ -174,7 +174,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_execute_select_1() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -192,7 +192,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_execute_multi_column_select() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -215,7 +215,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_execute_select_with_null_values() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -238,7 +238,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_execute_empty_result_set() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -280,7 +280,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_create_table_insert_select_drop() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -324,7 +324,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_full_crud_lifecycle() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -413,7 +413,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_invalid_sql_returns_error() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -428,7 +428,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_select_from_nonexistent_table_returns_error() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -450,7 +450,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_query_before_connect_returns_error() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         // Intentionally do NOT call connect.
@@ -467,7 +467,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_server_info() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -491,7 +491,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_server_info_version_contains_sql_server() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -517,7 +517,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_list_tables() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -535,7 +535,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_list_tables_includes_created_table() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -570,7 +570,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_list_tables_dbo_schema_explicit() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -605,7 +605,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_describe_table() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -673,7 +673,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_describe_nonexistent_table_returns_error() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -695,7 +695,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_views() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -713,7 +713,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_views_includes_created_view() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -764,7 +764,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_indexes() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -821,7 +821,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_indexes_primary_key_present() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -861,7 +861,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_foreign_keys() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -930,7 +930,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_foreign_keys_no_fks_returns_empty() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -969,7 +969,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_list_databases() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -990,7 +990,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_list_databases_is_vec_of_strings() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1013,7 +1013,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_list_stored_procedures() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1032,7 +1032,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_list_stored_procedures_none_schema() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1053,7 +1053,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_query_df_returns_correct_shape() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1097,7 +1097,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_query_df_select_1() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1118,7 +1118,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_type_int_nvarchar_float_bit() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1169,7 +1169,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_type_null_column_handling() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1216,7 +1216,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_type_bit_values() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1259,7 +1259,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_type_nvarchar_unicode() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1308,7 +1308,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_view_definition() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1357,7 +1357,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_get_view_definition_nonexistent() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1381,9 +1381,9 @@ mod mssql_tests {
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     async fn connected_mssql(
-        cfg: &arni_data::adapter::ConnectionConfig,
-    ) -> arni_data::adapters::mssql::SqlServerAdapter {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        cfg: &arni::adapter::ConnectionConfig,
+    ) -> arni::adapters::mssql::SqlServerAdapter {
+        use arni::adapters::mssql::SqlServerAdapter;
         let password = cfg.parameters.get("password").cloned();
         let mut adapter = SqlServerAdapter::new(cfg.clone());
         DbAdapter::connect(&mut adapter, cfg, password.as_deref())
@@ -1398,7 +1398,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_bulk_insert_multi_row_returns_count() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = mssql_config!();
         let adapter = connected_mssql(&cfg).await;
@@ -1476,7 +1476,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_bulk_insert_column_count_mismatch_returns_err() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = mssql_config!();
         let adapter = connected_mssql(&cfg).await;
@@ -1492,7 +1492,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_bulk_insert_null_value_round_trips() {
-        use arni_data::adapter::QueryValue;
+        use arni::adapter::QueryValue;
 
         let cfg = mssql_config!();
         let adapter = connected_mssql(&cfg).await;
@@ -1534,7 +1534,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_bulk_update_matching_rows_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
         use std::collections::HashMap;
 
         let cfg = mssql_config!();
@@ -1593,7 +1593,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_bulk_delete_matching_rows_only() {
-        use arni_data::adapter::{FilterExpr, QueryValue};
+        use arni::adapter::{FilterExpr, QueryValue};
 
         let cfg = mssql_config!();
         let adapter = connected_mssql(&cfg).await;
@@ -1736,7 +1736,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_test_connection_valid_credentials_returns_true() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let password = cfg.parameters.get("password").cloned();
@@ -1754,7 +1754,7 @@ mod mssql_tests {
 
     #[tokio::test]
     async fn test_mssql_test_connection_wrong_password_returns_false() {
-        use arni_data::adapters::mssql::SqlServerAdapter;
+        use arni::adapters::mssql::SqlServerAdapter;
 
         let cfg = mssql_config!();
         let adapter = SqlServerAdapter::new(cfg.clone());

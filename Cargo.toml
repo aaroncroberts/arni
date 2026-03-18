@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/arni",
     "crates/arni-cli",
-    "crates/arni-data",
     "crates/arni-logging",
 ]
 

@@ -8,14 +8,14 @@
 //! This module is only available when the `oracle` feature is enabled:
 //!
 //! ```toml
-//! arni-data = { version = "0.1", features = ["oracle"] }
+//! arni = { version = "0.1", features = ["oracle"] }
 //! ```
 //!
 //! # Examples
 //!
 //! ```ignore
-//! use arni_data::adapters::oracle::OracleAdapter;
-//! use arni_data::adapter::{Connection, ConnectionConfig, DatabaseType};
+//! use arni::adapters::oracle::OracleAdapter;
+//! use arni::adapter::{Connection, ConnectionConfig, DatabaseType};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

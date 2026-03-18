@@ -22,7 +22,7 @@
 
 use std::error::Error;
 
-use arni_data::adapter::{FilterExpr, QueryValue};
+use arni::adapter::{FilterExpr, QueryValue};
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
