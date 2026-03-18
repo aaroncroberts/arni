@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "arni": {
+      "command": "arni",
+      "args": ["mcp"],
+      "env": {
+        "RUST_LOG": "arni_mcp=info"
+      }
+    }
+  }
+}
