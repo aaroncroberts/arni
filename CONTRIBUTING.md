@@ -95,7 +95,7 @@ cargo test --lib --features "duckdb sqlite"
 ### Integration tests (in-memory databases, no server needed)
 
 ```bash
-cargo test --features "duckdb sqlite" -p arni-data
+cargo test --features "duckdb sqlite" -p arni
 ```
 
 ### Integration tests (server-based databases)
@@ -108,7 +108,7 @@ export TEST_POSTGRES_HOST=localhost TEST_POSTGRES_PORT=5432
 export TEST_POSTGRES_DATABASE=test_db
 export TEST_POSTGRES_USERNAME=test_user TEST_POSTGRES_PASSWORD=test_password
 
-cargo test --features postgres -p arni-data --test postgres -- --include-ignored
+cargo test --features postgres -p arni --test postgres -- --include-ignored
 ```
 
 Replace `postgres` with `mysql`, `mssql`, `mongodb`, or `oracle` for other adapters. See [`docs/architecture.md`](docs/architecture.md#testing-strategy) for the complete variable list.
@@ -175,7 +175,7 @@ GitHub CI will run the full test matrix (Ubuntu + macOS, stable + nightly Rust) 
 The architecture is designed to make new adapters straightforward. See the step-by-step guide in [`docs/architecture.md`](docs/architecture.md#implementing-a-new-adapter):
 
 1. Add the driver as an optional Cargo dependency
-2. Create `crates/arni-data/src/adapters/<dbname>.rs` using the provided skeleton
+2. Create `crates/arni/src/adapters/<dbname>.rs` using the provided skeleton
 3. Register the module in `adapters/mod.rs` and `lib.rs`
 4. Add integration tests in `tests/<dbname>.rs`
 

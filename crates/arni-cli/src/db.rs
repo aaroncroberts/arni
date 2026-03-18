@@ -5,7 +5,7 @@
 //! `main.rs` free of per-database imports.
 
 use anyhow::{anyhow, Result};
-use arni_data::{ConnectionConfig, DatabaseType, DbAdapter, SharedAdapter};
+use arni::{ConnectionConfig, DatabaseType, DbAdapter, SharedAdapter};
 use std::io::IsTerminal;
 
 use crate::config::ConfigStore;
@@ -23,19 +23,13 @@ pub fn create_adapter(
     config: ConnectionConfig,
 ) -> Result<Box<dyn DbAdapter + Send + Sync + 'static>> {
     let adapter: Box<dyn DbAdapter + Send + Sync + 'static> = match config.db_type {
-        DatabaseType::Postgres => {
-            Box::new(arni_data::adapters::postgres::PostgresAdapter::new(config))
-        }
-        DatabaseType::MySQL => Box::new(arni_data::adapters::mysql::MySqlAdapter::new(config)),
-        DatabaseType::SQLite => Box::new(arni_data::adapters::sqlite::SqliteAdapter::new(config)),
-        DatabaseType::MongoDB => {
-            Box::new(arni_data::adapters::mongodb::MongoDbAdapter::new(config))
-        }
-        DatabaseType::SQLServer => {
-            Box::new(arni_data::adapters::mssql::SqlServerAdapter::new(config))
-        }
-        DatabaseType::Oracle => Box::new(arni_data::adapters::oracle::OracleAdapter::new(config)),
-        DatabaseType::DuckDB => Box::new(arni_data::adapters::duckdb::DuckDbAdapter::new(config)),
+        DatabaseType::Postgres => Box::new(arni::adapters::postgres::PostgresAdapter::new(config)),
+        DatabaseType::MySQL => Box::new(arni::adapters::mysql::MySqlAdapter::new(config)),
+        DatabaseType::SQLite => Box::new(arni::adapters::sqlite::SqliteAdapter::new(config)),
+        DatabaseType::MongoDB => Box::new(arni::adapters::mongodb::MongoDbAdapter::new(config)),
+        DatabaseType::SQLServer => Box::new(arni::adapters::mssql::SqlServerAdapter::new(config)),
+        DatabaseType::Oracle => Box::new(arni::adapters::oracle::OracleAdapter::new(config)),
+        DatabaseType::DuckDB => Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config)),
     };
     Ok(adapter)
 }

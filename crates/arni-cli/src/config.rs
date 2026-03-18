@@ -29,7 +29,7 @@
 //! ```
 
 use anyhow::{bail, Context, Result};
-use arni_data::adapter::{ConnectionConfig, DatabaseType, PoolConfig};
+use arni::adapter::{ConnectionConfig, DatabaseType, PoolConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
