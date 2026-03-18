@@ -1,0 +1,38 @@
+[package]
+name = "arni-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP server for arni — exposes all database operations as AI-callable tools"
+keywords = ["mcp", "database", "ai", "claude", "sql"]
+categories = ["database"]
+
+[dependencies]
+# Local
+arni = { path = "../arni", features = ["all-databases"] }
+arni-logging = { path = "../arni-logging" }
+
+# MCP SDK
+rmcp = { version = "0.12", features = ["macros", "server"] }
+
+# Async
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "io-std"] }
+async-trait.workspace = true
+
+# Serialisation + schema generation
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+schemars = { version = "1", features = ["derive"] }
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
