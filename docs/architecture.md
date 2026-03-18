@@ -9,9 +9,7 @@ This document explains how arni is structured internally and serves as the refer
 ```text
 arni/
 ├── crates/
-│   ├── arni/                      # Public re-export facade (users depend on this)
-│   │   └── src/lib.rs             # pub use arni_data::* — all code lives in arni-data
-│   ├── arni-data/                 # Core library (implementation)
+│   ├── arni/                      # Core library crate (add this to your Cargo.toml)
 │   │   ├── src/
 │   │   │   ├── adapter.rs         # DbAdapter trait, FilterExpr, supporting types
 │   │   │   ├── adapters/
@@ -22,15 +20,18 @@ arni/
 │   │   │   │   ├── oracle.rs      # Oracle adapter (oracle-rs)
 │   │   │   │   ├── postgres.rs    # PostgreSQL adapter (tokio-postgres)
 │   │   │   │   └── sqlite.rs      # SQLite adapter (sqlx)
-│   │   │   ├── config/            # ArniConfig, ConfigProfile (YAML/TOML loader)
+│   │   │   ├── config.rs          # ArniConfig, ConfigProfile (YAML/TOML loader)
+│   │   │   ├── registry.rs        # ConnectionRegistry — shared adapter pool
 │   │   │   ├── error.rs           # DataError enum
 │   │   │   └── lib.rs             # Re-exports: DbAdapter, QueryValue, FilterExpr, …
 │   │   ├── examples/              # Runnable examples
 │   │   └── tests/                 # Integration tests (per adapter)
-│   └── arni-cli/                  # Command-line interface
-│       └── src/
-│           ├── main.rs            # clap commands: connect, query, export, metadata, dev
-│           └── config.rs          # ~/.arni/connections.yml loader
+│   ├── arni-cli/                  # Command-line interface
+│   │   └── src/
+│   │       ├── main.rs            # clap commands: connect, query, export, metadata, mcp
+│   │       └── config.rs          # ~/.arni/connections.yml loader
+│   ├── arni-mcp/                  # MCP server — exposes arni as AI tool calls
+│   └── arni-logging/              # Structured tracing/logging infrastructure
 ├── docs/                          # This guide and other documentation
 ├── scripts/                       # Dev scripts, init SQL, coverage
 └── compose.yml                    # Docker/Podman dev databases
@@ -92,7 +93,7 @@ The `Connection` trait (separate from `DbAdapter`) handles only the connection l
 
 ## Core Types
 
-All types are defined in `crates/arni-data/src/adapter.rs` and re-exported from `arni-data`.
+All types are defined in `crates/arni/src/adapter.rs` and re-exported from the `arni` crate.
 
 ### `ConnectionConfig`
 
@@ -241,7 +242,7 @@ Each database driver is gated behind a Cargo feature to keep compile times and b
 arni = { version = "0.1", features = ["duckdb", "postgres"] }
 ```
 
-In `crates/arni-data/Cargo.toml`:
+In `crates/arni/Cargo.toml`:
 
 ```toml
 [features]
@@ -266,7 +267,7 @@ Adding support for a new database requires four steps.
 
 ### Step 1: Add the driver dependency
 
-In `crates/arni-data/Cargo.toml`:
+In `crates/arni/Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -278,7 +279,7 @@ mydb = ["dep:mydb-driver"]
 
 ### Step 2: Create the adapter file
 
-Create `crates/arni-data/src/adapters/mydb.rs`. Start with this skeleton — fill in each method one by one:
+Create `crates/arni/src/adapters/mydb.rs`. Start with this skeleton — fill in each method one by one:
 
 ```rust
 use crate::adapter::{
@@ -351,14 +352,14 @@ impl DbAdapter for MyDbAdapter {
 
 ### Step 3: Register the adapter
 
-In `crates/arni-data/src/adapters/mod.rs`:
+In `crates/arni/src/adapters/mod.rs`:
 
 ```rust
 #[cfg(feature = "mydb")]
 pub mod mydb;
 ```
 
-In `crates/arni-data/src/lib.rs` (optional convenience re-export):
+In `crates/arni/src/lib.rs` (optional convenience re-export):
 
 ```rust
 #[cfg(feature = "mydb")]
@@ -367,15 +368,15 @@ pub use adapters::mydb::MyDbAdapter;
 
 ### Step 4: Add tests
 
-Create `crates/arni-data/tests/mydb.rs`. The pattern follows `tests/duckdb.rs`:
+Create `crates/arni/tests/mydb.rs`. The pattern follows `tests/duckdb.rs`:
 
 ```rust
 #[cfg(feature = "mydb")]
 mod mydb_tests {
-    use arni_data::adapter::{Connection as ConnectionTrait, DbAdapter, DatabaseType};
-    use arni_data::adapters::mydb::MyDbAdapter;
+    use arni::adapter::{Connection as ConnectionTrait, DbAdapter, DatabaseType};
+    use arni::adapters::mydb::MyDbAdapter;
 
-    fn make_config() -> arni_data::ConnectionConfig {
+    fn make_config() -> arni::ConnectionConfig {
         // ...
     }
 

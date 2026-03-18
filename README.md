@@ -26,20 +26,21 @@ Arni is a multi-database adapter library for Rust that provides a unified interf
 ```text
 arni/
 ├── crates/
-│   ├── arni/                      # Public library crate — re-export facade (use this)
-│   │   └── src/lib.rs             # pub use arni_data::* — all implementation in arni-data
-│   ├── arni-data/                 # Core adapter library (implementation)
+│   ├── arni/                      # Core library crate (use this in your Cargo.toml)
 │   │   ├── src/
 │   │   │   ├── adapters/          # One file per database (postgres, mysql, sqlite, …)
 │   │   │   ├── adapter.rs         # DbAdapter trait, ConnectionConfig, shared types
+│   │   │   ├── config.rs          # ArniConfig, ConfigProfile — YAML/TOML loader
+│   │   │   ├── registry.rs        # ConnectionRegistry — shared adapter pool
 │   │   │   └── lib.rs             # Re-exports; feature-gated adapter modules
-│   │   ├── tests/                 # Integration tests (require live databases)
+│   │   ├── tests/                 # Integration tests (per adapter, require live databases)
 │   │   └── examples/              # Runnable usage examples
-│   ├── arni-cli/                  # `arni` binary — CLI wrapper around arni-data
+│   ├── arni-cli/                  # `arni` binary — CLI wrapper
 │   │   └── src/
 │   │       ├── main.rs            # Command definitions and handlers
 │   │       ├── db.rs              # Adapter factory + connect helper
 │   │       └── config.rs          # YAML connection profile store
+│   ├── arni-mcp/                  # MCP server — exposes arni as AI tool calls
 │   └── arni-logging/              # Structured logging infrastructure
 ├── docs/                          # Architecture and usage documentation
 ├── scripts/                       # Dev/CI helper scripts
@@ -135,11 +136,11 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-See [`crates/arni-data/examples/quickstart.rs`](crates/arni-data/examples/quickstart.rs) for the full runnable version including schema introspection.
+See [`crates/arni/examples/quickstart.rs`](crates/arni/examples/quickstart.rs) for the full runnable version including schema introspection.
 
 ## CLI Usage
 
-The `arni` binary wraps `arni-data` behind a YAML connection-profile system.
+The `arni` binary wraps the `arni` library behind a YAML connection-profile system.
 
 ### Setup
 
@@ -207,8 +208,10 @@ arni export my-pg \
 | Guide | Description |
 | :--- | :--- |
 | **[Getting Started](docs/getting-started.md)** | Five-minute introduction: first query, bulk ops, CLI tour, common errors |
+| **[Configuration Reference](docs/configuration.md)** | Full YAML/TOML schema, all fields, environment variable substitution |
+| **[MCP Server](docs/mcp.md)** | Connect Claude and other AI agents directly to your databases |
 | **[Architecture Guide](docs/architecture.md)** | Codebase internals, trait hierarchy, and how to add a new adapter |
-| **[Examples](crates/arni-data/examples/README.md)** | Runnable programs: analytics, multi-adapter comparison |
+| **[Examples](crates/arni/examples/README.md)** | Runnable programs: analytics, multi-adapter comparison |
 | **[Local Databases](docs/local-databases.md)** | Spin up PostgreSQL, MySQL, MongoDB and more via Docker/Podman |
 
 ## Local Development with Databases

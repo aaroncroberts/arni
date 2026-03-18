@@ -348,6 +348,6 @@ export LD_LIBRARY_PATH=~/Oracle/instantclient_23_3    # Linux
 ## Next Steps
 
 - **[Architecture Guide](architecture.md)** — how arni works internally, and how to add a new adapter
-- **[Examples](../crates/arni-data/examples/README.md)** — runnable programs for real-world patterns
+- **[Examples](../crates/arni/examples/README.md)** — runnable programs for real-world patterns
 - **[Local Databases](local-databases.md)** — spin up PostgreSQL, MySQL, MongoDB and more via Docker/Podman
 - **[Configuration Reference](configuration.md)** — full YAML/TOML config schema
