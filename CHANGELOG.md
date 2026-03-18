@@ -11,6 +11,30 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.3.0] — 2026-03-18
+
+### Added
+- **`examples/axum-api`** — standalone Axum HTTP server example; uses SQLite in-memory with
+  zero config; exposes `GET /tables`, `GET /query?sql=…`, `POST /bulk-insert`;
+  `make_adapter()` is the single swap-point to redirect the whole API at any real database
+- **`crates/arni-mcp/README.md`** — crate-level README with quick-start registration snippets
+  for Claude Desktop and Claude Code, tool table, and links to full docs
+
+### Fixed
+- **CLI help**: Removed `global = true` from `--list-tools`, `--capabilities`, `--schema` so
+  these discovery-only flags no longer appear in every subcommand's help output
+- **CLI `--search-mode`**: Removed duplicate `[default: contains]` that appeared in both the
+  help text string and clap's automatic default annotation
+- **CLI `connect` / `mcp` help text**: Improved descriptions — `connect` now states it prints
+  server info; `mcp` now lists the 14 tools, config file, and one-line registration snippet
+- **Docs**: Fixed CLI usage examples across `README.md` and `docs/` to match actual `--profile`
+  flag syntax (examples previously used an old positional-argument style that never existed)
+- **Docs**: Bumped all Cargo.toml example version strings from `"0.1"` to `"0.2"`
+- **Docs**: Added missing `pool_config` field to `ConnectionConfig` struct in
+  `docs/architecture.md`
+
+---
+
 ## [0.2.0] — 2026-03-18
 
 ### Added
@@ -43,6 +67,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resource helpers, and full Filter DSL coverage
 - 19 integration tests in `crates/arni-mcp/tests/tool_integration_tests.rs` — every tool handler
   exercised end-to-end against an in-memory DuckDB database; no external server required
+- 20 live-database MCP tool tests in `crates/arni-mcp/tests/live_db_tests.rs` — all 14 tool
+  handlers verified against PostgreSQL, MySQL, SQL Server, and MongoDB containers; tests skip
+  silently when containers are not running (opt-in via `TEST_<DB>_AVAILABLE=true`)
+- `docs/testing.md` rewritten to accurately document the three-layer test strategy, CI behaviour,
+  and all harness helpers
 
 ---
 
@@ -68,6 +97,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-[Unreleased]: https://github.com/aaroncroberts/arni/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/aaroncroberts/arni/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/aaroncroberts/arni/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aaroncroberts/arni/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aaroncroberts/arni/releases/tag/v0.1.0

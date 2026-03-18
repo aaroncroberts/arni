@@ -55,18 +55,18 @@ struct Cli {
     /// List all available commands with their argument schemas (JSON).
     /// Useful for agents that need to self-discover what arni can do.
     /// Output: [{name, description, args:[{name, type, required, description}]}]
-    #[arg(long, global = true, conflicts_with = "capabilities")]
+    #[arg(long, conflicts_with = "capabilities")]
     list_tools: bool,
 
     /// Describe supported database types and features (JSON).
     /// Output: {version, database_types:[], features:[]}
-    #[arg(long, global = true, conflicts_with = "list_tools")]
+    #[arg(long, conflicts_with = "list_tools")]
     capabilities: bool,
 
     /// Show the input/output JSON schema for a specific command.
     /// Example: arni --schema query
     /// Output: {command, input:{…}, output:{…}}
-    #[arg(long, value_name = "COMMAND", global = true)]
+    #[arg(long, value_name = "COMMAND")]
     schema: Option<String>,
 }
 
@@ -77,7 +77,13 @@ enum Commands {
         #[command(subcommand)]
         action: DevAction,
     },
-    /// Connect to a database
+    /// Connect to a database and print server info (version, host, database)
+    ///
+    /// Verifies credentials and prints a one-line server info summary.
+    /// Useful for checking connectivity before running queries.
+    ///
+    /// Example:
+    ///   arni connect --profile dev-postgres
     Connect {
         /// Connection profile name from config
         #[arg(short, long)]
@@ -130,7 +136,7 @@ enum Commands {
         #[arg(long)]
         search: Option<String>,
 
-        /// How to match the search pattern: starts, contains, or ends [default: contains]
+        /// How to match the search pattern: starts, contains, or ends
         #[arg(long, default_value = "contains")]
         search_mode: String,
 
@@ -169,6 +175,14 @@ enum Commands {
         output: String,
     },
     /// Start arni as an MCP server (JSON-RPC 2.0 over stdio)
+    ///
+    /// Exposes all 14 DbAdapter operations as AI-callable MCP tools.
+    /// Reads connection profiles from ~/.arni/config.yaml (same as CLI).
+    ///
+    /// Register with Claude Desktop or Claude Code in one line:
+    ///   {"command": "arni", "args": ["mcp"]}
+    ///
+    /// See docs/mcp.md for the full tool reference and registration guide.
     Mcp,
     /// Insert rows into a table from a JSON file
     ///

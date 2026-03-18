@@ -1,310 +1,157 @@
-# Testing Patterns and Guidelines
+# Testing Guide
 
-This document describes the testing patterns and conventions used in the Arni project.
+This document describes how arni's test suite is organised, how to run it, and what each layer tests.
 
-## Test Organization
+---
 
-### Unit Tests
+## Test Layers
 
-Unit tests are placed inline with the source code using `#[cfg(test)]` modules:
+```text
+crates/arni/
+├── src/**/*.rs               ← 1. Unit tests  (inline, #[cfg(test)])
+├── tests/
+│   ├── common/               ← shared harness (config loading, container helpers)
+│   ├── duckdb.rs             ← 2. In-memory integration tests (always run)
+│   ├── sqlite.rs             ← 2. In-memory integration tests (always run)
+│   ├── postgres.rs           ← 3. Live-server tests (opt-in via env var)
+│   ├── mysql.rs
+│   ├── mssql.rs
+│   ├── mongodb.rs
+│   └── oracle.rs
 
-```rust
-// src/my_module.rs
-pub fn my_function() -> i32 {
-    42
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_my_function() {
-        assert_eq!(my_function(), 42);
-    }
-}
+crates/arni-mcp/
+├── tests/
+│   ├── server_tests.rs            ← 1. Unit tests  (construction, filter DSL, resources)
+│   ├── tool_integration_tests.rs  ← 2. In-memory integration (DuckDB, always run)
+│   └── live_db_tests.rs           ← 3. Live-server MCP tool tests (opt-in via env var)
 ```
 
-### Integration Tests
+### 1 — Unit tests
 
-Integration tests are placed in `tests/integration/` and test the library as a whole:
-
-```rust
-// tests/integration/test_postgres.rs
-use arni::PostgresAdapter;
-
-#[tokio::test]
-async fn test_postgres_connection() {
-    // Test implementation
-}
-```
-
-## Test Helpers and Mocks
-
-The `testing` module (`src/testing.rs`) provides utilities for testing:
-
-### MockConnection
-
-A mock implementation of the `Connection` trait that tracks method calls:
-
-```rust
-use arni::testing::MockConnection;
-
-#[tokio::test]
-async fn test_with_mock_connection() {
-    let mut conn = MockConnection::new();
-    
-    conn.connect().await.unwrap();
-    assert!(conn.is_connected());
-    
-    // Verify calls
-    let calls = conn.get_calls();
-    assert!(calls.contains(&"connect".to_string()));
-}
-```
-
-### MockDbAdapter
-
-A mock implementation of the `DbAdapter` trait with configurable behavior:
-
-```rust
-use arni::testing::{MockDbAdapter, create_test_dataframe};
-use arni::Error;
-
-#[tokio::test]
-async fn test_with_mock_adapter() {
-    let adapter = MockDbAdapter::new();
-    
-    // Set up test data
-    let test_df = create_test_dataframe();
-    adapter.set_query_result(test_df);
-    
-    // Test query
-    let result = adapter.query("SELECT * FROM test").await.unwrap();
-    
-    // Verify behavior
-    let calls = adapter.connection.get_calls();
-    assert!(calls.iter().any(|c| c.contains("query")));
-}
-```
-
-### Simulating Errors
-
-The `MockDbAdapter` can be configured to return errors:
-
-```rust
-#[tokio::test]
-async fn test_error_handling() {
-    let adapter = MockDbAdapter::new();
-    adapter.set_next_error(Error::Query("Connection lost".to_string()));
-    
-    let result = adapter.query("SELECT * FROM test").await;
-    assert!(result.is_err());
-}
-```
-
-### Test Data Helpers
-
-Use the helper functions to create test DataFrames:
-
-```rust
-use arni::testing::{create_test_dataframe, create_empty_dataframe};
-
-#[test]
-fn test_with_dataframe() {
-    let df = create_test_dataframe();
-    assert!(df.inner().height() > 0);
-    
-    let empty = create_empty_dataframe();
-    assert_eq!(empty.inner().height(), 0);
-}
-```
-
-## Testing Patterns
-
-### Testing Async Code
-
-Use `tokio::test` for async tests:
-
-```rust
-#[tokio::test]
-async fn test_async_operation() {
-    let result = some_async_function().await;
-    assert!(result.is_ok());
-}
-```
-
-### Testing Error Cases
-
-Always test both success and error paths:
-
-```rust
-#[test]
-fn test_validation_success() {
-    let result = validate_input("valid");
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_validation_failure() {
-    let result = validate_input("");
-    assert!(result.is_err());
-    
-    if let Err(Error::Config(msg)) = result {
-        assert!(msg.contains("cannot be empty"));
-    } else {
-        panic!("Expected Config error");
-    }
-}
-```
-
-### Testing Trait Implementations
-
-Use mock implementations to test trait behavior:
-
-```rust
-#[tokio::test]
-async fn test_trait_implementation() {
-    let mut adapter = MockDbAdapter::new();
-    
-    // Test Connection trait
-    adapter.connect().await.unwrap();
-    assert!(adapter.is_connected());
-    
-    // Test DbAdapter trait
-    let df = create_test_dataframe();
-    adapter.set_query_result(df);
-    let result = adapter.query("SELECT 1").await.unwrap();
-    assert!(result.inner().height() >= 0);
-}
-```
-
-### Testing Send + Sync
-
-Verify that types can be sent across thread boundaries:
-
-```rust
-#[test]
-fn test_send_sync() {
-    fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<MyType>();
-}
-```
-
-### Testing Display Implementations
-
-Test that display formatting works correctly:
-
-```rust
-#[test]
-fn test_display() {
-    let item = MyType::new();
-    let display = format!("{}", item);
-    assert!(display.contains("expected text"));
-}
-```
-
-## Running Tests
-
-### Run All Tests
+Inline tests inside `src/` modules. Test pure functions — connection string builders, SQL literal formatting, config validation, filter DSL parsing.
 
 ```bash
-cargo test
+# Fast; no database required
+cargo test --lib --features "duckdb sqlite"
 ```
 
-### Run Specific Test Module
+### 2 — In-memory integration tests
+
+Use DuckDB (`:memory:`) or SQLite (`:memory:`). Require no running server. Verify the full adapter lifecycle: connect → write → query → introspect → disconnect.
 
 ```bash
-cargo test --lib config
+# No server needed
+cargo test --features "duckdb sqlite" -p arni
+cargo test -p arni-mcp        # includes tool_integration_tests
 ```
 
-### Run With Output
+### 3 — Live-server integration tests
+
+Run against real database containers. Each test checks an availability environment variable and returns early (silently passes) if the flag is not set.
 
 ```bash
-cargo test -- --nocapture
+# Start containers first
+podman-compose up -d
+
+# Enable the adapters you want to test
+export TEST_POSTGRES_AVAILABLE=true
+export TEST_MYSQL_AVAILABLE=true
+export TEST_MSSQL_AVAILABLE=true
+export TEST_MONGODB_AVAILABLE=true
+# export TEST_ORACLE_AVAILABLE=true  # local-only; see docs/local-databases.md
+
+# Run adapter integration tests
+cargo test --features postgres -p arni --test postgres
+cargo test --features mysql   -p arni --test mysql
+cargo test --features mssql   -p arni --test mssql
+cargo test --features mongodb -p arni --test mongodb
+
+# Run MCP live-DB tool tests
+cargo test -p arni-mcp --test live_db_tests
 ```
 
-### Run Integration Tests Only
+See [`docs/local-databases.md`](local-databases.md) for container setup, credentials, and troubleshooting.
 
-```bash
-cargo test --test '*'
-```
+---
 
-### Run With Coverage
+## Availability guards
 
-```bash
-cargo tarpaulin --out Html
-```
-
-## Test Naming Conventions
-
-- Test function names should start with `test_`
-- Use descriptive names: `test_postgres_connection_with_invalid_host`
-- Group related tests in modules: `mod postgres_tests { ... }`
-
-## Best Practices
-
-1. **Test One Thing**: Each test should verify one specific behavior
-2. **Use Descriptive Names**: Test names should clearly indicate what they test
-3. **Arrange-Act-Assert**: Structure tests with clear setup, execution, and verification phases
-4. **Test Edge Cases**: Always test boundary conditions and error cases
-5. **Use Test Helpers**: DRY - use helper functions for common setup
-6. **Mock External Dependencies**: Use mocks instead of real database connections
-7. **Keep Tests Fast**: Unit tests should run quickly
-8. **Make Tests Deterministic**: Tests should always produce the same result
-9. **Clean Up Resources**: Ensure tests clean up after themselves
-10. **Document Complex Tests**: Add comments explaining non-obvious test logic
-
-## Example: Complete Test Module
+Every live-server test begins with:
 
 ```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::*;
-
-    // Helper function for common setup
-    fn setup_test_adapter() -> MockDbAdapter {
-        let adapter = MockDbAdapter::new();
-        adapter.set_query_result(create_test_dataframe());
-        adapter
-    }
-
-    #[tokio::test]
-    async fn test_query_execution() {
-        // Arrange
-        let adapter = setup_test_adapter();
-        
-        // Act
-        let result = adapter.query("SELECT * FROM users").await;
-        
-        // Assert
-        assert!(result.is_ok());
-        let df = result.unwrap();
-        assert!(df.inner().height() > 0);
-    }
-
-    #[tokio::test]
-    async fn test_error_handling() {
-        // Arrange
-        let adapter = MockDbAdapter::new();
-        adapter.set_next_error(Error::Query("Test error".to_string()));
-        
-        // Act
-        let result = adapter.query("SELECT * FROM users").await;
-        
-        // Assert
-        assert!(result.is_err());
-        match result {
-            Err(Error::Query(msg)) => assert_eq!(msg, "Test error"),
-            _ => panic!("Expected Query error"),
-        }
-    }
+#[tokio::test]
+async fn test_postgres_connect() {
+    if common::skip_if_unavailable("postgres") { return; }
+    // ... real test body
 }
 ```
 
-## Continuous Integration
+`skip_if_unavailable` checks `TEST_POSTGRES_AVAILABLE` (any truthy value: `true`, `1`, `yes`). The test passes silently in CI where no database is present.
 
-Tests are automatically run on every push via GitHub Actions. All tests must pass before merging.
+---
 
-See `.github/workflows/test.yml` for CI configuration.
+## Test harness helpers
+
+`crates/arni/tests/common/` provides:
+
+| Helper | Purpose |
+| :--- | :--- |
+| `is_adapter_available(db)` | Returns `true` when `TEST_<DB>_AVAILABLE` is set |
+| `skip_if_unavailable(db)` | Prints skip notice and returns `true` when unavailable |
+| `load_test_config(profile)` | Loads `ConnectionConfig` from `~/.arni/connections.yml` or env vars |
+| `containers::postgres_config()` | Pre-built config matching the dev-container defaults |
+| `containers::mysql_config()` | Same for MySQL |
+| `containers::mssql_config()` | Same for SQL Server |
+| `containers::mongodb_config()` | Same for MongoDB |
+| `containers::oracle_config()` | Same for Oracle |
+| `containers::duckdb_memory_config()` | In-memory DuckDB (no container needed) |
+| `containers::sqlite_memory_config()` | In-memory SQLite (no container needed) |
+
+Config loading order for `load_test_config`:
+1. `~/.arni/connections.yml` — entry matching `profile_name`
+2. Environment variables `TEST_<PROFILE>_*` (see `common/mod.rs` for the full list)
+
+---
+
+## CI behaviour
+
+The CI workflow (`ci.yml`) runs:
+
+```bash
+cargo test --workspace --lib
+```
+
+This compiles and runs **only the `#[cfg(test)]` unit tests** inside `src/` modules. Integration tests in `tests/` are never compiled by `--lib`, so live-server tests are structurally invisible to CI — no `#[ignore]` attributes are needed.
+
+---
+
+## Coverage
+
+Target: ≥ 80 % line coverage (excluding integration test files and examples).
+
+```bash
+# Install once
+cargo install cargo-tarpaulin
+
+# Generate HTML report
+make coverage
+# or
+./scripts/coverage.sh
+
+# View
+open target/tarpaulin/html/index.html
+```
+
+---
+
+## Quick reference
+
+| Goal | Command |
+| :--- | :--- |
+| Fast unit feedback | `cargo test --lib --features "duckdb sqlite"` |
+| All tests (no server) | `cargo test --features "duckdb sqlite"` |
+| MCP unit + integration | `cargo test -p arni-mcp` |
+| Postgres live tests | `TEST_POSTGRES_AVAILABLE=true cargo test --features postgres -p arni --test postgres` |
+| All live-DB MCP tests | `TEST_POSTGRES_AVAILABLE=true … cargo test -p arni-mcp --test live_db_tests` |
+| Coverage report | `make coverage` |
+| Full quality gates | `make pre-commit` |
