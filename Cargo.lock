@@ -198,6 +198,7 @@ dependencies = [
  "anyhow",
  "arni",
  "arni-logging",
+ "arni-mcp",
  "clap",
  "colored",
  "comfy-table",

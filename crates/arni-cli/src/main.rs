@@ -501,10 +501,7 @@ async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn E
             format,
             output,
         } => handle_export_command(query, profile, format, output, json_mode).await,
-        Commands::Mcp => {
-            eprintln!("arni mcp: not yet implemented — coming soon");
-            Ok(())
-        }
+        Commands::Mcp => arni_mcp::serve().await.map_err(|e| e.into()),
         Commands::BulkInsert {
             profile,
             table,

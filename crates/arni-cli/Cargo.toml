@@ -16,6 +16,7 @@ path = "src/main.rs"
 # Local dependencies
 arni = { path = "../arni", features = ["all-databases"] }
 arni-logging = { path = "../arni-logging" }
+arni-mcp = { path = "../arni-mcp" }
 
 # Workspace dependencies
 tokio = { workspace = true, features = ["signal"] }
