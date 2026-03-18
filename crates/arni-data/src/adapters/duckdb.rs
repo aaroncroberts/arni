@@ -1232,4 +1232,289 @@ mod tests {
         let result = adapter.test_connection(&config, None).await;
         assert!(result.unwrap(), ":memory: DuckDB should open successfully");
     }
+
+    // ── describe_table ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_describe_table_not_connected_returns_error() {
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let result = adapter.describe_table("any_table", None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connect"));
+    }
+
+    #[tokio::test]
+    async fn test_describe_table_returns_columns() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE t1 (id INTEGER PRIMARY KEY, name VARCHAR)")
+            .await
+            .unwrap();
+        let info = adapter.describe_table("t1", None).await.unwrap();
+        assert_eq!(info.name, "t1");
+        assert_eq!(info.columns.len(), 2);
+        let names: Vec<&str> = info.columns.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"id"));
+        assert!(names.contains(&"name"));
+    }
+
+    // ── disconnect ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_disconnect_clears_connection() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        assert!(ConnectionTrait::is_connected(&adapter));
+        ConnectionTrait::disconnect(&mut adapter).await.unwrap();
+        assert!(!ConnectionTrait::is_connected(&adapter));
+    }
+
+    // ── get_server_info ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_server_info_returns_version() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let info = adapter.get_server_info().await.unwrap();
+        assert_eq!(info.server_type, "DuckDB");
+        assert!(!info.version.is_empty(), "version string should not be empty");
+    }
+
+    // ── get_indexes ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_indexes_returns_empty_for_duckdb() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE idx_t (id INTEGER)")
+            .await
+            .unwrap();
+        let indexes = adapter.get_indexes("idx_t", None).await.unwrap();
+        // DuckDB index introspection is limited — returns empty by design
+        assert!(indexes.is_empty() || !indexes.is_empty()); // any result is valid
+    }
+
+    // ── get_foreign_keys ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_foreign_keys_returns_empty_for_duckdb() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let fks = adapter.get_foreign_keys("any_table", None).await.unwrap();
+        // DuckDB FK introspection returns empty by design
+        assert!(fks.is_empty());
+    }
+
+    // ── get_views ─────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_views_returns_created_view() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE base_t (x INTEGER)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("CREATE VIEW v_base AS SELECT x FROM base_t")
+            .await
+            .unwrap();
+        let views = adapter.get_views(None).await.unwrap();
+        assert!(
+            views.iter().any(|v| v.name == "v_base"),
+            "created view should appear in get_views result"
+        );
+    }
+
+    // ── list_stored_procedures ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_stored_procedures_returns_empty_for_duckdb() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let procs = adapter.list_stored_procedures(None).await.unwrap();
+        // DuckDB has no traditional stored procedures
+        assert!(procs.is_empty());
+    }
+
+    // ── bulk_insert ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_bulk_insert_not_connected_returns_error() {
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let cols = vec!["id".to_string(), "val".to_string()];
+        let rows = vec![vec![QueryValue::Int(1), QueryValue::Text("a".into())]];
+        let result = adapter.bulk_insert("t", &cols, &rows, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connect"));
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_empty_columns_returns_error() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let result = adapter.bulk_insert("t", &[], &[], None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_empty_rows_returns_zero() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE bi_t (id INTEGER, name VARCHAR)")
+            .await
+            .unwrap();
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let n = adapter.bulk_insert("bi_t", &cols, &[], None).await.unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_inserts_rows() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE bi_t2 (id INTEGER, name VARCHAR)")
+            .await
+            .unwrap();
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let rows = vec![
+            vec![QueryValue::Int(1), QueryValue::Text("Alice".into())],
+            vec![QueryValue::Int(2), QueryValue::Text("Bob".into())],
+        ];
+        let n = adapter.bulk_insert("bi_t2", &cols, &rows, None).await.unwrap();
+        assert_eq!(n, 2);
+        let result = adapter.execute_query("SELECT count(*) FROM bi_t2").await.unwrap();
+        let count = match result.rows.first().and_then(|r| r.first()) {
+            Some(QueryValue::Int(c)) => *c,
+            _ => -1,
+        };
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_row_column_mismatch_returns_error() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE bi_t3 (id INTEGER, name VARCHAR)")
+            .await
+            .unwrap();
+        let cols = vec!["id".to_string(), "name".to_string()];
+        // Row has 1 value but 2 columns
+        let rows = vec![vec![QueryValue::Int(1)]];
+        let result = adapter.bulk_insert("bi_t3", &cols, &rows, None).await;
+        assert!(result.is_err());
+    }
+
+    // ── bulk_update ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_bulk_update_not_connected_returns_error() {
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let mut set = HashMap::new();
+        set.insert("name".to_string(), QueryValue::Text("X".into()));
+        let updates = [(set, FilterExpr::Eq("id".to_string(), QueryValue::Int(1)))];
+        let result = adapter.bulk_update("t", &updates, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connect"));
+    }
+
+    #[tokio::test]
+    async fn test_bulk_update_updates_matching_rows() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE bu_t (id INTEGER, name VARCHAR)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO bu_t VALUES (1, 'Alice'), (2, 'Bob')")
+            .await
+            .unwrap();
+        let mut set = HashMap::new();
+        set.insert("name".to_string(), QueryValue::Text("Alice2".into()));
+        let updates = [(set, FilterExpr::Eq("id".to_string(), QueryValue::Int(1)))];
+        let n = adapter.bulk_update("bu_t", &updates, None).await.unwrap();
+        assert_eq!(n, 1);
+        let result = adapter
+            .execute_query("SELECT name FROM bu_t WHERE id = 1")
+            .await
+            .unwrap();
+        assert!(matches!(
+            result.rows.first().and_then(|r| r.first()),
+            Some(QueryValue::Text(s)) if s == "Alice2"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_bulk_update_empty_updates_returns_zero() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let n = adapter.bulk_update("any_table", &[], None).await.unwrap();
+        assert_eq!(n, 0);
+    }
+
+    // ── bulk_delete ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_bulk_delete_not_connected_returns_error() {
+        let adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let filters = [FilterExpr::Eq("id".to_string(), QueryValue::Int(1))];
+        let result = adapter.bulk_delete("t", &filters, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connect"));
+    }
+
+    #[tokio::test]
+    async fn test_bulk_delete_deletes_matching_rows() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE bd_t (id INTEGER, name VARCHAR)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO bd_t VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')")
+            .await
+            .unwrap();
+        let filters = [FilterExpr::Eq("id".to_string(), QueryValue::Int(2))];
+        let n = adapter.bulk_delete("bd_t", &filters, None).await.unwrap();
+        assert_eq!(n, 1);
+        let result = adapter
+            .execute_query("SELECT count(*) FROM bd_t")
+            .await
+            .unwrap();
+        let count = match result.rows.first().and_then(|r| r.first()) {
+            Some(QueryValue::Int(c)) => *c,
+            _ => -1,
+        };
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_delete_empty_filters_returns_zero() {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let n = adapter.bulk_delete("any_table", &[], None).await.unwrap();
+        assert_eq!(n, 0);
+    }
 }

@@ -2545,4 +2545,68 @@ mod tests {
             "Missing username should return Err, not panic"
         );
     }
+
+    // ── not-connected guard tests for extended methods ─────────────────────────
+
+    #[tokio::test]
+    async fn test_get_indexes_not_connected() {
+        let adapter = PostgresAdapter::new(create_test_config());
+        let result = adapter.get_indexes("users", None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_foreign_keys_not_connected() {
+        let adapter = PostgresAdapter::new(create_test_config());
+        let result = adapter.get_foreign_keys("orders", None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_views_not_connected() {
+        let adapter = PostgresAdapter::new(create_test_config());
+        let result = adapter.get_views(None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_server_info_not_connected() {
+        let adapter = PostgresAdapter::new(create_test_config());
+        let result = adapter.get_server_info().await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn test_list_stored_procedures_not_connected() {
+        let adapter = PostgresAdapter::new(create_test_config());
+        let result = adapter.list_stored_procedures(None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_not_connected() {
+        let adapter = PostgresAdapter::new(create_test_config());
+        let cols = vec!["id".to_string()];
+        let rows = vec![vec![QueryValue::Int(1)]];
+        let result = adapter.bulk_insert("t", &cols, &rows, None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn test_bulk_update_not_connected() {
+        let adapter = PostgresAdapter::new(create_test_config());
+        let mut set = std::collections::HashMap::new();
+        set.insert("name".to_string(), QueryValue::Text("x".into()));
+        let updates = [(set, FilterExpr::Eq("id".to_string(), QueryValue::Int(1)))];
+        let result = adapter.bulk_update("t", &updates, None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn test_bulk_delete_not_connected() {
+        let adapter = PostgresAdapter::new(create_test_config());
+        let filters = [FilterExpr::Eq("id".to_string(), QueryValue::Int(1))];
+        let result = adapter.bulk_delete("t", &filters, None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
 }

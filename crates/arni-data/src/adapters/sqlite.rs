@@ -1071,4 +1071,228 @@ mod tests {
         let result = adapter.test_connection(&config, None).await;
         assert!(result.unwrap(), ":memory: should connect successfully");
     }
+
+    // ── disconnect ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_disconnect_clears_connection() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        assert!(ConnectionTrait::is_connected(&adapter));
+        ConnectionTrait::disconnect(&mut adapter).await.unwrap();
+        assert!(!ConnectionTrait::is_connected(&adapter));
+    }
+
+    // ── get_server_info ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_server_info_returns_sqlite_version() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let info = adapter.get_server_info().await.unwrap();
+        assert_eq!(info.server_type, "SQLite");
+        assert!(!info.version.is_empty(), "SQLite version should not be empty");
+    }
+
+    // ── get_views ─────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_views_empty_when_no_views() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let views = adapter.get_views(None).await.unwrap();
+        assert!(views.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_views_returns_created_view() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE src (x INTEGER)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("CREATE VIEW v_src AS SELECT x FROM src")
+            .await
+            .unwrap();
+        let views = adapter.get_views(None).await.unwrap();
+        assert!(
+            views.iter().any(|v| v.name == "v_src"),
+            "created view should appear in get_views result"
+        );
+    }
+
+    // ── get_indexes ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_indexes_empty_for_table_with_no_index() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE idx0 (id INTEGER)")
+            .await
+            .unwrap();
+        let indexes = adapter.get_indexes("idx0", None).await.unwrap();
+        assert!(indexes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_indexes_returns_created_index() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE idx1 (id INTEGER, email TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("CREATE UNIQUE INDEX idx1_email ON idx1(email)")
+            .await
+            .unwrap();
+        let indexes = adapter.get_indexes("idx1", None).await.unwrap();
+        assert!(
+            indexes.iter().any(|i| i.name == "idx1_email" && i.is_unique),
+            "unique index should be returned with is_unique = true"
+        );
+    }
+
+    // ── get_foreign_keys ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_foreign_keys_returns_empty_when_no_fks() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE no_fk (id INTEGER)")
+            .await
+            .unwrap();
+        let fks = adapter.get_foreign_keys("no_fk", None).await.unwrap();
+        assert!(fks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_foreign_keys_returns_declared_fk() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query(
+                "CREATE TABLE child (id INTEGER, parent_id INTEGER, FOREIGN KEY (parent_id) REFERENCES parent(id))",
+            )
+            .await
+            .unwrap();
+        let fks = adapter.get_foreign_keys("child", None).await.unwrap();
+        assert!(!fks.is_empty(), "child table should have one FK");
+        assert_eq!(fks[0].referenced_table, "parent");
+    }
+
+    // ── list_stored_procedures ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_stored_procedures_returns_empty_for_sqlite() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        let procs = adapter.list_stored_procedures(None).await.unwrap();
+        assert!(procs.is_empty(), "SQLite has no stored procedures");
+    }
+
+    // ── bulk_insert ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_bulk_insert_not_connected_returns_error() {
+        let adapter = SqliteAdapter::new(make_config(":memory:"));
+        let cols = vec!["id".to_string()];
+        let rows = vec![vec![QueryValue::Int(1)]];
+        let result = adapter.bulk_insert("t", &cols, &rows, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_bulk_insert_inserts_rows() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE ins_t (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let rows = vec![
+            vec![QueryValue::Int(1), QueryValue::Text("Alice".into())],
+            vec![QueryValue::Int(2), QueryValue::Text("Bob".into())],
+        ];
+        let n = adapter.bulk_insert("ins_t", &cols, &rows, None).await.unwrap();
+        assert_eq!(n, 2, "should insert 2 rows");
+    }
+
+    // ── bulk_update ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_bulk_update_updates_matching_rows() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE upd_t (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO upd_t VALUES (1, 'Alice'), (2, 'Bob')")
+            .await
+            .unwrap();
+        let mut set = HashMap::new();
+        set.insert("name".to_string(), QueryValue::Text("AliceX".into()));
+        let updates = [(set, FilterExpr::Eq("id".to_string(), QueryValue::Int(1)))];
+        let n = adapter.bulk_update("upd_t", &updates, None).await.unwrap();
+        assert_eq!(n, 1);
+        let result = adapter
+            .execute_query("SELECT name FROM upd_t WHERE id = 1")
+            .await
+            .unwrap();
+        assert!(matches!(
+            result.rows.first().and_then(|r| r.first()),
+            Some(QueryValue::Text(s)) if s == "AliceX"
+        ));
+    }
+
+    // ── bulk_delete ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_bulk_delete_deletes_matching_rows() {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        adapter
+            .execute_query("CREATE TABLE del_t (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO del_t VALUES (1, 'A'), (2, 'B'), (3, 'C')")
+            .await
+            .unwrap();
+        let filters = [FilterExpr::Eq("id".to_string(), QueryValue::Int(2))];
+        let n = adapter.bulk_delete("del_t", &filters, None).await.unwrap();
+        assert_eq!(n, 1);
+        let result = adapter
+            .execute_query("SELECT count(*) FROM del_t")
+            .await
+            .unwrap();
+        let count = match result.rows.first().and_then(|r| r.first()) {
+            Some(QueryValue::Int(c)) => *c,
+            _ => -1,
+        };
+        assert_eq!(count, 2);
+    }
 }
