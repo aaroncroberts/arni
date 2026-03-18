@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] — 2026-03-18
+
 ### Added
 - **`examples/axum-api`** — standalone Axum HTTP server example; uses SQLite in-memory with
   zero config; exposes `GET /tables`, `GET /query?sql=…`, `POST /bulk-insert`;
@@ -93,6 +97,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-[Unreleased]: https://github.com/aaroncroberts/arni/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/aaroncroberts/arni/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/aaroncroberts/arni/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aaroncroberts/arni/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aaroncroberts/arni/releases/tag/v0.1.0
