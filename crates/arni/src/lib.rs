@@ -31,6 +31,7 @@
 //!         username: Some("user".to_string()),
 //!         use_ssl: false,
 //!         parameters: std::collections::HashMap::new(),
+//!         pool_config: None,
 //!     };
 //!     
 //!     // Connect to database (adapter implementation needed)

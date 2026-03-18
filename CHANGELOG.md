@@ -43,6 +43,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resource helpers, and full Filter DSL coverage
 - 19 integration tests in `crates/arni-mcp/tests/tool_integration_tests.rs` — every tool handler
   exercised end-to-end against an in-memory DuckDB database; no external server required
+- 20 live-database MCP tool tests in `crates/arni-mcp/tests/live_db_tests.rs` — all 14 tool
+  handlers verified against PostgreSQL, MySQL, SQL Server, and MongoDB containers; tests skip
+  silently when containers are not running (opt-in via `TEST_<DB>_AVAILABLE=true`)
+- `docs/testing.md` rewritten to accurately document the three-layer test strategy, CI behaviour,
+  and all harness helpers
 
 ---
 
