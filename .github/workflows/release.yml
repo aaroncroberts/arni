@@ -1,0 +1,80 @@
+name: Release
+
+# Triggered by a version tag push: git tag v0.3.0 && git push --tags
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]*"
+
+# Needs write permission to create the GitHub Release
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so we can read CHANGELOG.md
+
+      # ── Extract the release notes for this version from CHANGELOG.md ────────
+      #
+      # CHANGELOG.md uses the format:
+      #   ## [0.3.0] — YYYY-MM-DD
+      #   ...content...
+      #   ---
+      #   ## [0.2.0] — ...
+      #
+      # We extract everything between the matching `## [X.Y.Z]` heading and the
+      # next `---` divider, strip the heading itself, and write it to a temp file
+      # that the release step reads as the release body.
+      - name: Extract release notes
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"           # strip leading 'v': v0.3.0 → 0.3.0
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          python3 - "$VERSION" CHANGELOG.md > /tmp/release_notes.md <<'PYEOF'
+          import sys, re
+
+          version = sys.argv[1]
+          path    = sys.argv[2]
+          text    = open(path).read()
+
+          # Match the section header: ## [X.Y.Z]
+          pattern = rf'## \[{re.escape(version)}\][^\n]*\n(.*?)(?=\n---|\Z)'
+          m = re.search(pattern, text, re.DOTALL)
+
+          if not m:
+              print(f"No CHANGELOG section found for version {version}", file=sys.stderr)
+              sys.exit(1)
+
+          notes = m.group(1).strip()
+          print(notes)
+          PYEOF
+
+          echo "Release notes extracted for v$VERSION"
+          cat /tmp/release_notes.md
+
+      # ── Create the GitHub Release ─────────────────────────────────────────────
+      #
+      # GitHub automatically attaches "Source code (zip)" and "Source code
+      # (tar.gz)" to every release — no upload step needed.
+      #
+      # We intentionally do NOT build or upload compiled binaries:
+      # - Cross-compilation for all target triples is expensive in CI.
+      # - The Oracle adapter requires Instant Client libraries unavailable in CI.
+      # - Users who need a binary should build from source: `cargo build --release`.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG_NAME" \
+            --title "arni v${VERSION}" \
+            --notes-file /tmp/release_notes.md \
+            --verify-tag
