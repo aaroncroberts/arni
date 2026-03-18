@@ -1,6 +1,5 @@
 mod app_config;
 mod config;
-mod daemon;
 mod db;
 mod discovery;
 mod filter;
@@ -169,12 +168,8 @@ enum Commands {
         #[arg(short, long)]
         output: String,
     },
-    /// Start a persistent background daemon on a Unix socket
-    Daemon {
-        /// Path to the Unix domain socket (default: /tmp/arni.sock)
-        #[arg(long)]
-        socket: Option<std::path::PathBuf>,
-    },
+    /// Start arni as an MCP server (JSON-RPC 2.0 over stdio)
+    Mcp,
     /// Insert rows into a table from a JSON file
     ///
     /// The data file must contain a JSON array of objects where each object is a row.
@@ -419,7 +414,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             None => {
                 let msg = format!(
-                    "Unknown command '{}'. Valid: connect, query, metadata, export, config, daemon, dev",
+                    "Unknown command '{}'. Valid: connect, query, metadata, export, config, mcp, dev",
                     cmd_name
                 );
                 if json_mode {
@@ -506,9 +501,8 @@ async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn E
             format,
             output,
         } => handle_export_command(query, profile, format, output, json_mode).await,
-        Commands::Daemon { socket } => {
-            let path = socket.unwrap_or_else(|| std::path::PathBuf::from("/tmp/arni.sock"));
-            daemon::run_daemon(path).await?;
+        Commands::Mcp => {
+            eprintln!("arni mcp: not yet implemented — coming soon");
             Ok(())
         }
         Commands::BulkInsert {
