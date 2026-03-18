@@ -7,13 +7,13 @@ mod json_output;
 mod logging_config;
 
 use arni::adapter::{ConnectionConfig, DatabaseType, QueryValue, TableSearchMode};
-use filter::{json_to_query_value, parse_bulk_insert_data, parse_filter_json};
 use arni::export::{to_bytes, to_file, DataFormat};
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
 use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as CTable};
 use config::{ConfigStore, ConnectionEntry};
 use figlet_rs::FIGfont;
+use filter::{json_to_query_value, parse_bulk_insert_data, parse_filter_json};
 use polars::prelude::DataFrame;
 use std::collections::HashMap;
 use std::error::Error;
@@ -1831,8 +1831,8 @@ fn print_table_info(info: &arni::TableInfo) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arni::adapter::{FilterExpr, QueryValue};
     use crate::filter::{json_to_query_value, parse_bulk_insert_data, parse_filter_json};
+    use arni::adapter::{FilterExpr, QueryValue};
 
     // ── parse_db_type ────────────────────────────────────────────────────────
 

@@ -105,9 +105,11 @@ impl ArniMcpServer {
     // ── Core ─────────────────────────────────────────────────────────────────
 
     /// Execute a SQL SELECT and return all rows as a JSON array.
-    #[tool(description = "Execute a SQL SELECT and return all rows as a JSON array of arrays. \
+    #[tool(
+        description = "Execute a SQL SELECT and return all rows as a JSON array of arrays. \
         Each element of `rows` corresponds to a column in `columns`. \
-        Use `profile` to select the target database.")]
+        Use `profile` to select the target database."
+    )]
     pub async fn query(
         &self,
         Parameters(p): Parameters<QueryParams>,
@@ -130,8 +132,10 @@ impl ArniMcpServer {
     }
 
     /// Execute a SQL statement (INSERT / UPDATE / DELETE / DDL) and return rows affected.
-    #[tool(description = "Execute a SQL DML or DDL statement (INSERT, UPDATE, DELETE, CREATE, \
-        DROP, etc.). Returns the number of rows affected. Use for writes and schema changes.")]
+    #[tool(
+        description = "Execute a SQL DML or DDL statement (INSERT, UPDATE, DELETE, CREATE, \
+        DROP, etc.). Returns the number of rows affected. Use for writes and schema changes."
+    )]
     pub async fn execute(
         &self,
         Parameters(p): Parameters<ExecuteParams>,
@@ -144,8 +148,7 @@ impl ArniMcpServer {
             .map_err(|e| e.to_string())?;
         let duration_ms = t.elapsed().as_millis();
         info!(tool = "execute", profile = %p.profile, duration_ms);
-        Content::json(json!({ "rows_affected": result.rows_affected }))
-            .map_err(|e| e.to_string())
+        Content::json(json!({ "rows_affected": result.rows_affected })).map_err(|e| e.to_string())
     }
 
     /// List all tables in the connected database.
@@ -157,10 +160,7 @@ impl ArniMcpServer {
     ) -> Result<rmcp::model::Content, String> {
         let t = Instant::now();
         let adapter = self.adapter(&p.profile).await?;
-        let tables = adapter
-            .list_tables(None)
-            .await
-            .map_err(|e| e.to_string())?;
+        let tables = adapter.list_tables(None).await.map_err(|e| e.to_string())?;
         let duration_ms = t.elapsed().as_millis();
         info!(tool = "tables", profile = %p.profile, duration_ms, count = tables.len());
         Content::json(json!({ "tables": tables })).map_err(|e| e.to_string())
@@ -169,8 +169,10 @@ impl ArniMcpServer {
     // ── Metadata ─────────────────────────────────────────────────────────────
 
     /// Return column definitions and row statistics for a table.
-    #[tool(description = "Describe a table: returns column names, data types, nullability, \
-        primary key flags, row count, and size. Essential before writing queries.")]
+    #[tool(
+        description = "Describe a table: returns column names, data types, nullability, \
+        primary key flags, row count, and size. Essential before writing queries."
+    )]
     pub async fn describe_table(
         &self,
         Parameters(p): Parameters<TableParams>,
@@ -202,8 +204,10 @@ impl ArniMcpServer {
     }
 
     /// Return all indexes defined on a table.
-    #[tool(description = "Return all indexes for a table, including whether each is unique \
-        or a primary key index.")]
+    #[tool(
+        description = "Return all indexes for a table, including whether each is unique \
+        or a primary key index."
+    )]
     pub async fn get_indexes(
         &self,
         Parameters(p): Parameters<TableParams>,
@@ -221,8 +225,10 @@ impl ArniMcpServer {
     }
 
     /// Return all foreign keys defined on a table.
-    #[tool(description = "Return all foreign key constraints on a table: which columns \
-        reference which other tables and columns, and the ON DELETE / ON UPDATE rules.")]
+    #[tool(
+        description = "Return all foreign key constraints on a table: which columns \
+        reference which other tables and columns, and the ON DELETE / ON UPDATE rules."
+    )]
     pub async fn get_foreign_keys(
         &self,
         Parameters(p): Parameters<TableParams>,
@@ -258,8 +264,10 @@ impl ArniMcpServer {
     }
 
     /// Return database server version and type.
-    #[tool(description = "Return the database server type (e.g. PostgreSQL, MySQL, DuckDB) \
-        and version string.")]
+    #[tool(
+        description = "Return the database server type (e.g. PostgreSQL, MySQL, DuckDB) \
+        and version string."
+    )]
     pub async fn get_server_info(
         &self,
         Parameters(p): Parameters<ProfileParams>,
@@ -317,9 +325,11 @@ impl ArniMcpServer {
     // ── Bulk operations ───────────────────────────────────────────────────────
 
     /// Insert multiple rows into a table in a single batched operation.
-    #[tool(description = "Insert multiple rows into a table. `columns` lists the column names; \
+    #[tool(
+        description = "Insert multiple rows into a table. `columns` lists the column names; \
         each entry in `rows` is an array of values in the same order. \
-        Returns the number of rows inserted.")]
+        Returns the number of rows inserted."
+    )]
     pub async fn bulk_insert(
         &self,
         Parameters(p): Parameters<BulkInsertParams>,
@@ -339,14 +349,15 @@ impl ArniMcpServer {
             .map_err(|e| e.to_string())?;
         let duration_ms = t.elapsed().as_millis();
         info!(tool = "bulk_insert", profile = %p.profile, table = %p.table, rows_affected, duration_ms);
-        Content::json(json!({ "rows_affected": rows_affected }))
-            .map_err(|e| e.to_string())
+        Content::json(json!({ "rows_affected": rows_affected })).map_err(|e| e.to_string())
     }
 
     /// Update rows matching a filter expression.
-    #[tool(description = "Update rows matching a filter. `filter` uses the arni Filter DSL \
+    #[tool(
+        description = "Update rows matching a filter. `filter` uses the arni Filter DSL \
         (e.g. {\"id\": {\"eq\": 42}}). `values` is a flat object of column→newValue. \
-        Returns rows affected.")]
+        Returns rows affected."
+    )]
     pub async fn bulk_update(
         &self,
         Parameters(p): Parameters<BulkUpdateParams>,
@@ -372,13 +383,14 @@ impl ArniMcpServer {
             .map_err(|e| e.to_string())?;
         let duration_ms = t.elapsed().as_millis();
         info!(tool = "bulk_update", profile = %p.profile, table = %p.table, rows_affected, duration_ms);
-        Content::json(json!({ "rows_affected": rows_affected }))
-            .map_err(|e| e.to_string())
+        Content::json(json!({ "rows_affected": rows_affected })).map_err(|e| e.to_string())
     }
 
     /// Delete rows matching a filter expression.
-    #[tool(description = "Delete rows matching a filter. `filter` uses the arni Filter DSL \
-        (e.g. {\"id\": {\"in\": [1, 2, 3]}}). Returns rows affected.")]
+    #[tool(
+        description = "Delete rows matching a filter. `filter` uses the arni Filter DSL \
+        (e.g. {\"id\": {\"in\": [1, 2, 3]}}). Returns rows affected."
+    )]
     pub async fn bulk_delete(
         &self,
         Parameters(p): Parameters<BulkDeleteParams>,
@@ -392,8 +404,7 @@ impl ArniMcpServer {
             .map_err(|e| e.to_string())?;
         let duration_ms = t.elapsed().as_millis();
         info!(tool = "bulk_delete", profile = %p.profile, table = %p.table, rows_affected, duration_ms);
-        Content::json(json!({ "rows_affected": rows_affected }))
-            .map_err(|e| e.to_string())
+        Content::json(json!({ "rows_affected": rows_affected })).map_err(|e| e.to_string())
     }
 }
 

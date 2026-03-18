@@ -15,17 +15,11 @@ pub fn create_adapter(
     config: ConnectionConfig,
 ) -> Result<Box<dyn DbAdapter + Send + Sync + 'static>> {
     let adapter: Box<dyn DbAdapter + Send + Sync + 'static> = match config.db_type {
-        DatabaseType::Postgres => {
-            Box::new(arni::adapters::postgres::PostgresAdapter::new(config))
-        }
+        DatabaseType::Postgres => Box::new(arni::adapters::postgres::PostgresAdapter::new(config)),
         DatabaseType::MySQL => Box::new(arni::adapters::mysql::MySqlAdapter::new(config)),
         DatabaseType::SQLite => Box::new(arni::adapters::sqlite::SqliteAdapter::new(config)),
-        DatabaseType::MongoDB => {
-            Box::new(arni::adapters::mongodb::MongoDbAdapter::new(config))
-        }
-        DatabaseType::SQLServer => {
-            Box::new(arni::adapters::mssql::SqlServerAdapter::new(config))
-        }
+        DatabaseType::MongoDB => Box::new(arni::adapters::mongodb::MongoDbAdapter::new(config)),
+        DatabaseType::SQLServer => Box::new(arni::adapters::mssql::SqlServerAdapter::new(config)),
         DatabaseType::Oracle => Box::new(arni::adapters::oracle::OracleAdapter::new(config)),
         DatabaseType::DuckDB => Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config)),
     };
@@ -37,10 +31,7 @@ pub fn create_adapter(
 /// The profile name maps to a top-level key in `config.profiles`. The first
 /// connection entry in that profile is used. The password (if any) must be
 /// stored in `parameters["password"]`.
-pub async fn connect_profile(
-    config: &arni::ArniConfig,
-    profile: &str,
-) -> Result<SharedAdapter> {
+pub async fn connect_profile(config: &arni::ArniConfig, profile: &str) -> Result<SharedAdapter> {
     let conn_config = config
         .profiles
         .get(profile)

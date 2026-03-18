@@ -1078,7 +1078,9 @@ mod tests {
     async fn test_disconnect_clears_connection() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         assert!(ConnectionTrait::is_connected(&adapter));
         ConnectionTrait::disconnect(&mut adapter).await.unwrap();
         assert!(!ConnectionTrait::is_connected(&adapter));
@@ -1090,10 +1092,15 @@ mod tests {
     async fn test_get_server_info_returns_sqlite_version() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let info = adapter.get_server_info().await.unwrap();
         assert_eq!(info.server_type, "SQLite");
-        assert!(!info.version.is_empty(), "SQLite version should not be empty");
+        assert!(
+            !info.version.is_empty(),
+            "SQLite version should not be empty"
+        );
     }
 
     // ── get_views ─────────────────────────────────────────────────────────────
@@ -1102,7 +1109,9 @@ mod tests {
     async fn test_get_views_empty_when_no_views() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let views = adapter.get_views(None).await.unwrap();
         assert!(views.is_empty());
     }
@@ -1111,7 +1120,9 @@ mod tests {
     async fn test_get_views_returns_created_view() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE src (x INTEGER)")
             .await
@@ -1133,7 +1144,9 @@ mod tests {
     async fn test_get_indexes_empty_for_table_with_no_index() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE idx0 (id INTEGER)")
             .await
@@ -1146,7 +1159,9 @@ mod tests {
     async fn test_get_indexes_returns_created_index() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE idx1 (id INTEGER, email TEXT)")
             .await
@@ -1157,7 +1172,9 @@ mod tests {
             .unwrap();
         let indexes = adapter.get_indexes("idx1", None).await.unwrap();
         assert!(
-            indexes.iter().any(|i| i.name == "idx1_email" && i.is_unique),
+            indexes
+                .iter()
+                .any(|i| i.name == "idx1_email" && i.is_unique),
             "unique index should be returned with is_unique = true"
         );
     }
@@ -1168,7 +1185,9 @@ mod tests {
     async fn test_get_foreign_keys_returns_empty_when_no_fks() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE no_fk (id INTEGER)")
             .await
@@ -1181,7 +1200,9 @@ mod tests {
     async fn test_get_foreign_keys_returns_declared_fk() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
             .await
@@ -1203,7 +1224,9 @@ mod tests {
     async fn test_list_stored_procedures_returns_empty_for_sqlite() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let procs = adapter.list_stored_procedures(None).await.unwrap();
         assert!(procs.is_empty(), "SQLite has no stored procedures");
     }
@@ -1223,7 +1246,9 @@ mod tests {
     async fn test_bulk_insert_inserts_rows() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE ins_t (id INTEGER, name TEXT)")
             .await
@@ -1233,7 +1258,10 @@ mod tests {
             vec![QueryValue::Int(1), QueryValue::Text("Alice".into())],
             vec![QueryValue::Int(2), QueryValue::Text("Bob".into())],
         ];
-        let n = adapter.bulk_insert("ins_t", &cols, &rows, None).await.unwrap();
+        let n = adapter
+            .bulk_insert("ins_t", &cols, &rows, None)
+            .await
+            .unwrap();
         assert_eq!(n, 2, "should insert 2 rows");
     }
 
@@ -1243,7 +1271,9 @@ mod tests {
     async fn test_bulk_update_updates_matching_rows() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE upd_t (id INTEGER, name TEXT)")
             .await
@@ -1273,7 +1303,9 @@ mod tests {
     async fn test_bulk_delete_deletes_matching_rows() {
         let mut adapter = SqliteAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE del_t (id INTEGER, name TEXT)")
             .await

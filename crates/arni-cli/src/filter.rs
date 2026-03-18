@@ -58,11 +58,7 @@ pub fn parse_filter_json(s: &str) -> Result<FilterExpr, Box<dyn Error>> {
 pub fn parse_filter_value(v: &serde_json::Value) -> Result<FilterExpr, Box<dyn Error>> {
     let obj = v.as_object().ok_or("Filter must be a JSON object")?;
     if obj.len() != 1 {
-        return Err(format!(
-            "Filter object must have exactly one key, got {}",
-            obj.len()
-        )
-        .into());
+        return Err(format!("Filter object must have exactly one key, got {}", obj.len()).into());
     }
     let (key, val) = obj.iter().next().unwrap();
     match key.as_str() {
@@ -136,9 +132,7 @@ pub fn parse_filter_value(v: &serde_json::Value) -> Result<FilterExpr, Box<dyn E
                     json_to_query_value(op_val)?,
                 )),
                 "in" => {
-                    let arr = op_val
-                        .as_array()
-                        .ok_or("'in' value must be a JSON array")?;
+                    let arr = op_val.as_array().ok_or("'in' value must be a JSON array")?;
                     let values: Result<Vec<QueryValue>, _> =
                         arr.iter().map(json_to_query_value).collect();
                     Ok(FilterExpr::In(col.to_string(), values?))
@@ -238,10 +232,7 @@ mod tests {
 
     #[test]
     fn test_parse_filter_and() {
-        let f = parse_filter_json(
-            r#"{"and": [{"a": {"eq": 1}}, {"b": {"gt": 0}}]}"#,
-        )
-        .unwrap();
+        let f = parse_filter_json(r#"{"and": [{"a": {"eq": 1}}, {"b": {"gt": 0}}]}"#).unwrap();
         assert!(matches!(f, FilterExpr::And(v) if v.len() == 2));
     }
 

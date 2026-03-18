@@ -1247,7 +1247,9 @@ mod tests {
     async fn test_describe_table_returns_columns() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE t1 (id INTEGER PRIMARY KEY, name VARCHAR)")
             .await
@@ -1266,7 +1268,9 @@ mod tests {
     async fn test_disconnect_clears_connection() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         assert!(ConnectionTrait::is_connected(&adapter));
         ConnectionTrait::disconnect(&mut adapter).await.unwrap();
         assert!(!ConnectionTrait::is_connected(&adapter));
@@ -1278,10 +1282,15 @@ mod tests {
     async fn test_get_server_info_returns_version() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let info = adapter.get_server_info().await.unwrap();
         assert_eq!(info.server_type, "DuckDB");
-        assert!(!info.version.is_empty(), "version string should not be empty");
+        assert!(
+            !info.version.is_empty(),
+            "version string should not be empty"
+        );
     }
 
     // ── get_indexes ───────────────────────────────────────────────────────────
@@ -1290,7 +1299,9 @@ mod tests {
     async fn test_get_indexes_returns_empty_for_duckdb() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE idx_t (id INTEGER)")
             .await
@@ -1306,7 +1317,9 @@ mod tests {
     async fn test_get_foreign_keys_returns_empty_for_duckdb() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let fks = adapter.get_foreign_keys("any_table", None).await.unwrap();
         // DuckDB FK introspection returns empty by design
         assert!(fks.is_empty());
@@ -1318,7 +1331,9 @@ mod tests {
     async fn test_get_views_returns_created_view() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE base_t (x INTEGER)")
             .await
@@ -1340,7 +1355,9 @@ mod tests {
     async fn test_list_stored_procedures_returns_empty_for_duckdb() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let procs = adapter.list_stored_procedures(None).await.unwrap();
         // DuckDB has no traditional stored procedures
         assert!(procs.is_empty());
@@ -1362,7 +1379,9 @@ mod tests {
     async fn test_bulk_insert_empty_columns_returns_error() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let result = adapter.bulk_insert("t", &[], &[], None).await;
         assert!(result.is_err());
     }
@@ -1371,7 +1390,9 @@ mod tests {
     async fn test_bulk_insert_empty_rows_returns_zero() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE bi_t (id INTEGER, name VARCHAR)")
             .await
@@ -1385,7 +1406,9 @@ mod tests {
     async fn test_bulk_insert_inserts_rows() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE bi_t2 (id INTEGER, name VARCHAR)")
             .await
@@ -1395,9 +1418,15 @@ mod tests {
             vec![QueryValue::Int(1), QueryValue::Text("Alice".into())],
             vec![QueryValue::Int(2), QueryValue::Text("Bob".into())],
         ];
-        let n = adapter.bulk_insert("bi_t2", &cols, &rows, None).await.unwrap();
+        let n = adapter
+            .bulk_insert("bi_t2", &cols, &rows, None)
+            .await
+            .unwrap();
         assert_eq!(n, 2);
-        let result = adapter.execute_query("SELECT count(*) FROM bi_t2").await.unwrap();
+        let result = adapter
+            .execute_query("SELECT count(*) FROM bi_t2")
+            .await
+            .unwrap();
         let count = match result.rows.first().and_then(|r| r.first()) {
             Some(QueryValue::Int(c)) => *c,
             _ => -1,
@@ -1409,7 +1438,9 @@ mod tests {
     async fn test_bulk_insert_row_column_mismatch_returns_error() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE bi_t3 (id INTEGER, name VARCHAR)")
             .await
@@ -1438,7 +1469,9 @@ mod tests {
     async fn test_bulk_update_updates_matching_rows() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE bu_t (id INTEGER, name VARCHAR)")
             .await
@@ -1466,7 +1499,9 @@ mod tests {
     async fn test_bulk_update_empty_updates_returns_zero() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let n = adapter.bulk_update("any_table", &[], None).await.unwrap();
         assert_eq!(n, 0);
     }
@@ -1486,7 +1521,9 @@ mod tests {
     async fn test_bulk_delete_deletes_matching_rows() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         adapter
             .execute_query("CREATE TABLE bd_t (id INTEGER, name VARCHAR)")
             .await
@@ -1513,7 +1550,9 @@ mod tests {
     async fn test_bulk_delete_empty_filters_returns_zero() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
         let config = adapter.config.clone();
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
         let n = adapter.bulk_delete("any_table", &[], None).await.unwrap();
         assert_eq!(n, 0);
     }

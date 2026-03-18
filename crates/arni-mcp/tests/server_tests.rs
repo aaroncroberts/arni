@@ -121,10 +121,8 @@ fn filter_in_parses_with_correct_count() {
 fn filter_and_parses() {
     use arni::FilterExpr;
     use arni_mcp::filter::parse_filter_value;
-    let f = parse_filter_value(
-        &serde_json::json!({"and": [{"a": {"eq": 1}}, {"b": {"gt": 0}}]}),
-    )
-    .unwrap();
+    let f = parse_filter_value(&serde_json::json!({"and": [{"a": {"eq": 1}}, {"b": {"gt": 0}}]}))
+        .unwrap();
     assert!(matches!(f, FilterExpr::And(v) if v.len() == 2));
 }
 
@@ -132,10 +130,8 @@ fn filter_and_parses() {
 fn filter_or_parses() {
     use arni::FilterExpr;
     use arni_mcp::filter::parse_filter_value;
-    let f = parse_filter_value(
-        &serde_json::json!({"or": [{"a": {"eq": 1}}, {"b": {"eq": 2}}]}),
-    )
-    .unwrap();
+    let f = parse_filter_value(&serde_json::json!({"or": [{"a": {"eq": 1}}, {"b": {"eq": 2}}]}))
+        .unwrap();
     assert!(matches!(f, FilterExpr::Or(v) if v.len() == 2));
 }
 
@@ -143,8 +139,7 @@ fn filter_or_parses() {
 fn filter_not_parses() {
     use arni::FilterExpr;
     use arni_mcp::filter::parse_filter_value;
-    let f =
-        parse_filter_value(&serde_json::json!({"not": {"active": {"eq": false}}})).unwrap();
+    let f = parse_filter_value(&serde_json::json!({"not": {"active": {"eq": false}}})).unwrap();
     assert!(matches!(f, FilterExpr::Not(_)));
 }
 

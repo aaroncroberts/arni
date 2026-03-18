@@ -47,8 +47,7 @@ pub use server::ArniMcpServer;
 pub async fn serve() -> anyhow::Result<()> {
     arni_logging::init_default();
 
-    let config = ArniConfig::load_from_default_paths()
-        .unwrap_or_else(|_| ArniConfig::default());
+    let config = ArniConfig::load_from_default_paths().unwrap_or_else(|_| ArniConfig::default());
 
     let registry = Arc::new(ConnectionRegistry::new());
     let server = ArniMcpServer::new(registry, Arc::new(config));
