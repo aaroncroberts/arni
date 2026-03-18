@@ -11,6 +11,41 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.2.0] — 2026-03-18
+
+### Added
+- **`arni-mcp`** — first-class [Model Context Protocol](https://modelcontextprotocol.io) server
+  that exposes all 14 `DbAdapter` operations as AI-callable tools via the rmcp 0.12 SDK:
+  `query`, `execute`, `tables`, `describe_table`, `list_databases`, `get_indexes`,
+  `get_foreign_keys`, `get_views`, `get_server_info`, `list_stored_procedures`,
+  `find_tables`, `bulk_insert`, `bulk_update`, `bulk_delete`
+- **`arni mcp`** CLI subcommand — starts the MCP server on stdin/stdout; register with
+  Claude Desktop, Claude Code, or any MCP-compatible agent in one line
+- **Filter DSL** — JSON predicate language (`{"col": {"eq": value}}`, `and`, `or`, `not`, `in`,
+  `is_null`, `is_not_null`) used by `bulk_update` and `bulk_delete` tool calls
+- **MCP resource provider** — active connection profiles exposed as `arni://profiles/{name}`
+  resources so agents can enumerate live connections without a tool call
+- **`docs/mcp.md`** — full MCP guide: architecture, quick start, tool reference, Filter DSL,
+  resource listing, logging, password handling, limitations vs CLI
+- **`docs/examples/mcp.json`** — Claude Desktop / Claude Code registration snippet
+
+### Changed
+- **`arni-data` merged into `arni`** — implementation crate consolidated; all source now lives in
+  `crates/arni/src/`. Import paths (`use arni::DbAdapter`) are unchanged.
+- **All documentation updated** — `docs/configuration.md` fully rewritten to match the real
+  `ArniConfig`/`ConfigProfile`/`ConnectionConfig` schema; all `arni-data` path references
+  corrected across `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, `docs/getting-started.md`
+- `docs/configuration.md` now documents environment variable substitution as **implemented**
+  (was incorrectly described as "planned")
+
+### Testing
+- 19 unit tests in `crates/arni-mcp/tests/server_tests.rs` — server construction, `get_info`,
+  resource helpers, and full Filter DSL coverage
+- 19 integration tests in `crates/arni-mcp/tests/tool_integration_tests.rs` — every tool handler
+  exercised end-to-end against an in-memory DuckDB database; no external server required
+
+---
+
 ## [0.1.0] — 2026-03-17
 
 ### Added
@@ -33,5 +68,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-[Unreleased]: https://github.com/aaroncroberts/arni/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/aaroncroberts/arni/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/aaroncroberts/arni/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aaroncroberts/arni/releases/tag/v0.1.0

@@ -197,10 +197,7 @@ async fn describe_table_returns_correct_columns() {
 
     let json = content_to_json(result);
     let cols = json["columns"].as_array().expect("no columns array");
-    let col_names: Vec<&str> = cols
-        .iter()
-        .map(|c| c["name"].as_str().unwrap())
-        .collect();
+    let col_names: Vec<&str> = cols.iter().map(|c| c["name"].as_str().unwrap()).collect();
 
     assert!(col_names.contains(&"id"), "missing 'id' column");
     assert!(col_names.contains(&"name"), "missing 'name' column");
@@ -246,8 +243,7 @@ async fn get_server_info_contains_duckdb() {
     let version = json["version"].as_str().unwrap_or("");
 
     assert!(
-        server_type.to_lowercase().contains("duckdb")
-            || version.to_lowercase().contains("duckdb"),
+        server_type.to_lowercase().contains("duckdb") || version.to_lowercase().contains("duckdb"),
         "expected DuckDB in server info, got: {json}"
     );
 }
@@ -266,7 +262,10 @@ async fn get_views_returns_list() {
         .expect("get_views failed");
 
     let json = content_to_json(result);
-    assert!(json.is_array() || json.is_object(), "expected JSON response");
+    assert!(
+        json.is_array() || json.is_object(),
+        "expected JSON response"
+    );
 }
 
 #[tokio::test]
@@ -284,7 +283,10 @@ async fn get_indexes_returns_list() {
         .expect("get_indexes failed");
 
     let json = content_to_json(result);
-    assert!(json.is_array() || json.is_object(), "expected JSON response");
+    assert!(
+        json.is_array() || json.is_object(),
+        "expected JSON response"
+    );
 }
 
 #[tokio::test]
@@ -302,7 +304,10 @@ async fn get_foreign_keys_returns_list() {
         .expect("get_foreign_keys failed");
 
     let json = content_to_json(result);
-    assert!(json.is_array() || json.is_object(), "expected JSON response");
+    assert!(
+        json.is_array() || json.is_object(),
+        "expected JSON response"
+    );
 }
 
 #[tokio::test]
@@ -319,7 +324,10 @@ async fn list_stored_procedures_returns_list() {
         .expect("list_stored_procedures failed");
 
     let json = content_to_json(result);
-    assert!(json.is_array() || json.is_object(), "expected JSON response");
+    assert!(
+        json.is_array() || json.is_object(),
+        "expected JSON response"
+    );
 }
 
 #[tokio::test]
@@ -409,7 +417,6 @@ async fn bulk_insert_inserts_rows_and_query_finds_them() {
     // bulk_insert goes through execute_statement_blocking which does count rows.
     let insert_json = content_to_json(result);
     assert_eq!(insert_json["rows_affected"], 2);
-
 
     // Verify rows are actually in the database.
     let query_result = server
