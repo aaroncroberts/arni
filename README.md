@@ -96,7 +96,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-arni = { version = "0.1", features = ["duckdb"] }  # or "postgres", "mysql", etc.
+arni = { version = "0.2", features = ["duckdb"] }  # or "postgres", "mysql", etc.
 ```
 
 ```rust
@@ -146,60 +146,61 @@ The `arni` binary wraps the `arni` library behind a YAML connection-profile syst
 ### Setup
 
 ```bash
-# Add a connection profile (saved to ~/.arni/connections.yml)
-arni config add my-pg \
+# Add a connection profile (saved to ~/.arni/config.yaml)
+arni config add \
+  --name my-pg \
   --type postgres --host localhost --database mydb --username myuser
 
 # List all profiles
 arni config list
 
-# Test connectivity without running a query
-arni connect my-pg
+# Test connectivity and print server info
+arni connect --profile my-pg
 ```
 
 ### Query
 
 ```bash
 # Pretty-print as table (default)
-arni query my-pg --sql "SELECT id, name FROM users LIMIT 5"
+arni query "SELECT id, name FROM users LIMIT 5" --profile my-pg
 
 # JSON output
-arni query my-pg --sql "SELECT * FROM orders" --format json
+arni query "SELECT * FROM orders" --profile my-pg --format json
 
 # CSV output
-arni query my-pg --sql "SELECT * FROM products" --format csv
+arni query "SELECT * FROM products" --profile my-pg --format csv
 ```
 
 ### Schema introspection
 
 ```bash
 # List all tables
-arni metadata my-pg --tables
+arni metadata --profile my-pg --tables
 
 # List views and schemas together
-arni metadata my-pg --views --schemas
+arni metadata --profile my-pg --views --schemas
 
 # Describe columns of a specific table
-arni metadata my-pg --columns --table users
+arni metadata --profile my-pg --columns --table users
 
 # Search for tables whose names contain "order"
-arni metadata my-pg --search order
+arni metadata --profile my-pg --search order
 
 # Show indexes on a table
-arni metadata my-pg --indexes --table orders
+arni metadata --profile my-pg --indexes --table orders
 ```
 
 ### Export
 
 ```bash
 # Export query result to a file
-arni export my-pg \
-  --sql "SELECT * FROM users" \
+arni export "SELECT * FROM users" \
+  --profile my-pg \
   --format parquet \
   --output users.parquet
 
-arni export my-pg \
-  --sql "SELECT * FROM events WHERE date > '2024-01-01'" \
+arni export "SELECT * FROM events WHERE date > '2024-01-01'" \
+  --profile my-pg \
   --format csv \
   --output events.csv
 ```
@@ -213,6 +214,7 @@ arni export my-pg \
 | **[MCP Server](docs/mcp.md)** | Connect Claude and other AI agents directly to your databases |
 | **[Architecture Guide](docs/architecture.md)** | Codebase internals, trait hierarchy, and how to add a new adapter |
 | **[Examples](crates/arni/examples/README.md)** | Runnable programs: analytics, multi-adapter comparison |
+| **[Axum API Example](examples/axum-api/README.md)** | Full Axum HTTP server using arni as a library — zero-config SQLite, swap to any database |
 | **[Local Databases](docs/local-databases.md)** | Spin up PostgreSQL, MySQL, MongoDB and more via Docker/Podman |
 
 ## Local Development with Databases

@@ -1,6 +1,6 @@
-# arni-data Examples
+# arni Examples
 
-Runnable examples that demonstrate real-world usage patterns for `arni-data`.
+Runnable examples that demonstrate real-world usage patterns for the `arni` library.
 
 All examples that use DuckDB or SQLite run **entirely in-memory** — no server or credentials required.
 
@@ -13,7 +13,7 @@ All examples that use DuckDB or SQLite run **entirely in-memory** — no server 
 The fastest path from zero to a working query. Connects to an in-memory DuckDB database, writes a Polars DataFrame, queries it back, and inspects the table schema.
 
 ```bash
-cargo run --example quickstart -p arni-data --features duckdb
+cargo run --example quickstart -p arni --features duckdb
 ```
 
 **Concepts:** `connect`, `export_dataframe`, `query_df`, `describe_table`
@@ -25,7 +25,7 @@ cargo run --example quickstart -p arni-data --features duckdb
 A complete analytics workflow: seed data, run SQL aggregations and window functions, append rows with `bulk_insert`, apply updates via a typed `FilterExpr` predicate, remove rows with `bulk_delete`, and close with schema introspection.
 
 ```bash
-cargo run --example analytics -p arni-data --features duckdb
+cargo run --example analytics -p arni --features duckdb
 ```
 
 **Concepts:** `export_dataframe`, `query_df`, `bulk_insert`, `bulk_update`, `bulk_delete`, `FilterExpr`, `describe_table`, `get_server_info`
@@ -37,7 +37,7 @@ cargo run --example analytics -p arni-data --features duckdb
 Writes the same Polars DataFrame to both DuckDB and SQLite using identical API calls, runs the same SQL query against each backend, and asserts the results match. Demonstrates that adapter-agnostic code is a first-class reality, not just a promise.
 
 ```bash
-cargo run --example multi_adapter -p arni-data --features "duckdb sqlite"
+cargo run --example multi_adapter -p arni --features "duckdb sqlite"
 ```
 
 **Concepts:** `export_dataframe`, `query_df`, `list_tables`, `get_server_info`, adapter interchangeability
@@ -62,6 +62,7 @@ let config = ConnectionConfig {
     username: Some("myuser".to_string()),
     use_ssl: false,
     parameters: HashMap::new(),
+    pool_config: None,
 };
 
 let mut adapter = PostgresAdapter::new(config.clone());
@@ -71,7 +72,7 @@ adapter.connect(&config, Some("mypassword")).await?;
 Enable the matching feature:
 
 ```bash
-cargo run --example quickstart -p arni-data --features postgres
+cargo run --example quickstart -p arni --features postgres
 ```
 
 For local development databases, see [`docs/local-databases.md`](../../../../docs/local-databases.md).

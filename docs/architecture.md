@@ -101,15 +101,16 @@ Describes how to reach a database. All adapters accept the same struct:
 
 ```rust
 pub struct ConnectionConfig {
-    pub id:         String,              // Unique identifier
-    pub name:       String,              // Human-readable label
-    pub db_type:    DatabaseType,        // Postgres | MySQL | SQLite | …
-    pub host:       Option<String>,
-    pub port:       Option<u16>,
-    pub database:   String,             // DB name, or ":memory:", or file path
-    pub username:   Option<String>,
-    pub use_ssl:    bool,
-    pub parameters: HashMap<String, String>, // Driver-specific extras
+    pub id:          String,              // Unique identifier
+    pub name:        String,              // Human-readable label
+    pub db_type:     DatabaseType,        // Postgres | MySQL | SQLite | …
+    pub host:        Option<String>,
+    pub port:        Option<u16>,
+    pub database:    String,              // DB name, or ":memory:", or file path
+    pub username:    Option<String>,
+    pub use_ssl:     bool,
+    pub parameters:  HashMap<String, String>, // Driver-specific extras (incl. password)
+    pub pool_config: Option<PoolConfig>,  // Connection pool settings
 }
 ```
 
@@ -239,7 +240,7 @@ Each database driver is gated behind a Cargo feature to keep compile times and b
 
 ```toml
 # Cargo.toml (user's project)
-arni = { version = "0.1", features = ["duckdb", "postgres"] }
+arni = { version = "0.2", features = ["duckdb", "postgres"] }
 ```
 
 In `crates/arni/Cargo.toml`:
@@ -426,12 +427,7 @@ Located in `tests/<adapter>.rs`. Tests are gated by environment variables:
 
 ```bash
 TEST_POSTGRES_AVAILABLE=true \
-TEST_POSTGRES_HOST=localhost \
-TEST_POSTGRES_PORT=5432 \
-TEST_POSTGRES_DATABASE=test_db \
-TEST_POSTGRES_USERNAME=test_user \
-TEST_POSTGRES_PASSWORD=test_password \
-cargo test --features postgres --test postgres -- --include-ignored
+cargo test --features postgres -p arni --test postgres
 ```
 
 DuckDB and SQLite tests use in-memory databases and run unconditionally:

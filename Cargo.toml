@@ -5,6 +5,7 @@ members = [
     "crates/arni-cli",
     "crates/arni-logging",
     "crates/arni-mcp",
+    "examples/axum-api",
 ]
 
 [workspace.package]

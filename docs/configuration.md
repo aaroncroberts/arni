@@ -26,7 +26,7 @@ profile will return a clear error.
 You can also point to an explicit file:
 
 ```bash
-ARNI_CONFIG=/etc/arni/prod.yaml arni query prod-pg --sql "SELECT 1"
+ARNI_CONFIG=/etc/arni/prod.yaml arni query "SELECT 1" --profile prod-pg
 ```
 
 ---
