@@ -1,7 +1,7 @@
 //! Smoke tests that verify the integration test harness itself compiles
 //! and that its public helpers behave correctly.
 //!
-//! Run with: `cargo test -p arni-data --test harness`
+//! Run with: `cargo test -p arni --test harness`
 
 mod common;
 

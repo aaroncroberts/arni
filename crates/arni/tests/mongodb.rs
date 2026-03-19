@@ -6,7 +6,7 @@
 //! Set TEST_MONGODB_AVAILABLE=true to enable:
 //! ```bash
 //! export TEST_MONGODB_AVAILABLE=true
-//! cargo test -p arni-data --features mongodb --test mongodb
+//! cargo test -p arni --features mongodb --test mongodb
 //! ```
 
 mod common;

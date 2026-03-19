@@ -31,7 +31,7 @@ const COMPOSE_FILE: &str = "compose.yml";
 #[command(
     author,
     version,
-    about = "Unified database access — every query returns a Polars DataFrame"
+    about = "Unified database access — query any database, get QueryResult or DataFrame"
 )]
 #[command(
     long_about = "Unified database access for Rust.\n\nConnect to PostgreSQL, MySQL, MongoDB, Oracle, SQL Server, DuckDB, or SQLite\nthrough a single trait-based API and receive every result as a Polars DataFrame.\n\nFor agent/script use, add --json to any command to receive a machine-readable\n{ok, …} envelope instead of human-readable formatted output.\n\nDiscovery flags (require no subcommand):\n  arni --list-tools       JSON list of all commands with argument schemas\n  arni --capabilities     JSON of supported database types and features\n  arni --schema <cmd>     JSON input/output schema for a specific command"

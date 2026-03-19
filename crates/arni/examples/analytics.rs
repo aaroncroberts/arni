@@ -13,7 +13,7 @@
 //!  - `get_server_info`   — read engine version metadata
 //!
 //! Run with:
-//!   cargo run --example analytics -p arni-data --features duckdb
+//!   cargo run --example analytics -p arni --features duckdb,polars
 
 use std::collections::HashMap;
 
@@ -21,7 +21,7 @@ use arni::{
     adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter, FilterExpr,
     QueryValue,
 };
-use polars::prelude::*;
+use arni::polars::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

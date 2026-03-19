@@ -5,7 +5,7 @@
 //!
 //! Run with:
 //! ```bash
-//! cargo test -p arni-data --features sqlite --test sqlite
+//! cargo test -p arni --features sqlite --test sqlite
 //! ```
 
 mod common;

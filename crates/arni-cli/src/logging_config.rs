@@ -212,7 +212,7 @@ pub fn write_default_logging_config(config_dir: &Path) -> Result<()> {
     }
     let default_yaml = "\
 # arni-cli logging configuration
-# Docs: https://github.com/acroberts16/arni
+# Docs: https://github.com/aaroncroberts/arni
 
 # Default log level (override at runtime with: arni --log-level debug <command>)
 # Options: error | warn | info | debug | trace

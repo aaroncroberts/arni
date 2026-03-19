@@ -57,6 +57,19 @@ duckdb = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }
 # serde_yaml is already a regular dependency — no need to repeat it here
+anyhow = { workspace = true }
+
+[[example]]
+name = "quickstart"
+required-features = ["duckdb", "polars"]
+
+[[example]]
+name = "multi_adapter"
+required-features = ["duckdb", "sqlite", "polars"]
+
+[[example]]
+name = "analytics"
+required-features = ["duckdb", "polars"]
 
 [features]
 default = []

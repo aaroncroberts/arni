@@ -12,7 +12,7 @@
 //!  - `get_server_info`  — show which engine you're talking to
 //!
 //! Run with:
-//!   cargo run --example multi_adapter -p arni-data --features "duckdb sqlite"
+//!   cargo run --example multi_adapter -p arni --features "duckdb,sqlite,polars"
 
 use std::collections::HashMap;
 
@@ -20,7 +20,7 @@ use arni::{
     adapters::duckdb::DuckDbAdapter, adapters::sqlite::SqliteAdapter, ConnectionConfig,
     DatabaseType, DbAdapter,
 };
-use polars::prelude::*;
+use arni::polars::prelude::*;
 
 /// Return the same seed DataFrame every time.
 fn seed_data() -> anyhow::Result<DataFrame> {

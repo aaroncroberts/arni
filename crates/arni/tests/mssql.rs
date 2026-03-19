@@ -6,7 +6,7 @@
 //! Set TEST_MSSQL_AVAILABLE=true to enable:
 //! ```bash
 //! export TEST_MSSQL_AVAILABLE=true
-//! cargo test -p arni-data --features mssql --test mssql
+//! cargo test -p arni --features mssql --test mssql
 //! ```
 
 mod common;

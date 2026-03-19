@@ -6,7 +6,7 @@
 //! Set TEST_MYSQL_AVAILABLE=true to enable:
 //! ```bash
 //! export TEST_MYSQL_AVAILABLE=true
-//! cargo test -p arni-data --features mysql --test mysql
+//! cargo test -p arni --features mysql --test mysql
 //! ```
 
 mod common;

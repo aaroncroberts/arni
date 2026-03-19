@@ -5,12 +5,12 @@
 //! every other supported backend — only the config and adapter type change.
 //!
 //! Run with:
-//!   cargo run --example quickstart -p arni-data --features duckdb
+//!   cargo run --example quickstart -p arni --features duckdb,polars
 
 use std::collections::HashMap;
 
 use arni::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
-use polars::prelude::*;
+use arni::polars::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
