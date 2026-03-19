@@ -426,7 +426,7 @@ cargo clippy --fix
 - **Scripts:** [scripts/README.md](../scripts/README.md)
 - **Integration Tests:** [tests/README.md](../tests/README.md)
 - **CI/CD:** [.github/workflows/README.md](../.github/workflows/README.md)
-- **Issue Tracking:** Run `bd onboard` for beads workflow
+- **Issue Tracking:** See [docs/issue-tracking.md](../docs/issue-tracking.md) — issues synced to [aaroncroberts/arni on DoltHub](https://www.dolthub.com/repositories/aaroncroberts/arni)
 - **Rust Book:** https://doc.rust-lang.org/book/
 - **Clippy Lints:** https://rust-lang.github.io/rust-clippy/
 
