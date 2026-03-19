@@ -2106,13 +2106,13 @@ mod tests {
             .await
             .expect("Failed to insert data");
 
-        // Read table as DataFrame
+        // Read table as QueryResult
         let result = DbAdapter::read_table(&adapter, "test_read_table", None).await;
         assert!(result.is_ok());
 
-        let df = result.unwrap();
-        assert_eq!(df.height(), 2);
-        assert_eq!(df.width(), 2);
+        let qr = result.unwrap();
+        assert_eq!(qr.rows.len(), 2);
+        assert_eq!(qr.columns.len(), 2);
 
         // Clean up
         adapter
@@ -2125,6 +2125,7 @@ mod tests {
             .expect("Failed to disconnect");
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore]
     async fn test_query_df() {
