@@ -10,6 +10,7 @@ use mongodb::{
     options::ClientOptions,
     Client,
 };
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use regex::Regex;
 use std::collections::HashMap;
@@ -514,6 +515,7 @@ impl DbAdapter for MongoDbAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, _df), fields(adapter = "mongodb", collection = %_table_name))]
     async fn export_dataframe(
         &self,
@@ -527,8 +529,9 @@ impl DbAdapter for MongoDbAdapter {
         ))
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self), fields(adapter = "mongodb", collection = %_table_name))]
-    async fn read_table(
+    async fn read_table_df(
         &self,
         _table_name: &str,
         _schema: Option<&str>,
@@ -538,6 +541,7 @@ impl DbAdapter for MongoDbAdapter {
         ))
     }
 
+    #[cfg(feature = "polars")]
     async fn query_df(&self, _query: &str) -> Result<DataFrame, DataError> {
         Err(DataError::NotSupported(
             "query_df not yet implemented for MongoDB".to_string(),

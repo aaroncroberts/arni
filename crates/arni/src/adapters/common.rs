@@ -5,10 +5,12 @@
 
 use crate::adapter::QueryValue;
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 
 pub(crate) type Result<T> = std::result::Result<T, DataError>;
 
+#[cfg(feature = "polars")]
 /// Convert a single value from a Polars [`Series`] at `row_idx` to an SQL literal string.
 ///
 /// # Parameters
@@ -142,6 +144,7 @@ pub(crate) fn series_value_to_sql_literal(
 ///
 /// Convenience wrapper around [`series_value_to_sql_literal`] with `bool_as_int = true`.
 /// Used by SQLite, SQL Server (MSSQL), and Oracle adapters.
+#[cfg(feature = "polars")]
 #[allow(dead_code)]
 pub(crate) fn series_value_to_sql_literal_int_bool(
     series: &Series,
@@ -154,6 +157,7 @@ pub(crate) fn series_value_to_sql_literal_int_bool(
 ///
 /// Convenience wrapper around [`series_value_to_sql_literal`] with `bool_as_int = false`.
 /// Used by DuckDB and standard-SQL adapters.
+#[cfg(feature = "polars")]
 #[allow(dead_code)]
 pub(crate) fn series_value_to_sql_literal_bool_keyword(
     series: &Series,
@@ -247,66 +251,78 @@ pub(crate) fn sql_preview(sql: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "polars")]
     fn bool_series(vals: &[bool]) -> Series {
         Series::new("col".into(), vals)
     }
 
+    #[cfg(feature = "polars")]
     fn int_series(vals: &[i64]) -> Series {
         Series::new("col".into(), vals)
     }
 
+    #[cfg(feature = "polars")]
     fn str_series(vals: &[&str]) -> Series {
         Series::new("col".into(), vals)
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bool_as_int_true() {
         let s = bool_series(&[true]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "1");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bool_as_int_false() {
         let s = bool_series(&[false]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "0");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bool_as_keyword_true() {
         let s = bool_series(&[true]);
         assert_eq!(series_value_to_sql_literal(&s, 0, false).unwrap(), "TRUE");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bool_as_keyword_false() {
         let s = bool_series(&[false]);
         assert_eq!(series_value_to_sql_literal(&s, 0, false).unwrap(), "FALSE");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn integer_value() {
         let s = int_series(&[42]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "42");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn string_value_escaped() {
         let s = str_series(&["it's"]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "'it''s'");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn null_value() {
         let s = Series::new_null("col".into(), 1);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "NULL");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn float_nan_is_null() {
         let s = Series::new("col".into(), &[f64::NAN]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "NULL");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn float64_inf_is_null() {
         let pos = Series::new("col".into(), &[f64::INFINITY]);
@@ -323,6 +339,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn float32_inf_is_null() {
         let pos = Series::new("col".into(), &[f32::INFINITY]);
@@ -331,6 +348,7 @@ mod tests {
         assert_eq!(series_value_to_sql_literal(&neg, 0, true).unwrap(), "NULL");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bytes_render_as_hex_literal() {
         let bytes: Vec<u8> = vec![0xCA, 0xFE, 0xBA, 0xBE];
@@ -341,6 +359,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn empty_bytes_render_as_empty_hex_literal() {
         let empty: Vec<u8> = vec![];

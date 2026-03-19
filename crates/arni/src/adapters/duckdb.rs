@@ -4,6 +4,7 @@ use crate::adapter::{
     ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -180,6 +181,7 @@ impl DuckDbAdapter {
         super::common::query_value_to_sql_literal(value, false)
     }
 
+    #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to the corresponding DuckDB SQL type name.
     fn polars_dtype_to_duckdb_type(dtype: &DataType) -> &'static str {
         match dtype {
@@ -200,6 +202,7 @@ impl DuckDbAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     /// Extract the value at `row_idx` from `series` as a DuckDB SQL literal string.
     ///
     /// Delegates to the shared implementation in [`super::common`], with booleans
@@ -383,6 +386,7 @@ impl DbAdapter for DuckDbAdapter {
         self.execute_query_blocking(query.to_string()).await
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "duckdb", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -472,8 +476,9 @@ impl DbAdapter for DuckDbAdapter {
         Ok(rows_inserted)
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self), fields(adapter = "duckdb", table = %table_name))]
-    async fn read_table(&self, table_name: &str, _schema: Option<&str>) -> Result<DataFrame> {
+    async fn read_table_df(&self, table_name: &str, _schema: Option<&str>) -> Result<DataFrame> {
         let query = format!("SELECT * FROM {}", table_name);
         let result = self.execute_query(&query).await?;
         result.to_dataframe()
@@ -1045,6 +1050,7 @@ mod tests {
 
     // ── polars_dtype_to_duckdb_type ─────────────────────────────────────────
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_int_types() {
         assert_eq!(
@@ -1065,6 +1071,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_uint_types() {
         assert_eq!(
@@ -1085,6 +1092,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_float_types() {
         assert_eq!(
@@ -1097,6 +1105,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_string_and_bool() {
         assert_eq!(
@@ -1113,6 +1122,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_unknown_falls_back_to_varchar() {
         // Date, Datetime, etc. fall back to VARCHAR
@@ -1176,6 +1186,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_export_dataframe_not_connected_returns_error() {
         use polars::prelude::*;

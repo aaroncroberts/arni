@@ -10,9 +10,29 @@ description = "MCP server for arni — exposes all database operations as AI-cal
 keywords = ["mcp", "database", "ai", "claude", "sql"]
 categories = ["database"]
 
+[features]
+# Default: useful MCP server with the most-common SQL databases.
+# Override at build time: cargo build -p arni-mcp --no-default-features --features postgres
+default = ["postgres", "sqlite"]
+
+# ── Database pass-through features ─────────────────────────────────────────────
+postgres      = ["arni/postgres"]
+mysql         = ["arni/mysql"]
+sqlite        = ["arni/sqlite"]
+mongodb       = ["arni/mongodb"]
+mssql         = ["arni/mssql"]
+oracle        = ["arni/oracle"]
+duckdb        = ["arni/duckdb"]
+duckdb-bundled = ["arni/duckdb-bundled"]
+polars        = ["arni/polars"]
+
+# Convenience bundles
+all-databases = ["postgres", "mysql", "sqlite", "mongodb", "mssql", "oracle", "duckdb"]
+full          = ["all-databases", "polars"]
+
 [dependencies]
 # Local
-arni = { path = "../arni", features = ["all-databases"] }
+arni = { path = "../arni" }
 arni-logging = { path = "../arni-logging" }
 
 # MCP SDK

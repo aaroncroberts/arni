@@ -12,9 +12,31 @@ description = "Command-line interface for the Arni multi-database library"
 name = "arni"
 path = "src/main.rs"
 
+[features]
+# Default: a useful CLI with Postgres + SQLite and DataFrame output.
+# Build with --no-default-features to select only what you need.
+default = ["postgres", "sqlite", "polars"]
+
+# ── Database pass-through features ─────────────────────────────────────────────
+postgres      = ["arni/postgres"]
+mysql         = ["arni/mysql"]
+sqlite        = ["arni/sqlite"]
+mongodb       = ["arni/mongodb"]
+mssql         = ["arni/mssql"]
+oracle        = ["arni/oracle"]
+duckdb        = ["arni/duckdb"]
+duckdb-bundled = ["arni/duckdb-bundled"]
+
+# ── DataFrame output support ────────────────────────────────────────────────────
+polars = ["arni/polars"]
+
+# Convenience bundles
+all-databases = ["postgres", "mysql", "sqlite", "mongodb", "mssql", "oracle", "duckdb"]
+full          = ["all-databases", "polars"]
+
 [dependencies]
 # Local dependencies
-arni = { path = "../arni", features = ["all-databases"] }
+arni = { path = "../arni" }
 arni-logging = { path = "../arni-logging" }
 arni-mcp = { path = "../arni-mcp" }
 
@@ -33,7 +55,7 @@ tracing-subscriber = { workspace = true }
 # CLI-specific dependencies
 figlet-rs = "0.1"
 colored = "3.1"
-polars = { workspace = true, features = ["csv"] }
+# polars comes through arni/polars — no direct dep needed
 rpassword = "7"
 comfy-table = "7"
 

@@ -57,6 +57,7 @@ use crate::adapter::{
     ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -179,6 +180,7 @@ impl OracleAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to an Oracle SQL type string
     fn polars_dtype_to_oracle_type(dtype: &DataType) -> &'static str {
         match dtype {
@@ -195,6 +197,7 @@ impl OracleAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     /// Extract a value from a Series at `row_idx` as an Oracle SQL literal
     fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
         if series.is_null().get(row_idx).unwrap_or(false) {
@@ -739,6 +742,7 @@ impl DbAdapter for OracleAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "oracle", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -1625,6 +1629,7 @@ mod tests {
 
     // ── dtype mapping helpers ────────────────────────────────────────────────
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_int_types() {
         use polars::prelude::DataType;
@@ -1650,6 +1655,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_float_types() {
         use polars::prelude::DataType;
@@ -1663,6 +1669,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_string_and_bool() {
         use polars::prelude::DataType;
@@ -1680,6 +1687,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_unknown_falls_back_to_varchar2() {
         use polars::prelude::DataType;

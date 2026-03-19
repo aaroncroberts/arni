@@ -7,14 +7,16 @@ mod json_output;
 mod logging_config;
 
 use arni::adapter::{ConnectionConfig, DatabaseType, QueryValue, TableSearchMode};
-use arni::export::{to_bytes, to_file, DataFormat};
+#[cfg(feature = "polars")]
+use arni::{to_bytes, to_file, DataFormat};
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
 use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as CTable};
 use config::{ConfigStore, ConnectionEntry};
 use figlet_rs::FIGfont;
 use filter::{json_to_query_value, parse_bulk_insert_data, parse_filter_json};
-use polars::prelude::DataFrame;
+#[cfg(feature = "polars")]
+use arni::polars::prelude::DataFrame;
 use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
@@ -1027,63 +1029,87 @@ async fn handle_query_command(
         )
     })?;
 
-    let mut df = adapter
-        .query_df(&query)
-        .await
-        .map_err(|e| format!("Query failed: {}", e))?;
+    #[cfg(feature = "polars")]
+    {
+        let mut df = adapter
+            .query_df(&query)
+            .await
+            .map_err(|e| format!("Query failed: {}", e))?;
 
-    // --json overrides --format: always emit the agent envelope.
-    if json_mode {
-        json_output::emit(&json_output::query_result(&df));
-        return Ok(());
+        // --json overrides --format: always emit the agent envelope.
+        if json_mode {
+            json_output::emit(&json_output::query_result(&df));
+            return Ok(());
+        }
+
+        // Human-readable output — validate and apply --format.
+        // "table"/"t" is a CLI-only display mode; all other values must be a valid DataFormat.
+        let fmt = format.to_lowercase();
+        let is_table = matches!(fmt.as_str(), "table" | "t");
+        let data_fmt: Option<DataFormat> = if is_table {
+            None
+        } else {
+            let parsed: DataFormat = fmt.parse().map_err(|_: String| {
+                format!("Unknown format '{}'. Valid: table, json, csv, xml", format)
+            })?;
+            // Binary formats can only be used with `arni export`.
+            if matches!(parsed, DataFormat::Parquet | DataFormat::Excel) {
+                return Err(format!(
+                    "'{}' is a binary format; use `arni export --format {} --output file.{}` instead",
+                    fmt,
+                    fmt,
+                    parsed.extension()
+                )
+                .into());
+            }
+            Some(parsed)
+        };
+
+        match data_fmt {
+            None => {
+                // "table" / "t"
+                println!("{}", df_to_table(&df));
+                println!(
+                    "\n{} row(s) × {} column(s)",
+                    df.height().to_string().bright_white(),
+                    df.width().to_string().bright_white()
+                );
+            }
+            Some(DataFormat::Json) => {
+                let bytes = to_bytes(&mut df, DataFormat::Json)?;
+                println!("{}", String::from_utf8(bytes)?);
+            }
+            Some(DataFormat::Csv) => {
+                let bytes = to_bytes(&mut df, DataFormat::Csv)?;
+                print!("{}", String::from_utf8(bytes)?);
+            }
+            Some(DataFormat::Xml) => {
+                let bytes = to_bytes(&mut df, DataFormat::Xml)?;
+                println!("{}", String::from_utf8(bytes)?);
+            }
+            Some(_) => unreachable!("binary formats already rejected above"),
+        }
     }
 
-    // Human-readable output — validate and apply --format.
-    // "table"/"t" is a CLI-only display mode; all other values must be a valid DataFormat.
-    let fmt = format.to_lowercase();
-    let is_table = matches!(fmt.as_str(), "table" | "t");
-    let data_fmt: Option<DataFormat> = if is_table {
-        None
-    } else {
-        let parsed: DataFormat = fmt.parse().map_err(|_: String| {
-            format!("Unknown format '{}'. Valid: table, json, csv, xml", format)
-        })?;
-        // Binary formats can only be used with `arni export`.
-        if matches!(parsed, DataFormat::Parquet | DataFormat::Excel) {
-            return Err(format!(
-                "'{}' is a binary format; use `arni export --format {} --output file.{}` instead",
-                fmt,
-                fmt,
-                parsed.extension()
-            )
-            .into());
-        }
-        Some(parsed)
-    };
+    #[cfg(not(feature = "polars"))]
+    {
+        let qr = adapter
+            .execute_query(&query)
+            .await
+            .map_err(|e| format!("Query failed: {}", e))?;
 
-    match data_fmt {
-        None => {
-            // "table" / "t"
-            println!("{}", df_to_table(&df));
-            println!(
-                "\n{} row(s) × {} column(s)",
-                df.height().to_string().bright_white(),
-                df.width().to_string().bright_white()
-            );
+        if json_mode {
+            json_output::emit(&json_output::query_result_from_qr(&qr));
+            return Ok(());
         }
-        Some(DataFormat::Json) => {
-            let bytes = to_bytes(&mut df, DataFormat::Json)?;
-            println!("{}", String::from_utf8(bytes)?);
-        }
-        Some(DataFormat::Csv) => {
-            let bytes = to_bytes(&mut df, DataFormat::Csv)?;
-            print!("{}", String::from_utf8(bytes)?);
-        }
-        Some(DataFormat::Xml) => {
-            let bytes = to_bytes(&mut df, DataFormat::Xml)?;
-            println!("{}", String::from_utf8(bytes)?);
-        }
-        Some(_) => unreachable!("binary formats already rejected above"),
+
+        println!("{}", qr_to_table(&qr));
+        println!(
+            "\n{} row(s) × {} column(s)",
+            qr.rows.len().to_string().bright_white(),
+            qr.columns.len().to_string().bright_white()
+        );
+        let _ = format; // suppress unused warning
     }
 
     Ok(())
@@ -1457,71 +1483,83 @@ async fn handle_export_command(
     output: String,
     json_mode: bool,
 ) -> Result<(), Box<dyn Error>> {
-    // Parse and validate format before connecting (fast fail, no wasted connection).
-    let data_fmt: DataFormat = format.parse().map_err(|e: String| e)?;
+    #[cfg(feature = "polars")]
+    {
+        // Parse and validate format before connecting (fast fail, no wasted connection).
+        let data_fmt: DataFormat = format.parse().map_err(|e: String| e)?;
 
-    let store = ConfigStore::load(None)?;
-    let adapter = db::connect(&store, &profile).await.map_err(|e| {
-        format!(
-            "{}\nhint: run `arni config list` to see available profiles",
-            e
-        )
-    })?;
+        let store = ConfigStore::load(None)?;
+        let adapter = db::connect(&store, &profile).await.map_err(|e| {
+            format!(
+                "{}\nhint: run `arni config list` to see available profiles",
+                e
+            )
+        })?;
 
-    if !json_mode {
-        println!("{}", "Executing query...".dimmed());
+        if !json_mode {
+            println!("{}", "Executing query...".dimmed());
+        }
+        let mut df = adapter
+            .query_df(&query)
+            .await
+            .map_err(|e| format!("Query failed: {}", e))?;
+
+        let rows = df.height();
+
+        if !json_mode {
+            println!(
+                "Fetched {} row(s). Writing {} to '{}'...",
+                rows.to_string().bright_white(),
+                data_fmt.to_string().cyan(),
+                output.bright_white()
+            );
+        }
+
+        match data_fmt {
+            DataFormat::Json => {
+                let bytes = to_bytes(&mut df, DataFormat::Json)?;
+                std::fs::write(&output, bytes)?;
+            }
+            DataFormat::Csv => {
+                let bytes = to_bytes(&mut df, DataFormat::Csv)?;
+                std::fs::write(&output, bytes)?;
+            }
+            DataFormat::Xml => {
+                to_file(&mut df, DataFormat::Xml, std::path::Path::new(&output))?;
+            }
+            DataFormat::Parquet => {
+                to_file(&mut df, DataFormat::Parquet, std::path::Path::new(&output))?;
+            }
+            DataFormat::Excel => {
+                to_file(&mut df, DataFormat::Excel, std::path::Path::new(&output))?;
+            }
+        }
+
+        if json_mode {
+            json_output::emit(&serde_json::json!({
+                "ok": true,
+                "file": output,
+                "rows": rows,
+                "format": format,
+            }));
+        } else {
+            println!(
+                "{} Exported {} row(s) to '{}'.",
+                "✓".bright_green(),
+                rows,
+                output.bright_white()
+            );
+        }
     }
-    let mut df = adapter
-        .query_df(&query)
-        .await
-        .map_err(|e| format!("Query failed: {}", e))?;
 
-    let rows = df.height();
-
-    if !json_mode {
-        println!(
-            "Fetched {} row(s). Writing {} to '{}'...",
-            rows.to_string().bright_white(),
-            data_fmt.to_string().cyan(),
-            output.bright_white()
-        );
+    #[cfg(not(feature = "polars"))]
+    {
+        let _ = (query, profile, format, output, json_mode);
+        return Err("The 'export' command requires the 'polars' feature. \
+                    Rebuild with: cargo install arni --features polars"
+            .into());
     }
 
-    match data_fmt {
-        DataFormat::Json => {
-            let bytes = to_bytes(&mut df, DataFormat::Json)?;
-            std::fs::write(&output, bytes)?;
-        }
-        DataFormat::Csv => {
-            let bytes = to_bytes(&mut df, DataFormat::Csv)?;
-            std::fs::write(&output, bytes)?;
-        }
-        DataFormat::Xml => {
-            to_file(&mut df, DataFormat::Xml, std::path::Path::new(&output))?;
-        }
-        DataFormat::Parquet => {
-            to_file(&mut df, DataFormat::Parquet, std::path::Path::new(&output))?;
-        }
-        DataFormat::Excel => {
-            to_file(&mut df, DataFormat::Excel, std::path::Path::new(&output))?;
-        }
-    }
-
-    if json_mode {
-        json_output::emit(&serde_json::json!({
-            "ok": true,
-            "file": output,
-            "rows": rows,
-            "format": format,
-        }));
-    } else {
-        println!(
-            "{} Exported {} row(s) to '{}'.",
-            "✓".bright_green(),
-            rows,
-            output.bright_white()
-        );
-    }
     Ok(())
 }
 
@@ -1758,9 +1796,35 @@ async fn handle_find_tables_command(
     Ok(())
 }
 
-// ─── DataFrame formatting helpers ─────────────────────────────────────────────
+// ─── Table formatting helpers ─────────────────────────────────────────────────
+
+/// Render a [`QueryResult`] as a pretty UTF-8 table (no polars required).
+fn qr_to_table(qr: &arni::QueryResult) -> String {
+    let mut table = CTable::new();
+    table.load_preset(presets::UTF8_FULL);
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+
+    let headers: Vec<Cell> = qr
+        .columns
+        .iter()
+        .map(|name| {
+            Cell::new(name)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan)
+        })
+        .collect();
+    table.set_header(headers);
+
+    for row in &qr.rows {
+        let cells: Vec<String> = row.iter().map(|v| v.to_string()).collect();
+        table.add_row(cells);
+    }
+
+    table.to_string()
+}
 
 /// Render a DataFrame as a pretty UTF-8 table using comfy-table.
+#[cfg(feature = "polars")]
 fn df_to_table(df: &DataFrame) -> String {
     let mut table = CTable::new();
     table.load_preset(presets::UTF8_FULL);

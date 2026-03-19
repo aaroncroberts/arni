@@ -25,6 +25,23 @@ build: ## Build in debug mode
 build-release: ## Build in release mode (optimized)
 	@./scripts/build.sh --release
 
+##@ Feature-Specific Builds
+
+build-cli: ## Build CLI with default features (postgres + sqlite + polars)
+	cargo build -p arni-cli
+
+build-cli-all: ## Build CLI with all databases + polars + bundled DuckDB
+	cargo build -p arni-cli --features all-databases,polars,duckdb-bundled
+
+build-cli-minimal: ## Build CLI with no DB drivers (useful for testing feature gating)
+	cargo build -p arni-cli --no-default-features
+
+build-mcp: ## Build MCP server with default features (postgres + sqlite)
+	cargo build -p arni-mcp
+
+build-mcp-all: ## Build MCP server with all databases + polars
+	cargo build -p arni-mcp --features all-databases,polars
+
 clean: ## Remove build artifacts
 	@./scripts/clean.sh
 

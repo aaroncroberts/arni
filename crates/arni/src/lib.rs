@@ -116,6 +116,7 @@ pub mod adapter;
 pub mod adapters;
 pub mod config;
 pub mod error;
+#[cfg(feature = "polars")]
 pub mod export;
 pub mod registry;
 
@@ -126,8 +127,14 @@ pub use adapter::{
 };
 pub use config::{ArniConfig, ConfigProfile};
 pub use error::{DataError, Result};
+#[cfg(feature = "polars")]
 pub use export::{to_bytes, to_file, DataFormat};
 pub use registry::ConnectionRegistry;
+
+/// Re-export polars so downstream crates can use it without a direct dep.
+/// Only available when the `polars` feature is enabled.
+#[cfg(feature = "polars")]
+pub use polars;
 
 /// A thread-safe, cheaply-cloneable handle to any database adapter.
 ///

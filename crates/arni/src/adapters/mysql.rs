@@ -49,6 +49,7 @@ use crate::adapter::{
     QueryValue, Result, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Executor, Row, TypeInfo};
@@ -644,6 +645,7 @@ impl DbAdapter for MySqlAdapter {
         self.execute_query(query).await
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "mysql", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -1502,6 +1504,7 @@ impl DbAdapter for MySqlAdapter {
 }
 
 impl MySqlAdapter {
+    #[cfg(feature = "polars")]
     /// Generate CREATE TABLE SQL from DataFrame schema
     fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
         let mut column_defs = Vec::new();
@@ -1537,6 +1540,7 @@ impl MySqlAdapter {
         ))
     }
 
+    #[cfg(feature = "polars")]
     /// Bind a Series value at a specific row index to a sqlx query
     fn bind_series_value<'q>(
         &self,
@@ -1991,6 +1995,7 @@ mod tests {
             .expect("Failed to disconnect");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_generate_create_table_sql() {
         use polars::prelude::*;
@@ -2018,6 +2023,7 @@ mod tests {
         assert!(sql.contains("active BOOLEAN"));
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_replace() {

@@ -29,6 +29,7 @@ use crate::adapter::{
     ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use std::collections::HashMap;
 use tiberius::{AuthMethod, Config};
@@ -210,6 +211,7 @@ impl SqlServerAdapter {
             || upper.starts_with("ALTER TRIGGER")
     }
 
+    #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to a SQL Server type string
     fn polars_dtype_to_mssql_type(dtype: &DataType) -> &'static str {
         match dtype {
@@ -228,6 +230,7 @@ impl SqlServerAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     /// Extract a value from a Series at `row_idx` as a SQL Server SQL literal
     fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
         if series.is_null().get(row_idx).unwrap_or(false) {
@@ -1113,6 +1116,7 @@ impl DbAdapter for SqlServerAdapter {
         Ok(procedures)
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "sqlserver", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -1532,6 +1536,7 @@ mod tests {
 
     // ── dtype mapping helpers ────────────────────────────────────────────────
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_int_types() {
         use polars::prelude::DataType;
@@ -1561,6 +1566,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_float_types() {
         use polars::prelude::DataType;
@@ -1574,6 +1580,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_string_and_bool() {
         use polars::prelude::DataType;
@@ -1591,6 +1598,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_unknown_falls_back_to_nvarchar_max() {
         use polars::prelude::DataType;

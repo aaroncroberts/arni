@@ -22,14 +22,31 @@ use crate::config::ConfigStore;
 pub fn create_adapter(
     config: ConnectionConfig,
 ) -> Result<Box<dyn DbAdapter + Send + Sync + 'static>> {
+    #[allow(unreachable_patterns)]
     let adapter: Box<dyn DbAdapter + Send + Sync + 'static> = match config.db_type {
+        #[cfg(feature = "postgres")]
         DatabaseType::Postgres => Box::new(arni::adapters::postgres::PostgresAdapter::new(config)),
+        #[cfg(feature = "mysql")]
         DatabaseType::MySQL => Box::new(arni::adapters::mysql::MySqlAdapter::new(config)),
+        #[cfg(feature = "sqlite")]
         DatabaseType::SQLite => Box::new(arni::adapters::sqlite::SqliteAdapter::new(config)),
+        #[cfg(feature = "mongodb")]
         DatabaseType::MongoDB => Box::new(arni::adapters::mongodb::MongoDbAdapter::new(config)),
+        #[cfg(feature = "mssql")]
         DatabaseType::SQLServer => Box::new(arni::adapters::mssql::SqlServerAdapter::new(config)),
+        #[cfg(feature = "oracle")]
         DatabaseType::Oracle => Box::new(arni::adapters::oracle::OracleAdapter::new(config)),
+        #[cfg(feature = "duckdb")]
         DatabaseType::DuckDB => Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config)),
+        db_type => {
+            return Err(anyhow!(
+                "Database type {:?} is not compiled in. \
+                 Rebuild with the appropriate feature flag, e.g.: \
+                 cargo install arni --features {:?}",
+                db_type,
+                db_type
+            ))
+        }
     };
     Ok(adapter)
 }
@@ -140,6 +157,7 @@ mod tests {
 
     // ── create_adapter dispatch ───────────────────────────────────────────────
 
+    #[cfg(feature = "postgres")]
     #[test]
     fn test_create_adapter_postgres() {
         let adapter = create_adapter(make_config(DatabaseType::Postgres));
@@ -147,6 +165,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::Postgres);
     }
 
+    #[cfg(feature = "mysql")]
     #[test]
     fn test_create_adapter_mysql() {
         let adapter = create_adapter(make_config(DatabaseType::MySQL));
@@ -154,6 +173,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::MySQL);
     }
 
+    #[cfg(feature = "sqlite")]
     #[test]
     fn test_create_adapter_sqlite() {
         let adapter = create_adapter(make_config(DatabaseType::SQLite));
@@ -161,6 +181,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::SQLite);
     }
 
+    #[cfg(feature = "mongodb")]
     #[test]
     fn test_create_adapter_mongodb() {
         let adapter = create_adapter(make_config(DatabaseType::MongoDB));
@@ -168,6 +189,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::MongoDB);
     }
 
+    #[cfg(feature = "mssql")]
     #[test]
     fn test_create_adapter_sqlserver() {
         let adapter = create_adapter(make_config(DatabaseType::SQLServer));
@@ -175,6 +197,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::SQLServer);
     }
 
+    #[cfg(feature = "oracle")]
     #[test]
     fn test_create_adapter_oracle() {
         let adapter = create_adapter(make_config(DatabaseType::Oracle));
@@ -182,11 +205,24 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::Oracle);
     }
 
+    #[cfg(feature = "duckdb")]
     #[test]
     fn test_create_adapter_duckdb() {
         let adapter = create_adapter(make_config(DatabaseType::DuckDB));
         assert!(adapter.is_ok());
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::DuckDB);
+    }
+
+    #[test]
+    fn test_create_adapter_not_compiled_in() {
+        // When no DB features are enabled, all create_adapter calls return Err.
+        // We always have at least one DB type not in defaults, e.g. Oracle.
+        #[cfg(not(feature = "oracle"))]
+        {
+            let result = create_adapter(make_config(DatabaseType::Oracle));
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("not compiled in"));
+        }
     }
 
     // ── password resolution (logic-only, no live connections) ─────────────────

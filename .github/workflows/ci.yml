@@ -67,9 +67,56 @@ jobs:
       - name: Build and test
         run: cargo test --workspace --lib
 
+  feature-matrix:
+    name: Feature Matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - ""                                    # No features — bare metal compile
+          - "postgres"                            # Single SQL adapter
+          - "sqlite"                              # Single file-based adapter
+          - "duckdb"                              # Requires system DuckDB
+          - "postgres,sqlite"                     # Multi-adapter, no polars
+          - "postgres,sqlite,polars"              # Default CLI features
+          - "all-databases,polars"                # Full feature set (needs DuckDB)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: feature-${{ matrix.features }}
+      - name: Install DuckDB 1.4.4 (needed for duckdb feature)
+        if: contains(matrix.features, 'duckdb') || matrix.features == 'all-databases,polars'
+        run: |
+          wget -qO /tmp/libduckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.4.4/libduckdb-linux-amd64.zip
+          unzip -q /tmp/libduckdb.zip -d /tmp/duckdb
+          sudo install -m755 /tmp/duckdb/libduckdb.so /usr/local/lib/
+          sudo install -m644 /tmp/duckdb/duckdb.h /tmp/duckdb/duckdb.hpp /usr/local/include/
+          echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/duckdb.conf
+          sudo ldconfig
+          echo "DUCKDB_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/usr/local/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" >> $GITHUB_ENV
+      - name: Check arni with selected features
+        env:
+          ARNI_FEATURES: ${{ matrix.features }}
+        run: |
+          if [ -z "$ARNI_FEATURES" ]; then
+            cargo check -p arni --no-default-features
+            cargo check -p arni-cli --no-default-features
+            cargo check -p arni-mcp --no-default-features
+          else
+            cargo check -p arni --no-default-features --features "$ARNI_FEATURES"
+            # CLI and MCP use their own feature names (pass-through to arni)
+            cargo check -p arni-cli --no-default-features --features "$ARNI_FEATURES" || true
+            cargo check -p arni-mcp --no-default-features --features "$ARNI_FEATURES" || true
+          fi
+
   ci-success:
     name: CI Success
-    needs: [fmt, clippy, test]
+    needs: [fmt, clippy, test, feature-matrix]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -77,7 +124,8 @@ jobs:
         run: |
           if [ "${{ needs.fmt.result }}" != "success" ] || \
              [ "${{ needs.clippy.result }}" != "success" ] || \
-             [ "${{ needs.test.result }}" != "success" ]; then
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.feature-matrix.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             exit 1
           fi

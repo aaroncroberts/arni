@@ -12,6 +12,7 @@ use crate::adapter::{
     ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column, Row, TypeInfo};
@@ -109,6 +110,7 @@ impl SqliteAdapter {
         super::common::query_value_to_sql_literal(value, true)
     }
 
+    #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to the corresponding SQLite type affinity.
     fn polars_dtype_to_sqlite_type(dtype: &DataType) -> &'static str {
         match dtype {
@@ -122,6 +124,7 @@ impl SqliteAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     /// Extract the value at `row_idx` from `series` as a SQLite SQL literal.
     ///
     /// Delegates to the shared implementation in [`super::common`], with booleans
@@ -710,6 +713,7 @@ impl DbAdapter for SqliteAdapter {
         Ok(vec![])
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "sqlite", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,

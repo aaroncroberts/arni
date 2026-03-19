@@ -7,6 +7,7 @@
 //! while maintaining support for traditional row-based queries through [`QueryResult`].
 
 use async_trait::async_trait;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -321,7 +322,10 @@ pub struct QueryResult {
 }
 
 impl QueryResult {
-    /// Convert QueryResult to a Polars DataFrame
+    /// Convert QueryResult to a Polars DataFrame.
+    ///
+    /// Requires the `polars` feature.
+    #[cfg(feature = "polars")]
     pub fn to_dataframe(&self) -> Result<DataFrame> {
         if self.rows.is_empty() {
             // Create empty DataFrame with column names
@@ -351,7 +355,8 @@ impl QueryResult {
         Ok(DataFrame::new(height, columns)?)
     }
 
-    /// Helper to convert a column of QueryValues to a Series
+    /// Helper to convert a column of QueryValues to a Series.
+    #[cfg(feature = "polars")]
     fn values_to_series(col_name: &str, values: &[&QueryValue]) -> Result<Series> {
         // Find first non-null to determine type
         let sample = values.iter().find(|v| !matches!(v, QueryValue::Null));
@@ -805,49 +810,81 @@ pub trait DbAdapter: Send + Sync {
     /// ```
     fn metadata(&self) -> AdapterMetadata<'_>;
 
-    // ===== DataFrame Operations (Primary Interface) =====
+    // ===== Lightweight Query Operations (always available, no polars required) =====
 
-    /// Read a table as a Polars DataFrame
+    /// Execute a query and return results as lightweight rows.
     ///
-    /// This is the primary method for reading data from the database.
+    /// This is the base data-access method — always available regardless of feature flags.
+    /// For DataFrame results, use [`read_table_df`](Self::read_table_df) (requires `polars` feature).
+    async fn execute_query(&self, query: &str) -> Result<QueryResult>;
+
+    /// Read a table and return rows as [`QueryResult`].
     ///
-    /// # Arguments
-    /// * `table_name` - Name of the table to read
-    /// * `schema` - Optional schema/database name
+    /// Lightweight alternative to [`read_table_df`](Self::read_table_df): no polars required,
+    /// returns `Vec<Vec<QueryValue>>`. Use this when you only need raw row access.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let df = adapter.read_table("users", None).await?;
-    /// println!("Loaded {} rows", df.height());
+    /// let rows = adapter.read_table("users", None).await?;
+    /// println!("Loaded {} rows", rows.rows.len());
     /// ```
-    async fn read_table(&self, table_name: &str, schema: Option<&str>) -> Result<DataFrame> {
-        // Default implementation: SELECT * and convert to DataFrame
+    async fn read_table(&self, table_name: &str, schema: Option<&str>) -> Result<QueryResult> {
         let schema_prefix = schema.map(|s| format!("{}.", s)).unwrap_or_default();
         let query = format!("SELECT * FROM {}{}", schema_prefix, table_name);
-        let result = self.execute_query(&query).await?;
-        result.to_dataframe()
+        self.execute_query(&query).await
     }
 
-    /// Export a Polars DataFrame to a database table
+    // ===== DataFrame Operations (require `polars` feature) =====
+
+    /// Read a table as a Polars [`DataFrame`].
     ///
-    /// This is the primary method for writing data to the database.
+    /// Requires the `polars` feature. For a polars-free alternative, use
+    /// [`read_table`](Self::read_table) which returns a lightweight [`QueryResult`].
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let df = adapter.read_table_df("users", None).await?;
+    /// println!("Loaded {} rows", df.height());
+    /// ```
+    #[cfg(feature = "polars")]
+    async fn read_table_df(&self, table_name: &str, schema: Option<&str>) -> Result<DataFrame> {
+        self.read_table(table_name, schema).await?.to_dataframe()
+    }
+
+    /// Execute a SQL query and return results as a [`DataFrame`].
+    ///
+    /// Requires the `polars` feature. For a polars-free alternative, use
+    /// [`execute_query`](Self::execute_query) which returns a lightweight [`QueryResult`].
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let df = adapter.query_df("SELECT * FROM users WHERE age > 25").await?;
+    /// ```
+    #[cfg(feature = "polars")]
+    async fn query_df(&self, query: &str) -> Result<DataFrame> {
+        self.execute_query(query).await?.to_dataframe()
+    }
+
+    /// Export a Polars [`DataFrame`] to a database table.
+    ///
+    /// Requires the `polars` feature. For row-based bulk writes, use
+    /// [`bulk_insert`](Self::bulk_insert) which accepts `Vec<Vec<QueryValue>>`.
     ///
     /// # Arguments
     /// * `df` - The DataFrame to export
-    /// * `table_name` - Name of the target table
+    /// * `table_name` - Target table name
     /// * `schema` - Optional schema/database name
-    /// * `if_exists` - If true, replace existing table; if false, append
+    /// * `replace` - Replace existing table when `true`; append when `false`
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let df = DataFrame::new(vec![
-    ///     Series::new("id", &[1, 2, 3]),
-    ///     Series::new("name", &["Alice", "Bob", "Charlie"]),
-    /// ])?;
     /// adapter.export_dataframe(&df, "users", None, false).await?;
     /// ```
+    #[cfg(feature = "polars")]
     async fn export_dataframe(
         &self,
         df: &DataFrame,
@@ -855,29 +892,6 @@ pub trait DbAdapter: Send + Sync {
         schema: Option<&str>,
         replace: bool,
     ) -> Result<u64>;
-
-    /// Execute a SQL query and return results as a DataFrame
-    ///
-    /// For SELECT queries, returns the result set as a DataFrame.
-    /// For other queries (INSERT, UPDATE, DELETE), returns an empty DataFrame.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let df = adapter.query_df("SELECT * FROM users WHERE age > 25").await?;
-    /// ```
-    async fn query_df(&self, query: &str) -> Result<DataFrame> {
-        let result = self.execute_query(query).await?;
-        result.to_dataframe()
-    }
-
-    // ===== Traditional Query Operations =====
-
-    /// Execute a query and return results in traditional row format
-    ///
-    /// This method is provided for compatibility and internal use.
-    /// For most operations, prefer DataFrame-based methods.
-    async fn execute_query(&self, query: &str) -> Result<QueryResult>;
 
     // ===== Schema Discovery =====
 
@@ -1094,6 +1108,7 @@ mod tests {
         assert!(!config.use_ssl);
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_query_result_to_dataframe_empty() {
         let result = QueryResult {
@@ -1107,6 +1122,7 @@ mod tests {
         assert_eq!(df.width(), 2);
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_query_result_to_dataframe_with_data() {
         let result = QueryResult {
@@ -1125,6 +1141,7 @@ mod tests {
         assert_eq!(df.get_column_names(), vec!["id", "name"]);
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_query_result_to_dataframe_with_nulls() {
         let result = QueryResult {
@@ -1142,6 +1159,7 @@ mod tests {
         assert_eq!(df.width(), 2);
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_query_result_to_dataframe_different_types() {
         let result = QueryResult {

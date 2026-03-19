@@ -49,6 +49,7 @@ use crate::adapter::{
     ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Executor, Row, TypeInfo};
@@ -499,6 +500,7 @@ impl DbAdapter for PostgresAdapter {
         })
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "postgres", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -1577,6 +1579,7 @@ impl PostgresAdapter {
         Ok(values)
     }
 
+    #[cfg(feature = "polars")]
     /// Bind a Series value at a specific row index to a sqlx postgres query
     fn bind_series_value<'q>(
         &self,
@@ -1723,6 +1726,7 @@ impl PostgresAdapter {
         Ok(bound_query)
     }
 
+    #[cfg(feature = "polars")]
     /// Generate CREATE TABLE SQL from DataFrame schema
     fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
         let mut column_defs = Vec::new();
@@ -1977,6 +1981,7 @@ mod tests {
         assert!(result.is_ok() || result.is_err());
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_basic() {
@@ -2029,6 +2034,7 @@ mod tests {
         DbAdapter::disconnect(&mut adapter).await.unwrap();
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_with_nulls() {
@@ -2078,6 +2084,7 @@ mod tests {
         DbAdapter::disconnect(&mut adapter).await.unwrap();
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_replace_table() {
@@ -2125,6 +2132,7 @@ mod tests {
         DbAdapter::disconnect(&mut adapter).await.unwrap();
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_export_dataframe_not_connected() {
         use crate::adapter::DbAdapter;
@@ -2358,6 +2366,7 @@ mod tests {
             .expect("Failed to disconnect");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_generate_create_table_sql() {
         use polars::prelude::*;
