@@ -111,15 +111,24 @@ impl SqliteAdapter {
 
     #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to the corresponding SQLite type affinity.
+    ///
+    /// SQLite has four storage classes: INTEGER, REAL, TEXT, BLOB.
+    /// All boolean and integer variants collapse to INTEGER; both float
+    /// variants map to REAL; everything else delegates to the generic SQL
+    /// fallback (String→TEXT, Binary→BLOB, unknowns→TEXT).
     fn polars_dtype_to_sqlite_type(dtype: &DataType) -> &'static str {
         match dtype {
-            DataType::Boolean => "INTEGER", // SQLite stores booleans as 0/1
-            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => "INTEGER",
-            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => "INTEGER",
+            DataType::Boolean
+            | DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64 => "INTEGER",
             DataType::Float32 | DataType::Float64 => "REAL",
-            DataType::String => "TEXT",
-            DataType::Binary => "BLOB",
-            _ => "TEXT", // Safe fallback
+            _ => super::common::polars_dtype_to_generic_sql(dtype),
         }
     }
 

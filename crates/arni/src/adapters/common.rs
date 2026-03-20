@@ -37,6 +37,48 @@ pub(crate) fn decimal_to_query_value(d: sqlx::types::Decimal) -> QueryValue {
         .unwrap_or_else(|| QueryValue::Text(s))
 }
 
+/// Map a Polars [`DataType`] to a generic ANSI SQL type name.
+///
+/// Returns the closest standard SQL type for each Polars primitive. Adapter
+/// dtype-mapping functions should use this as their `_` wildcard arm and
+/// override only the types that differ in their target dialect.
+///
+/// | Polars type       | Generic SQL |
+/// |-------------------|-------------|
+/// | `Boolean`         | `BOOLEAN`   |
+/// | `Int8`            | `TINYINT`   |
+/// | `Int16`           | `SMALLINT`  |
+/// | `Int32`           | `INTEGER`   |
+/// | `Int64`           | `BIGINT`    |
+/// | `UInt8`           | `TINYINT`   |
+/// | `UInt16`          | `SMALLINT`  |
+/// | `UInt32`          | `INTEGER`   |
+/// | `UInt64`          | `BIGINT`    |
+/// | `Float32`         | `FLOAT`     |
+/// | `Float64`         | `DOUBLE`    |
+/// | `String`          | `TEXT`      |
+/// | `Binary`          | `BLOB`      |
+/// | _(anything else)_ | `TEXT`      |
+#[cfg(feature = "polars")]
+pub(crate) fn polars_dtype_to_generic_sql(dtype: &DataType) -> &'static str {
+    match dtype {
+        DataType::Boolean => "BOOLEAN",
+        DataType::Int8 => "TINYINT",
+        DataType::Int16 => "SMALLINT",
+        DataType::Int32 => "INTEGER",
+        DataType::Int64 => "BIGINT",
+        DataType::UInt8 => "TINYINT",
+        DataType::UInt16 => "SMALLINT",
+        DataType::UInt32 => "INTEGER",
+        DataType::UInt64 => "BIGINT",
+        DataType::Float32 => "FLOAT",
+        DataType::Float64 => "DOUBLE",
+        DataType::String => "TEXT",
+        DataType::Binary => "BLOB",
+        _ => "TEXT",
+    }
+}
+
 #[cfg(feature = "polars")]
 /// Convert a single value from a Polars [`Series`] at `row_idx` to an SQL literal string.
 ///
@@ -278,6 +320,42 @@ pub(crate) fn sql_preview(sql: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── polars_dtype_to_generic_sql ───────────────────────────────────────────
+
+    #[cfg(feature = "polars")]
+    #[test]
+    fn generic_sql_signed_ints() {
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Int8), "TINYINT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Int16), "SMALLINT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Int32), "INTEGER");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Int64), "BIGINT");
+    }
+
+    #[cfg(feature = "polars")]
+    #[test]
+    fn generic_sql_unsigned_ints() {
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::UInt8), "TINYINT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::UInt16), "SMALLINT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::UInt32), "INTEGER");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::UInt64), "BIGINT");
+    }
+
+    #[cfg(feature = "polars")]
+    #[test]
+    fn generic_sql_scalars() {
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Boolean), "BOOLEAN");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Float32), "FLOAT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Float64), "DOUBLE");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::String), "TEXT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Binary), "BLOB");
+    }
+
+    #[cfg(feature = "polars")]
+    #[test]
+    fn generic_sql_unknown_falls_back_to_text() {
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Date), "TEXT");
+    }
 
     // ── decimal_to_query_value ────────────────────────────────────────────────
 

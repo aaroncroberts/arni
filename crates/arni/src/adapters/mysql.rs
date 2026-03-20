@@ -52,7 +52,7 @@ use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::{Column, Executor, Row, TypeInfo};
 use std::collections::HashMap;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -1413,6 +1413,23 @@ impl DbAdapter for MySqlAdapter {
 
 impl MySqlAdapter {
     #[cfg(feature = "polars")]
+    /// Map a Polars [`DataType`] to the corresponding MySQL column type name.
+    ///
+    /// MySQL uses `INT` (not `INTEGER`), and supports unsigned integer variants.
+    /// All other types (booleans, signed ints, floats, strings, binary) match
+    /// the generic SQL mapping and are delegated to [`super::common::polars_dtype_to_generic_sql`].
+    fn polars_dtype_to_mysql_type(dtype: &DataType) -> &'static str {
+        match dtype {
+            DataType::Int32 => "INT",              // MySQL: INT vs ANSI INTEGER
+            DataType::UInt8 => "TINYINT UNSIGNED",
+            DataType::UInt16 => "SMALLINT UNSIGNED",
+            DataType::UInt32 => "INT UNSIGNED",
+            DataType::UInt64 => "BIGINT UNSIGNED",
+            _ => super::common::polars_dtype_to_generic_sql(dtype),
+        }
+    }
+
+    #[cfg(feature = "polars")]
     /// Generate CREATE TABLE SQL from DataFrame schema
     fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
         let mut column_defs = Vec::new();
@@ -1421,22 +1438,7 @@ impl MySqlAdapter {
             let name = column.name();
             let dtype = column.dtype();
 
-            let mysql_type = match dtype {
-                DataType::Boolean => "BOOLEAN",
-                DataType::Int8 => "TINYINT",
-                DataType::Int16 => "SMALLINT",
-                DataType::Int32 => "INT",
-                DataType::Int64 => "BIGINT",
-                DataType::UInt8 => "TINYINT UNSIGNED",
-                DataType::UInt16 => "SMALLINT UNSIGNED",
-                DataType::UInt32 => "INT UNSIGNED",
-                DataType::UInt64 => "BIGINT UNSIGNED",
-                DataType::Float32 => "FLOAT",
-                DataType::Float64 => "DOUBLE",
-                DataType::String => "TEXT",
-                DataType::Binary => "BLOB",
-                _ => "TEXT", // Fallback for unsupported types
-            };
+            let mysql_type = Self::polars_dtype_to_mysql_type(dtype);
 
             column_defs.push(format!("{} {}", name, mysql_type));
         }

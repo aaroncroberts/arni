@@ -184,22 +184,22 @@ impl DuckDbAdapter {
 
     #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to the corresponding DuckDB SQL type name.
+    ///
+    /// DuckDB has native unsigned integer types (`UTINYINT`, `USMALLINT`,
+    /// `UINTEGER`, `UBIGINT`) and uses `VARCHAR` where generic SQL uses `TEXT`.
+    /// All other types delegate to the shared generic mapping; any generic
+    /// `TEXT` result is remapped to `VARCHAR` for DuckDB consistency.
     fn polars_dtype_to_duckdb_type(dtype: &DataType) -> &'static str {
         match dtype {
-            DataType::Boolean => "BOOLEAN",
-            DataType::Int8 => "TINYINT",
-            DataType::Int16 => "SMALLINT",
-            DataType::Int32 => "INTEGER",
-            DataType::Int64 => "BIGINT",
             DataType::UInt8 => "UTINYINT",
             DataType::UInt16 => "USMALLINT",
             DataType::UInt32 => "UINTEGER",
             DataType::UInt64 => "UBIGINT",
-            DataType::Float32 => "FLOAT",
-            DataType::Float64 => "DOUBLE",
             DataType::String => "VARCHAR",
-            DataType::Binary => "BLOB",
-            _ => "VARCHAR", // Safe fallback for dates, enums, structs, etc.
+            _ => {
+                let g = super::common::polars_dtype_to_generic_sql(dtype);
+                if g == "TEXT" { "VARCHAR" } else { g }
+            }
         }
     }
 
