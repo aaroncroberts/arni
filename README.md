@@ -15,7 +15,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Named for Árni Magnússon (1663–1730), the Icelandic scholar who gathered and preserved the largest known collection of Norse manuscripts, **arni** brings that same principle to your data layer.
-Connect to PostgreSQL, MySQL, MongoDB, Oracle, SQL Server, DuckDB, or SQLite through a single trait-based API.
+Connect to PostgreSQL, MySQL, MongoDB, Oracle, SQL Server, DuckDB, SQLite, or Cloudflare (D1/KV/R2) through a single trait-based API.
 Base queries return a lightweight `QueryResult`; add the `polars` feature to get full DataFrame support.
 
 ## Overview
@@ -119,6 +119,20 @@ arni/
 - `get_foreign_keys ⚠️` DuckDB — FKs exist in schema but are not enforced; returns empty list
 - `❌` MongoDB — document model has no views, foreign keys, or stored procedures by design
 - `❌` DuckDB / SQLite — no stored procedure engine
+
+### Cloudflare Adapters
+
+Cloudflare services are REST-only (no native Rust drivers outside Workers). Arni exposes D1 as a SQL adapter and KV/R2 via a line-oriented DSL.
+
+| Operation | D1 | KV | R2 |
+| :--- | :---: | :---: | :---: |
+| `execute_query` | ✅ SQL | ✅ DSL | ✅ DSL |
+| `read_table` | ✅ | ✅ `(key, value)` | ✅ `(key, size, etag, last_modified)` |
+| `describe_table` | ✅ PRAGMA | ❌ | ❌ |
+| `list_tables` | ✅ | ❌ | ❌ |
+| `export_dataframe` | ✅ INSERT rows | ✅ JSON per row | ✅ Parquet upload |
+
+See [docs/cloudflare.md](docs/cloudflare.md) for auth setup, `ConnectionConfig` parameters, and DSL command reference.
 
 ## Quick Start
 

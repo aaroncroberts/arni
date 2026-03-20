@@ -26,6 +26,10 @@ Without feature flags, building `arni` would pull in every database driver (Post
 | `oracle` | Oracle adapter (requires OCI client) | oracle crate |
 | `duckdb` | DuckDB adapter — links against **system** DuckDB via pkg-config | ~5 MB headers |
 | `duckdb-bundled` | DuckDB adapter — builds DuckDB **from source** | ~500 MB source + compile |
+| `cloudflare-d1` | Cloudflare D1 SQL adapter (REST API via reqwest) | reqwest, bytes |
+| `cloudflare-kv` | Cloudflare KV adapter (REST API via reqwest) | reqwest, bytes |
+| `cloudflare-r2` | Cloudflare R2 object storage adapter (S3-compatible via aws-sdk-s3) | aws-sdk-s3, aws-config |
+| `cloudflare` | All three Cloudflare adapters (D1 + KV + R2) | all of the above |
 | `all-databases` | All DB adapters (uses system DuckDB) | all of the above |
 | `full` | `all-databases` + `polars` | everything |
 
@@ -49,6 +53,10 @@ The `arni-cli` binary uses pass-through features. By default it compiles with `p
 | `oracle` | Enable Oracle |
 | `duckdb` | Enable DuckDB (system install) |
 | `duckdb-bundled` | Enable DuckDB (built from source) |
+| `cloudflare-d1` | Enable Cloudflare D1 SQL adapter |
+| `cloudflare-kv` | Enable Cloudflare KV adapter |
+| `cloudflare-r2` | Enable Cloudflare R2 object storage adapter |
+| `cloudflare` | Enable all three Cloudflare adapters |
 | `polars` | Enable DataFrame output (query, export commands) |
 | `all-databases` | All DB adapters |
 | `full` | All databases + polars |
@@ -82,6 +90,12 @@ cargo build -p arni-mcp
 
 # All databases + DataFrame support
 cargo build -p arni-mcp --features full
+
+# All Cloudflare adapters
+cargo build -p arni-mcp --features cloudflare
+
+# PostgreSQL + Cloudflare D1 (mixed SQL environments)
+cargo build -p arni-mcp --features "postgres,cloudflare-d1"
 ```
 
 ## Makefile presets
