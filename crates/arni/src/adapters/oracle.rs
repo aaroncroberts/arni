@@ -1695,6 +1695,153 @@ mod tests {
         assert_eq!(like_pattern, "%PS\\_");
     }
 
+    // ── build_connection_params edge cases ──────────────────────────────────
+
+    #[test]
+    fn test_build_connection_params_no_host_defaults_to_localhost() {
+        let mut config = make_config("ORCL");
+        config.host = None;
+        let (_user, _pass, connect_str) =
+            OracleAdapter::build_connection_params(&config, Some("pw"));
+        assert!(
+            connect_str.starts_with("localhost:"),
+            "missing host should default to localhost, got: {}",
+            connect_str
+        );
+    }
+
+    #[test]
+    fn test_build_connection_params_no_port_defaults_to_1521() {
+        let mut config = make_config("ORCL");
+        config.port = None;
+        let (_user, _pass, connect_str) =
+            OracleAdapter::build_connection_params(&config, Some("pw"));
+        assert!(
+            connect_str.contains(":1521/"),
+            "missing port should default to 1521, got: {}",
+            connect_str
+        );
+    }
+
+    #[test]
+    fn test_build_connection_params_no_username_defaults_to_system() {
+        let mut config = make_config("FREE");
+        config.username = None;
+        let (user, _pass, _connect_str) = OracleAdapter::build_connection_params(&config, None);
+        assert_eq!(user, "system");
+    }
+
+    #[test]
+    fn test_build_connection_params_no_password_defaults_to_empty() {
+        let config = make_config("FREE");
+        let (_user, pass, _connect_str) = OracleAdapter::build_connection_params(&config, None);
+        assert_eq!(pass, "");
+    }
+
+    #[test]
+    fn test_build_connection_params_connect_string_format() {
+        let mut config = make_config("SALES");
+        config.host = Some("ora.example.com".to_string());
+        config.port = Some(1522);
+        let (_user, _pass, connect_str) =
+            OracleAdapter::build_connection_params(&config, Some("secret"));
+        assert_eq!(connect_str, "ora.example.com:1522/SALES");
+    }
+
+    // ── not-connected error paths ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_query_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.execute_query("SELECT 1 FROM DUAL").await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn list_databases_returns_not_supported() {
+        // Oracle doesn't expose a database list — returns NotSupported regardless of connection
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.list_databases().await;
+        assert!(matches!(result, Err(DataError::NotSupported(_))));
+    }
+
+    #[tokio::test]
+    async fn list_tables_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.list_tables(None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn describe_table_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.describe_table("EMPLOYEES", None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn get_indexes_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.get_indexes("EMPLOYEES", None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn get_foreign_keys_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.get_foreign_keys("EMPLOYEES", None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn get_views_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.get_views(None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn get_server_info_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.get_server_info().await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn bulk_insert_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let cols = vec!["name".to_string()];
+        let rows = vec![vec![QueryValue::Text("alice".to_string())]];
+        let result = adapter.bulk_insert("EMPLOYEES", &cols, &rows, None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn bulk_update_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        // Oracle bulk_update takes &[(HashMap<col,val>, FilterExpr)]
+        let mut set_vals = HashMap::new();
+        set_vals.insert("name".to_string(), QueryValue::Text("bob".to_string()));
+        let updates = vec![(set_vals, FilterExpr::Eq("id".to_string(), QueryValue::Int(1)))];
+        let result = adapter.bulk_update("EMPLOYEES", &updates, None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let filters = vec![FilterExpr::Eq("id".to_string(), QueryValue::Int(1))];
+        let result = adapter.bulk_delete("EMPLOYEES", &filters, None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn list_stored_procedures_not_connected_returns_error() {
+        let adapter = OracleAdapter::new(make_config("FREE"));
+        let result = adapter.list_stored_procedures(None).await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
     // ── test_connection() unit tests ────────────────────────────────────────
 
     /// Connect to port 1 on localhost — TCP connection refused is near-instant.
