@@ -1300,6 +1300,7 @@ impl PostgresAdapter {
     // ===== export_dataframe helpers =====
 
     /// Drops and recreates the target table based on the DataFrame schema.
+    #[cfg(feature = "polars")]
     async fn recreate_table(&self, pool: &PgPool, df: &DataFrame, table_name: &str) -> Result<()> {
         let drop_sql = format!("DROP TABLE IF EXISTS {}", table_name);
         pool.execute(drop_sql.as_str())
@@ -1313,6 +1314,7 @@ impl PostgresAdapter {
     }
 
     /// Builds the column list and parameterized INSERT SQL (`$1`, `$2`, …) for a DataFrame.
+    #[cfg(feature = "polars")]
     fn build_insert_sql(df: &DataFrame, table_name: &str) -> Result<(Vec<String>, String)> {
         let column_names: Vec<String> = df
             .get_column_names()
@@ -1332,6 +1334,7 @@ impl PostgresAdapter {
     }
 
     /// Iterates over DataFrame rows and executes parameterized INSERT statements.
+    #[cfg(feature = "polars")]
     async fn insert_rows_batch(
         &self,
         pool: &PgPool,
