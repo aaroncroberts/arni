@@ -6,7 +6,7 @@
 //! | Feature flag | Method | Output |
 //! |---|---|---|
 //! | `json` | [`DbAdapterOutputExt::execute_query_json`] | `Vec<serde_json::Value>` |
-//! | `csv-output` | [`DbAdapterOutputExt::execute_query_csv`] | writes to `impl std::io::Write` |
+//! | `csv` | [`DbAdapterOutputExt::execute_query_csv`] | writes to `impl std::io::Write` |
 //!
 //! Both are blanket impls over [`DbAdapter`] — adapters get them automatically once
 //! they implement `execute_query_stream`.
@@ -86,7 +86,7 @@ pub trait DbAdapterOutputExt: DbAdapter {
     /// Execute `query` and write results as CSV into `writer`.
     ///
     /// The first row written is the header (column names). Rows are written in
-    /// arrival order. Requires the `csv-output` feature flag.
+    /// arrival order. Requires the `csv` feature flag.
     ///
     /// # Examples
     ///
@@ -97,7 +97,7 @@ pub trait DbAdapterOutputExt: DbAdapter {
     /// adapter.execute_query_csv("SELECT id, name FROM users", &mut buf).await?;
     /// println!("{}", String::from_utf8(buf).unwrap());
     /// ```
-    #[cfg(feature = "csv-output")]
+    #[cfg(feature = "csv")]
     fn execute_query_csv<'a, W>(
         &'a self,
         query: &'a str,
@@ -241,7 +241,7 @@ mod tests {
 
     // ── execute_query_csv integration (SQLite in-memory) ──────────────────────
 
-    #[cfg(all(feature = "csv-output", feature = "sqlite"))]
+    #[cfg(all(feature = "csv", feature = "sqlite"))]
     #[tokio::test]
     async fn execute_query_csv_round_trips_rows() {
         use crate::adapter::{ConnectionConfig, DatabaseType, DbAdapter};
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(&records[0][1], "X");
     }
 
-    #[cfg(all(feature = "csv-output", feature = "sqlite"))]
+    #[cfg(all(feature = "csv", feature = "sqlite"))]
     #[tokio::test]
     async fn execute_query_csv_empty_result_no_data_rows() {
         // Note: SQLite's execute_query returns empty columns when there are no rows

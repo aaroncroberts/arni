@@ -17,7 +17,7 @@ Without feature flags, building `arni` would pull in every database driver (Post
 | `polars` | DataFrame API: `read_table_df`, `query_df`, `export_dataframe`, `export` module | ~1.2 GB rlibs |
 | `dataframe` | Alias for `polars` | (same) |
 | `json` | `DbAdapterOutputExt::execute_query_json` — rows as `Vec<serde_json::Value>` | serde_json (already a dep, near-zero cost) |
-| `csv-output` | `DbAdapterOutputExt::execute_query_csv` — stream rows to any `impl Write` | csv crate (~100 KB) |
+| `csv` | `DbAdapterOutputExt::execute_query_csv` — stream rows to any `impl Write` | csv crate (~100 KB) |
 | `postgres` | PostgreSQL adapter via sqlx | sqlx + native-tls |
 | `mysql` | MySQL adapter via sqlx | sqlx + native-tls |
 | `sqlite` | SQLite adapter via sqlx | sqlx (small) |
@@ -163,7 +163,7 @@ let rows = adapter.execute_query_json("SELECT id, name FROM users").await?;
 println!("{}", serde_json::to_string_pretty(&rows)?);
 ```
 
-**Tier 2b — csv output (feature: `csv-output`)**
+**Tier 2b — csv output (feature: `csv`)**
 ```rust
 use arni::output::DbAdapterOutputExt;
 

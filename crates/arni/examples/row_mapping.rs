@@ -11,7 +11,7 @@
 //! Run with:
 //!
 //! ```bash
-//! cargo run --example row_mapping -p arni --features duckdb,json,csv-output
+//! cargo run --example row_mapping -p arni --features duckdb,json,csv
 //! ```
 //!
 //! No `polars` feature needed — this example has **zero Polars dependency**.
@@ -143,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // ── 6. execute_query_csv — stream into a Vec<u8> (or any Write) ──────────
-    #[cfg(feature = "csv-output")]
+    #[cfg(feature = "csv")]
     {
         println!("=== execute_query_csv ===");
         let mut csv_buf = Vec::<u8>::new();
