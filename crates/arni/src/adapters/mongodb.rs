@@ -1296,6 +1296,177 @@ mod tests {
         assert!(!re.is_match("DATA_PS_X"), "DATA_PS_X should not match PS_$");
     }
 
+    // ── bson_to_query_value ──────────────────────────────────────────────────
+
+    #[test]
+    fn bson_null_and_undefined_yield_query_null() {
+        assert_eq!(MongoDbAdapter::bson_to_query_value(&Bson::Null), QueryValue::Null);
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Undefined),
+            QueryValue::Null
+        );
+    }
+
+    #[test]
+    fn bson_boolean_yields_query_bool() {
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Boolean(true)),
+            QueryValue::Bool(true)
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Boolean(false)),
+            QueryValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn bson_int32_and_int64_yield_query_int() {
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Int32(42)),
+            QueryValue::Int(42)
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Int32(-1)),
+            QueryValue::Int(-1)
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Int64(i64::MAX)),
+            QueryValue::Int(i64::MAX)
+        );
+    }
+
+    #[test]
+    fn bson_double_yields_query_float() {
+        match MongoDbAdapter::bson_to_query_value(&Bson::Double(3.14)) {
+            QueryValue::Float(f) => assert!((f - 3.14).abs() < 1e-10),
+            other => panic!("expected Float, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_string_yields_query_text() {
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::String("hello".to_string())),
+            QueryValue::Text("hello".to_string())
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::String(String::new())),
+            QueryValue::Text(String::new())
+        );
+    }
+
+    #[test]
+    fn bson_binary_yields_query_bytes() {
+        let bytes = vec![0x01u8, 0x02, 0x03];
+        let bin = Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: bytes.clone(),
+        };
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Binary(bin)),
+            QueryValue::Bytes(bytes)
+        );
+    }
+
+    #[test]
+    fn bson_object_id_yields_24_char_hex_text() {
+        use mongodb::bson::oid::ObjectId;
+        let oid = ObjectId::new();
+        match MongoDbAdapter::bson_to_query_value(&Bson::ObjectId(oid)) {
+            QueryValue::Text(s) => assert_eq!(s.len(), 24, "ObjectId hex should be 24 chars"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_datetime_yields_text() {
+        let dt = mongodb::bson::DateTime::now();
+        match MongoDbAdapter::bson_to_query_value(&Bson::DateTime(dt)) {
+            QueryValue::Text(s) => assert!(!s.is_empty()),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_array_yields_text_debug_repr() {
+        let arr = vec![Bson::Int32(1), Bson::String("x".to_string())];
+        match MongoDbAdapter::bson_to_query_value(&Bson::Array(arr)) {
+            QueryValue::Text(s) => assert!(s.contains("Int32"), "array repr should contain type names"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_document_yields_text_debug_repr() {
+        let doc = doc! { "key": "value", "n": 42 };
+        match MongoDbAdapter::bson_to_query_value(&Bson::Document(doc)) {
+            QueryValue::Text(s) => assert!(s.contains("key") || s.contains("value")),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_catch_all_yields_text_debug_repr() {
+        // Timestamp is an exotic BSON type with no SQL equivalent → catch-all arm
+        let ts = mongodb::bson::Timestamp {
+            time: 1_700_000_000,
+            increment: 1,
+        };
+        match MongoDbAdapter::bson_to_query_value(&Bson::Timestamp(ts)) {
+            QueryValue::Text(s) => assert!(!s.is_empty()),
+            other => panic!("expected Text for Timestamp catch-all, got {:?}", other),
+        }
+    }
+
+    // ── bson_type_name ───────────────────────────────────────────────────────
+
+    #[test]
+    fn bson_type_name_covers_common_types() {
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Null), "null");
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Boolean(true)), "boolean");
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Int32(0)), "int32");
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Int64(0)), "int64");
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Double(0.0)), "double");
+        assert_eq!(
+            MongoDbAdapter::bson_type_name(&Bson::String(String::new())),
+            "string"
+        );
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Array(vec![])), "array");
+        assert_eq!(
+            MongoDbAdapter::bson_type_name(&Bson::Document(doc! {})),
+            "document"
+        );
+    }
+
+    // ── not-connected error paths ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_query_not_connected_returns_error() {
+        let adapter = MongoDbAdapter::new(make_config("localhost", "test_db"));
+        let result = adapter.execute_query("db.users.find({})").await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("connect"), "error should mention 'connect': {}", msg);
+    }
+
+    #[tokio::test]
+    async fn list_tables_not_connected_returns_error() {
+        let adapter = MongoDbAdapter::new(make_config("localhost", "test_db"));
+        let result = adapter.list_tables(None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connect"));
+    }
+
+    #[tokio::test]
+    async fn bulk_insert_not_connected_returns_error() {
+        let adapter = MongoDbAdapter::new(make_config("localhost", "test_db"));
+        let cols = vec!["name".to_string()];
+        let rows = vec![vec![QueryValue::Text("alice".to_string())]];
+        let result = adapter.bulk_insert("users", &cols, &rows, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connect"));
+    }
+
     // ── test_connection() unit tests ────────────────────────────────────────
 
     /// test_connection() for MongoDB always attempts a network ping before returning.
