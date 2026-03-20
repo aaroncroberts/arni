@@ -139,6 +139,12 @@ pub enum DatabaseType {
     SQLServer,
     Oracle,
     DuckDB,
+    #[cfg(feature = "cloudflare-d1")]
+    CloudflareD1,
+    #[cfg(feature = "cloudflare-kv")]
+    CloudflareKV,
+    #[cfg(feature = "cloudflare-r2")]
+    CloudflareR2,
 }
 
 impl DatabaseType {
@@ -152,6 +158,12 @@ impl DatabaseType {
             DatabaseType::SQLServer => Some(1433),
             DatabaseType::Oracle => Some(1521),
             DatabaseType::DuckDB => None,
+            #[cfg(feature = "cloudflare-d1")]
+            DatabaseType::CloudflareD1 => None,
+            #[cfg(feature = "cloudflare-kv")]
+            DatabaseType::CloudflareKV => None,
+            #[cfg(feature = "cloudflare-r2")]
+            DatabaseType::CloudflareR2 => None,
         }
     }
 }
@@ -166,6 +178,12 @@ impl fmt::Display for DatabaseType {
             DatabaseType::SQLServer => write!(f, "SQL Server"),
             DatabaseType::Oracle => write!(f, "Oracle"),
             DatabaseType::DuckDB => write!(f, "DuckDB"),
+            #[cfg(feature = "cloudflare-d1")]
+            DatabaseType::CloudflareD1 => write!(f, "Cloudflare D1"),
+            #[cfg(feature = "cloudflare-kv")]
+            DatabaseType::CloudflareKV => write!(f, "Cloudflare KV"),
+            #[cfg(feature = "cloudflare-r2")]
+            DatabaseType::CloudflareR2 => write!(f, "Cloudflare R2"),
         }
     }
 }
