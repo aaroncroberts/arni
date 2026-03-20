@@ -9,11 +9,11 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Aaron C. Roberts <aaron@example.com>"]
 license = "MIT"
-repository = "https://github.com/acroberts16/arni"
+repository = "https://github.com/aaroncroberts/arni"
 rust-version = "1.85"
 
 [workspace.dependencies]

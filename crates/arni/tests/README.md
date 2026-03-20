@@ -1,6 +1,6 @@
-# arni-data Integration Tests
+# arni Integration Tests
 
-Integration tests for the arni-data adapter layer. Each test connects to a real
+Integration tests for the arni adapter layer. Each test connects to a real
 database instance, so they are gated behind environment variables and must be
 opted into explicitly.
 
@@ -110,22 +110,22 @@ Available variables:
 export TEST_POSTGRES_AVAILABLE=true
 
 # Run all postgres tests (requires the postgres feature flag)
-cargo test -p arni-data --features postgres --test postgres
+cargo test -p arni --features postgres --test postgres
 
 # Or run everything for all enabled adapters
-cargo test -p arni-data --features all-databases
+cargo test -p arni --features all-databases
 ```
 
 ### Run only the harness self-tests (no DB required)
 
 ```bash
-cargo test -p arni-data --test harness
+cargo test -p arni --test harness
 ```
 
 ### Run ignored tests (require full DB setup)
 
 ```bash
-cargo test -p arni-data --features postgres -- --ignored
+cargo test -p arni --features postgres -- --ignored
 ```
 
 ---

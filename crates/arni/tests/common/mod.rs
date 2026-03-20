@@ -1,4 +1,4 @@
-//! Integration test harness for arni-data adapters.
+//! Integration test harness for arni adapters.
 //!
 //! Provides helpers for loading connection profiles from `~/.arni/connections.yml`
 //! or environment variables, and for conditionally skipping tests when adapters
@@ -8,7 +8,7 @@
 //!
 //! 1. Add a connection profile to `~/.arni/connections.yml`
 //! 2. Set `TEST_<DB>_AVAILABLE=true` in your environment
-//! 3. Run: `cargo test -p arni-data --features <db-feature>`
+//! 3. Run: `cargo test -p arni --features <db-feature>`
 //!
 //! See `tests/README.md` for full configuration instructions.
 
@@ -85,7 +85,7 @@ fn parse_db_type(s: &str) -> Option<DatabaseType> {
 ///
 /// ```bash
 /// export TEST_POSTGRES_AVAILABLE=true
-/// cargo test -p arni-data --features postgres
+/// cargo test -p arni --features postgres
 /// ```
 pub fn is_adapter_available(db_type: &str) -> bool {
     let key = format!(

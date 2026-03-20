@@ -26,12 +26,15 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
-    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    ProcedureInfo, QueryResult, QueryValue, RowStream, ServerInfo, TableInfo, TableSearchMode,
+    ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use std::collections::HashMap;
 use tiberius::{AuthMethod, Config};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
 
 type MssqlPool = bb8::Pool<bb8_tiberius::ConnectionManager>;
@@ -210,6 +213,7 @@ impl SqlServerAdapter {
             || upper.starts_with("ALTER TRIGGER")
     }
 
+    #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to a SQL Server type string
     fn polars_dtype_to_mssql_type(dtype: &DataType) -> &'static str {
         match dtype {
@@ -228,6 +232,7 @@ impl SqlServerAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     /// Extract a value from a Series at `row_idx` as a SQL Server SQL literal
     fn series_value_to_sql_literal(series: &Series, row_idx: usize) -> Result<String> {
         if series.is_null().get(row_idx).unwrap_or(false) {
@@ -461,9 +466,10 @@ impl SqlServerAdapter {
 
     /// Execute a DML or DDL statement, returning rows affected
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            DataError::Connection("Not connected - call connect() first".to_string())
-        })?;
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(super::common::not_connected_error)?;
         let mut conn = pool
             .get()
             .await
@@ -627,7 +633,7 @@ impl DbAdapter for SqlServerAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            DataError::Connection("Not connected - call connect() first".to_string())
+            super::common::not_connected_error()
         })?;
         let mut conn = pool.get().await.map_err(|e| {
             error!(
@@ -701,6 +707,88 @@ impl DbAdapter for SqlServerAdapter {
             rows: result_rows,
             rows_affected: None,
         })
+    }
+
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| {
+                error!(
+                    adapter = "mssql",
+                    operation = "execute_query_stream",
+                    "Not connected"
+                );
+                super::common::not_connected_error()
+            })?
+            .clone();
+
+        let effective_query = if Self::needs_exec_wrapper(query) {
+            let escaped = query.replace('\'', "''");
+            format!("EXEC(N'{}')", escaped)
+        } else {
+            query.to_string()
+        };
+
+        let (tx, mut rx) = mpsc::channel::<Result<Vec<QueryValue>>>(64);
+
+        // bb8::Pool::get_owned() returns an OwnedPooledConnection<M> that is 'static,
+        // allowing it to be moved into the spawned task.
+        tokio::spawn(async move {
+            let mut conn = match pool.get_owned().await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx
+                        .send(Err(DataError::Connection(format!(
+                            "Failed to acquire connection: {}",
+                            e
+                        ))))
+                        .await;
+                    return;
+                }
+            };
+            let stream = match conn.query(&effective_query, &[]).await {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = tx
+                        .send(Err(DataError::Query(format!("Query failed: {}", e))))
+                        .await;
+                    return;
+                }
+            };
+            let rows_result = match stream.into_results().await {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx
+                        .send(Err(DataError::Query(format!(
+                            "Failed to fetch results: {}",
+                            e
+                        ))))
+                        .await;
+                    return;
+                }
+            };
+            for row in rows_result.into_iter().flatten() {
+                match Self::row_to_values(&row) {
+                    Ok(vals) => {
+                        if tx.send(Ok(vals)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        let stream = async_stream::try_stream! {
+            while let Some(result) = rx.recv().await {
+                yield result?;
+            }
+        };
+        Ok(Box::pin(stream))
     }
 
     #[instrument(skip(self), fields(adapter = "sqlserver"))]
@@ -1113,6 +1201,7 @@ impl DbAdapter for SqlServerAdapter {
         Ok(procedures)
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "sqlserver", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -1122,9 +1211,7 @@ impl DbAdapter for SqlServerAdapter {
         replace: bool,
     ) -> Result<u64> {
         if self.pool.is_none() {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let nrows = df.height();
@@ -1532,6 +1619,7 @@ mod tests {
 
     // ── dtype mapping helpers ────────────────────────────────────────────────
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_int_types() {
         use polars::prelude::DataType;
@@ -1561,6 +1649,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_float_types() {
         use polars::prelude::DataType;
@@ -1574,6 +1663,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_string_and_bool() {
         use polars::prelude::DataType;
@@ -1591,6 +1681,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_unknown_falls_back_to_nvarchar_max() {
         use polars::prelude::DataType;

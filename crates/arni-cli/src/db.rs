@@ -22,16 +22,36 @@ use crate::config::ConfigStore;
 pub fn create_adapter(
     config: ConnectionConfig,
 ) -> Result<Box<dyn DbAdapter + Send + Sync + 'static>> {
-    let adapter: Box<dyn DbAdapter + Send + Sync + 'static> = match config.db_type {
-        DatabaseType::Postgres => Box::new(arni::adapters::postgres::PostgresAdapter::new(config)),
-        DatabaseType::MySQL => Box::new(arni::adapters::mysql::MySqlAdapter::new(config)),
-        DatabaseType::SQLite => Box::new(arni::adapters::sqlite::SqliteAdapter::new(config)),
-        DatabaseType::MongoDB => Box::new(arni::adapters::mongodb::MongoDbAdapter::new(config)),
-        DatabaseType::SQLServer => Box::new(arni::adapters::mssql::SqlServerAdapter::new(config)),
-        DatabaseType::Oracle => Box::new(arni::adapters::oracle::OracleAdapter::new(config)),
-        DatabaseType::DuckDB => Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config)),
-    };
-    Ok(adapter)
+    #[allow(unreachable_patterns)]
+    match config.db_type {
+        #[cfg(feature = "postgres")]
+        DatabaseType::Postgres => Ok(Box::new(arni::adapters::postgres::PostgresAdapter::new(
+            config,
+        ))),
+        #[cfg(feature = "mysql")]
+        DatabaseType::MySQL => Ok(Box::new(arni::adapters::mysql::MySqlAdapter::new(config))),
+        #[cfg(feature = "sqlite")]
+        DatabaseType::SQLite => Ok(Box::new(arni::adapters::sqlite::SqliteAdapter::new(config))),
+        #[cfg(feature = "mongodb")]
+        DatabaseType::MongoDB => Ok(Box::new(arni::adapters::mongodb::MongoDbAdapter::new(
+            config,
+        ))),
+        #[cfg(feature = "mssql")]
+        DatabaseType::SQLServer => Ok(Box::new(arni::adapters::mssql::SqlServerAdapter::new(
+            config,
+        ))),
+        #[cfg(feature = "oracle")]
+        DatabaseType::Oracle => Ok(Box::new(arni::adapters::oracle::OracleAdapter::new(config))),
+        #[cfg(feature = "duckdb")]
+        DatabaseType::DuckDB => Ok(Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config))),
+        db_type => Err(anyhow!(
+            "Database type {:?} is not compiled in. \
+             Rebuild with the appropriate feature flag, e.g.: \
+             cargo install arni --features {:?}",
+            db_type,
+            db_type
+        )),
+    }
 }
 
 // ─── Connection helper ────────────────────────────────────────────────────────
@@ -140,6 +160,7 @@ mod tests {
 
     // ── create_adapter dispatch ───────────────────────────────────────────────
 
+    #[cfg(feature = "postgres")]
     #[test]
     fn test_create_adapter_postgres() {
         let adapter = create_adapter(make_config(DatabaseType::Postgres));
@@ -147,6 +168,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::Postgres);
     }
 
+    #[cfg(feature = "mysql")]
     #[test]
     fn test_create_adapter_mysql() {
         let adapter = create_adapter(make_config(DatabaseType::MySQL));
@@ -154,6 +176,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::MySQL);
     }
 
+    #[cfg(feature = "sqlite")]
     #[test]
     fn test_create_adapter_sqlite() {
         let adapter = create_adapter(make_config(DatabaseType::SQLite));
@@ -161,6 +184,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::SQLite);
     }
 
+    #[cfg(feature = "mongodb")]
     #[test]
     fn test_create_adapter_mongodb() {
         let adapter = create_adapter(make_config(DatabaseType::MongoDB));
@@ -168,6 +192,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::MongoDB);
     }
 
+    #[cfg(feature = "mssql")]
     #[test]
     fn test_create_adapter_sqlserver() {
         let adapter = create_adapter(make_config(DatabaseType::SQLServer));
@@ -175,6 +200,7 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::SQLServer);
     }
 
+    #[cfg(feature = "oracle")]
     #[test]
     fn test_create_adapter_oracle() {
         let adapter = create_adapter(make_config(DatabaseType::Oracle));
@@ -182,11 +208,25 @@ mod tests {
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::Oracle);
     }
 
+    #[cfg(feature = "duckdb")]
     #[test]
     fn test_create_adapter_duckdb() {
         let adapter = create_adapter(make_config(DatabaseType::DuckDB));
         assert!(adapter.is_ok());
         assert_eq!(adapter.unwrap().database_type(), DatabaseType::DuckDB);
+    }
+
+    #[test]
+    fn test_create_adapter_not_compiled_in() {
+        // When no DB features are enabled, all create_adapter calls return Err.
+        // We always have at least one DB type not in defaults, e.g. Oracle.
+        #[cfg(not(feature = "oracle"))]
+        {
+            let result = create_adapter(make_config(DatabaseType::Oracle));
+            assert!(result.is_err());
+            let msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(msg.contains("not compiled in"), "got: {msg}");
+        }
     }
 
     // ── password resolution (logic-only, no live connections) ─────────────────

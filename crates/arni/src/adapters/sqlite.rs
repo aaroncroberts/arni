@@ -9,9 +9,11 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
-    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    ProcedureInfo, QueryResult, QueryValue, RowStream, ServerInfo, TableInfo, TableSearchMode,
+    ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column, Row, TypeInfo};
@@ -89,9 +91,10 @@ impl SqliteAdapter {
     /// Uses `sqlx::query::execute` rather than `fetch_all` so DML operations
     /// correctly return the row count instead of an empty result set.
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            DataError::Connection("Not connected - call connect() first".to_string())
-        })?;
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(super::common::not_connected_error)?;
 
         let result = sqlx::query(sql)
             .execute(pool)
@@ -109,19 +112,30 @@ impl SqliteAdapter {
         super::common::query_value_to_sql_literal(value, true)
     }
 
+    #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to the corresponding SQLite type affinity.
+    ///
+    /// SQLite has four storage classes: INTEGER, REAL, TEXT, BLOB.
+    /// All boolean and integer variants collapse to INTEGER; both float
+    /// variants map to REAL; everything else delegates to the generic SQL
+    /// fallback (String→TEXT, Binary→BLOB, unknowns→TEXT).
     fn polars_dtype_to_sqlite_type(dtype: &DataType) -> &'static str {
         match dtype {
-            DataType::Boolean => "INTEGER", // SQLite stores booleans as 0/1
-            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => "INTEGER",
-            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => "INTEGER",
+            DataType::Boolean
+            | DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64 => "INTEGER",
             DataType::Float32 | DataType::Float64 => "REAL",
-            DataType::String => "TEXT",
-            DataType::Binary => "BLOB",
-            _ => "TEXT", // Safe fallback
+            _ => super::common::polars_dtype_to_generic_sql(dtype),
         }
     }
 
+    #[cfg(feature = "polars")]
     /// Extract the value at `row_idx` from `series` as a SQLite SQL literal.
     ///
     /// Delegates to the shared implementation in [`super::common`], with booleans
@@ -135,56 +149,34 @@ impl SqliteAdapter {
         let mut values = Vec::new();
 
         for (i, column) in row.columns().iter().enumerate() {
-            let type_info = column.type_info();
-            let type_name = type_info.name();
-
             // SQLite has a simpler type system: NULL, INTEGER, REAL, TEXT, BLOB
+            let type_name = column.type_info().name();
             let value = match type_name {
-                "BOOLEAN" | "BOOL" => {
-                    let val: Option<bool> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bool value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bool(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                "INTEGER" | "INT" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "BIGINT" => {
-                    let val: Option<i64> = row
-                        .try_get(i)
-                        .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?;
-                    match val {
-                        Some(v) => QueryValue::Int(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                "REAL" | "DOUBLE" | "FLOAT" => {
-                    let val: Option<f64> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get float value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Float(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                "TEXT" | "VARCHAR" | "CHAR" | "CLOB" => {
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get text value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                "BLOB" => {
-                    let val: Option<Vec<u8>> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bytes value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bytes(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                "BOOLEAN" | "BOOL" => row
+                    .try_get::<Option<bool>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get bool value: {}", e)))?
+                    .map(QueryValue::Bool)
+                    .unwrap_or(QueryValue::Null),
+                "INTEGER" | "INT" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "BIGINT" => row
+                    .try_get::<Option<i64>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?
+                    .map(QueryValue::Int)
+                    .unwrap_or(QueryValue::Null),
+                "REAL" | "DOUBLE" | "FLOAT" => row
+                    .try_get::<Option<f64>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get float value: {}", e)))?
+                    .map(QueryValue::Float)
+                    .unwrap_or(QueryValue::Null),
+                "TEXT" | "VARCHAR" | "CHAR" | "CLOB" => row
+                    .try_get::<Option<String>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get text value: {}", e)))?
+                    .map(QueryValue::Text)
+                    .unwrap_or(QueryValue::Null),
+                "BLOB" => row
+                    .try_get::<Option<Vec<u8>>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get bytes value: {}", e)))?
+                    .map(QueryValue::Bytes)
+                    .unwrap_or(QueryValue::Null),
                 "NULL" => {
                     // sqlx reports undeclared-type columns (e.g. PRAGMA results) as
                     // type "NULL". The actual SQLite storage class may be INTEGER,
@@ -197,19 +189,13 @@ impl SqliteAdapter {
                         QueryValue::Null
                     }
                 }
-                _ => {
-                    // For unknown types, try to get as text
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!(
-                            "Failed to get value for type {}: {}",
-                            type_name, e
-                        ))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                _ => row
+                    .try_get::<Option<String>, _>(i)
+                    .map_err(|e| {
+                        DataError::Query(format!("Failed to get value for type {type_name}: {e}"))
+                    })?
+                    .map(QueryValue::Text)
+                    .unwrap_or(QueryValue::Null),
             };
 
             values.push(value);
@@ -370,7 +356,7 @@ impl DbAdapter for SqliteAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            DataError::Connection("Not connected - call connect() first".to_string())
+            super::common::not_connected_error()
         })?;
 
         let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
@@ -414,6 +400,25 @@ impl DbAdapter for SqliteAdapter {
         })
     }
 
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
+        use futures_util::TryStreamExt;
+        if self.pool.is_none() {
+            return Err(super::common::not_connected_error());
+        }
+        let pool = self
+            .pool
+            .clone()
+            .ok_or_else(super::common::not_connected_error)?;
+        let query = query.to_string();
+        let stream = async_stream::try_stream! {
+            let mut cursor = sqlx::query(&query).fetch(&pool);
+            while let Some(row) = cursor.try_next().await.map_err(|e| DataError::Query(format!("Stream fetch error: {}", e)))? {
+                yield SqliteAdapter::row_to_values(&row)?;
+            }
+        };
+        Ok(Box::pin(stream))
+    }
+
     #[instrument(skip(self), fields(adapter = "sqlite"))]
     async fn list_databases(&self) -> Result<Vec<String>> {
         // SQLite is file-based, so there's only the current database
@@ -454,7 +459,7 @@ impl DbAdapter for SqliteAdapter {
                 operation = "find_tables",
                 "Not connected"
             );
-            DataError::Connection("Not connected - call connect() first".to_string())
+            super::common::not_connected_error()
         })?;
 
         let escaped = escape_like_pattern(pattern);
@@ -710,6 +715,7 @@ impl DbAdapter for SqliteAdapter {
         Ok(vec![])
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "sqlite", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -721,9 +727,7 @@ impl DbAdapter for SqliteAdapter {
         {
             if self.pool.is_none() {
                 error!(adapter = "sqlite", operation = "export_dataframe", table = %table_name, "Not connected");
-                return Err(DataError::Connection(
-                    "Not connected - call connect() first".to_string(),
-                ));
+                return Err(super::common::not_connected_error());
             }
         }
 
@@ -818,9 +822,7 @@ impl DbAdapter for SqliteAdapter {
         {
             if self.pool.is_none() {
                 error!(adapter = "sqlite", operation = "bulk_insert", table = %table_name, "Not connected");
-                return Err(DataError::Connection(
-                    "Not connected - call connect() first".to_string(),
-                ));
+                return Err(super::common::not_connected_error());
             }
         }
 
@@ -874,9 +876,7 @@ impl DbAdapter for SqliteAdapter {
         {
             if self.pool.is_none() {
                 error!(adapter = "sqlite", operation = "bulk_update", table = %table_name, "Not connected");
-                return Err(DataError::Connection(
-                    "Not connected - call connect() first".to_string(),
-                ));
+                return Err(super::common::not_connected_error());
             }
         }
 
@@ -917,9 +917,7 @@ impl DbAdapter for SqliteAdapter {
         {
             if self.pool.is_none() {
                 error!(adapter = "sqlite", operation = "bulk_delete", table = %table_name, "Not connected");
-                return Err(DataError::Connection(
-                    "Not connected - call connect() first".to_string(),
-                ));
+                return Err(super::common::not_connected_error());
             }
         }
 
@@ -1326,5 +1324,138 @@ mod tests {
             _ => -1,
         };
         assert_eq!(count, 2);
+    }
+
+    // ── execute_query_stream ───────────────────────────────────────────────────
+
+    /// Helper: connect a fresh in-memory adapter.
+    async fn connected_adapter() -> SqliteAdapter {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+        adapter
+    }
+
+    #[tokio::test]
+    async fn stream_rows_match_execute_query() {
+        use futures_util::TryStreamExt;
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE st (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO st VALUES (1, 'Alpha'), (2, 'Beta'), (3, 'Gamma')")
+            .await
+            .unwrap();
+
+        let expected = adapter
+            .execute_query("SELECT id, name FROM st")
+            .await
+            .unwrap();
+
+        let mut stream = adapter
+            .execute_query_stream("SELECT id, name FROM st")
+            .await
+            .unwrap();
+
+        let mut streamed_rows: Vec<Vec<QueryValue>> = Vec::new();
+        while let Some(row) = stream.try_next().await.unwrap() {
+            streamed_rows.push(row);
+        }
+
+        assert_eq!(streamed_rows.len(), expected.rows.len());
+        for (got, want) in streamed_rows.iter().zip(expected.rows.iter()) {
+            assert_eq!(got, want);
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_maps_to_struct_via_from_query_row() {
+        use crate::adapter::DbAdapterExt;
+
+        #[derive(Debug, PartialEq)]
+        struct Row {
+            id: i64,
+            label: String,
+        }
+
+        impl crate::adapter::FromQueryRow for Row {
+            fn from_row(row: Vec<QueryValue>) -> std::result::Result<Self, DataError> {
+                let id = match row.first() {
+                    Some(QueryValue::Int(n)) => *n,
+                    _ => return Err(DataError::TypeConversion("id".into())),
+                };
+                let label = match row.get(1) {
+                    Some(QueryValue::Text(s)) => s.clone(),
+                    _ => return Err(DataError::TypeConversion("label".into())),
+                };
+                Ok(Row { id, label })
+            }
+        }
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE mapped (id INTEGER, label TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO mapped VALUES (10, 'X'), (20, 'Y')")
+            .await
+            .unwrap();
+
+        let rows: Vec<Row> = adapter
+            .execute_query_mapped("SELECT id, label FROM mapped")
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0],
+            Row {
+                id: 10,
+                label: "X".to_string()
+            }
+        );
+        assert_eq!(
+            rows[1],
+            Row {
+                id: 20,
+                label: "Y".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_propagates_from_query_row_error() {
+        use crate::adapter::DbAdapterExt;
+
+        #[derive(Debug)]
+        struct BadMapper;
+
+        impl crate::adapter::FromQueryRow for BadMapper {
+            fn from_row(_row: Vec<QueryValue>) -> std::result::Result<Self, DataError> {
+                Err(DataError::TypeConversion("always fails".into()))
+            }
+        }
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE errtest (x INTEGER)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO errtest VALUES (1)")
+            .await
+            .unwrap();
+
+        let result: Result<Vec<BadMapper>> =
+            adapter.execute_query_mapped("SELECT x FROM errtest").await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), DataError::TypeConversion(_)));
     }
 }

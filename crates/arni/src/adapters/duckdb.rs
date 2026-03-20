@@ -1,9 +1,11 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
-    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    ProcedureInfo, QueryResult, QueryValue, RowStream, ServerInfo, TableInfo, TableSearchMode,
+    ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -91,7 +93,7 @@ impl DuckDbAdapter {
                     operation = "execute_query",
                     "Not connected"
                 );
-                DataError::Connection("Not connected".to_string())
+                super::common::not_connected_error()
             })?;
 
             let mut stmt = conn
@@ -163,7 +165,7 @@ impl DuckDbAdapter {
                 .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
             let conn = conn_guard
                 .as_ref()
-                .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+                .ok_or_else(super::common::not_connected_error)?;
             conn.execute(&sql, [])
                 .map(|n| n as u64)
                 .map_err(|e| DataError::Query(format!("Failed to execute statement: {}", e)))
@@ -180,26 +182,32 @@ impl DuckDbAdapter {
         super::common::query_value_to_sql_literal(value, false)
     }
 
+    #[cfg(feature = "polars")]
     /// Map a Polars [`DataType`] to the corresponding DuckDB SQL type name.
+    ///
+    /// DuckDB has native unsigned integer types (`UTINYINT`, `USMALLINT`,
+    /// `UINTEGER`, `UBIGINT`) and uses `VARCHAR` where generic SQL uses `TEXT`.
+    /// All other types delegate to the shared generic mapping; any generic
+    /// `TEXT` result is remapped to `VARCHAR` for DuckDB consistency.
     fn polars_dtype_to_duckdb_type(dtype: &DataType) -> &'static str {
         match dtype {
-            DataType::Boolean => "BOOLEAN",
-            DataType::Int8 => "TINYINT",
-            DataType::Int16 => "SMALLINT",
-            DataType::Int32 => "INTEGER",
-            DataType::Int64 => "BIGINT",
             DataType::UInt8 => "UTINYINT",
             DataType::UInt16 => "USMALLINT",
             DataType::UInt32 => "UINTEGER",
             DataType::UInt64 => "UBIGINT",
-            DataType::Float32 => "FLOAT",
-            DataType::Float64 => "DOUBLE",
             DataType::String => "VARCHAR",
-            DataType::Binary => "BLOB",
-            _ => "VARCHAR", // Safe fallback for dates, enums, structs, etc.
+            _ => {
+                let g = super::common::polars_dtype_to_generic_sql(dtype);
+                if g == "TEXT" {
+                    "VARCHAR"
+                } else {
+                    g
+                }
+            }
         }
     }
 
+    #[cfg(feature = "polars")]
     /// Extract the value at `row_idx` from `series` as a DuckDB SQL literal string.
     ///
     /// Delegates to the shared implementation in [`super::common`], with booleans
@@ -383,6 +391,95 @@ impl DbAdapter for DuckDbAdapter {
         self.execute_query_blocking(query.to_string()).await
     }
 
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
+        // DuckDB's driver is synchronous. We run the query in spawn_blocking and
+        // send rows over a tokio channel one at a time, then stream from the
+        // receiver side — providing true back-pressure without materialising all rows.
+        if !ConnectionTrait::is_connected(self) {
+            return Err(super::common::not_connected_error());
+        }
+        let connection = self.connection.clone();
+        let query = query.to_string();
+        // Unbounded channel: DuckDB doesn't support async yield from blocking code.
+        // Rows are sent as they are decoded; the receiver drives consumption.
+        let (tx, mut rx) =
+            tokio::sync::mpsc::channel::<std::result::Result<Vec<QueryValue>, DataError>>(64);
+        tokio::task::spawn_blocking(move || {
+            let guard = match connection.lock() {
+                Ok(g) => g,
+                Err(_) => {
+                    let _ =
+                        tx.blocking_send(Err(DataError::Connection("Lock poisoned".to_string())));
+                    return;
+                }
+            };
+            let conn = match guard.as_ref() {
+                Some(c) => c,
+                None => {
+                    let _ = tx.blocking_send(Err(super::common::not_connected_error()));
+                    return;
+                }
+            };
+            let mut stmt = match conn.prepare(&query) {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(DataError::Query(format!(
+                        "Failed to prepare statement: {}",
+                        e
+                    ))));
+                    return;
+                }
+            };
+            let mut rows_iter = match stmt.query([]) {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(DataError::Query(format!("Query failed: {}", e))));
+                    return;
+                }
+            };
+            let n = rows_iter.as_ref().map(|s| s.column_count()).unwrap_or(0);
+            loop {
+                match rows_iter.next() {
+                    Err(e) => {
+                        let _ = tx.blocking_send(Err(DataError::Query(format!(
+                            "Failed to read row: {}",
+                            e
+                        ))));
+                        break;
+                    }
+                    Ok(None) => break,
+                    Ok(Some(row)) => {
+                        let mut values = Vec::with_capacity(n);
+                        let mut ok = true;
+                        for i in 0..n {
+                            match DuckDbAdapter::get_value(row, i) {
+                                Ok(v) => values.push(v),
+                                Err(e) => {
+                                    let _ = tx.blocking_send(Err(DataError::Query(format!(
+                                        "Column {}: {}",
+                                        i, e
+                                    ))));
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if !ok || tx.blocking_send(Ok(values)).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let stream = async_stream::try_stream! {
+            while let Some(item) = rx.recv().await {
+                yield item?;
+            }
+        };
+        Ok(Box::pin(stream))
+    }
+
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "duckdb", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -393,9 +490,7 @@ impl DbAdapter for DuckDbAdapter {
     ) -> Result<u64> {
         if !ConnectionTrait::is_connected(self) {
             error!(adapter = "duckdb", operation = "export_dataframe", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let nrows = df.height();
@@ -472,8 +567,9 @@ impl DbAdapter for DuckDbAdapter {
         Ok(rows_inserted)
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self), fields(adapter = "duckdb", table = %table_name))]
-    async fn read_table(&self, table_name: &str, _schema: Option<&str>) -> Result<DataFrame> {
+    async fn read_table_df(&self, table_name: &str, _schema: Option<&str>) -> Result<DataFrame> {
         let query = format!("SELECT * FROM {}", table_name);
         let result = self.execute_query(&query).await?;
         result.to_dataframe()
@@ -499,9 +595,7 @@ impl DbAdapter for DuckDbAdapter {
         }
         if !ConnectionTrait::is_connected(self) {
             error!(adapter = "duckdb", operation = "bulk_insert", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         for (idx, row) in rows.iter().enumerate() {
@@ -554,9 +648,7 @@ impl DbAdapter for DuckDbAdapter {
         }
         if !ConnectionTrait::is_connected(self) {
             error!(adapter = "duckdb", operation = "bulk_update", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let mut total_affected = 0u64;
@@ -595,9 +687,7 @@ impl DbAdapter for DuckDbAdapter {
         }
         if !ConnectionTrait::is_connected(self) {
             error!(adapter = "duckdb", operation = "bulk_delete", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let mut total_affected = 0u64;
@@ -1045,6 +1135,7 @@ mod tests {
 
     // ── polars_dtype_to_duckdb_type ─────────────────────────────────────────
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_int_types() {
         assert_eq!(
@@ -1065,6 +1156,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_uint_types() {
         assert_eq!(
@@ -1085,6 +1177,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_float_types() {
         assert_eq!(
@@ -1097,6 +1190,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_string_and_bool() {
         assert_eq!(
@@ -1113,6 +1207,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_dtype_mapping_unknown_falls_back_to_varchar() {
         // Date, Datetime, etc. fall back to VARCHAR
@@ -1176,6 +1271,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_export_dataframe_not_connected_returns_error() {
         use polars::prelude::*;
@@ -1208,6 +1304,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_query_df_invalid_sql_returns_err() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
@@ -1555,5 +1652,108 @@ mod tests {
             .unwrap();
         let n = adapter.bulk_delete("any_table", &[], None).await.unwrap();
         assert_eq!(n, 0);
+    }
+
+    // ── execute_query_stream ───────────────────────────────────────────────────
+
+    async fn connected_adapter() -> DuckDbAdapter {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+        adapter
+    }
+
+    #[tokio::test]
+    async fn stream_rows_match_execute_query() {
+        use crate::adapter::DbAdapter;
+        use futures_util::TryStreamExt;
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE st (id INTEGER, name VARCHAR)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO st VALUES (1, 'Alpha'), (2, 'Beta'), (3, 'Gamma')")
+            .await
+            .unwrap();
+
+        let expected = adapter
+            .execute_query("SELECT id, name FROM st")
+            .await
+            .unwrap();
+
+        let mut stream = adapter
+            .execute_query_stream("SELECT id, name FROM st")
+            .await
+            .unwrap();
+
+        let mut streamed_rows: Vec<Vec<QueryValue>> = Vec::new();
+        while let Some(row) = stream.try_next().await.unwrap() {
+            streamed_rows.push(row);
+        }
+
+        assert_eq!(streamed_rows.len(), expected.rows.len());
+        for (got, want) in streamed_rows.iter().zip(expected.rows.iter()) {
+            assert_eq!(got, want);
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_maps_to_struct_via_from_query_row() {
+        use crate::adapter::{DbAdapterExt, FromQueryRow};
+
+        #[derive(Debug, PartialEq)]
+        struct Row {
+            id: i64,
+            label: String,
+        }
+
+        impl FromQueryRow for Row {
+            fn from_row(row: Vec<QueryValue>) -> std::result::Result<Self, crate::DataError> {
+                let id = match row.first() {
+                    Some(QueryValue::Int(n)) => *n,
+                    _ => return Err(crate::DataError::TypeConversion("id".into())),
+                };
+                let label = match row.get(1) {
+                    Some(QueryValue::Text(s)) => s.clone(),
+                    _ => return Err(crate::DataError::TypeConversion("label".into())),
+                };
+                Ok(Row { id, label })
+            }
+        }
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE mapped (id INTEGER, label VARCHAR)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO mapped VALUES (10, 'X'), (20, 'Y')")
+            .await
+            .unwrap();
+
+        let rows: Vec<Row> = adapter
+            .execute_query_mapped("SELECT id, label FROM mapped")
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0],
+            Row {
+                id: 10,
+                label: "X".to_string()
+            }
+        );
+        assert_eq!(
+            rows[1],
+            Row {
+                id: 20,
+                label: "Y".to_string()
+            }
+        );
     }
 }

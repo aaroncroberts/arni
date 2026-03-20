@@ -574,5 +574,5 @@ Typical resource consumption with all containers running:
 ---
 
 **Questions or Issues?**
-- Check [GitHub Issues](https://github.com/yourusername/arni/issues)
+- Check [GitHub Issues](https://github.com/aaroncroberts/arni/issues)
 - See [docs/](../docs/) for more guides

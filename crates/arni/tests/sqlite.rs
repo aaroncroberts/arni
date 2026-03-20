@@ -5,7 +5,7 @@
 //!
 //! Run with:
 //! ```bash
-//! cargo test -p arni-data --features sqlite --test sqlite
+//! cargo test -p arni --features sqlite --test sqlite
 //! ```
 
 mod common;
@@ -216,6 +216,7 @@ mod sqlite_tests {
 
     // ── DataFrame queries ─────────────────────────────────────────────────────
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_sqlite_read_table_returns_dataframe() {
         use arni::adapter::DbAdapter;
@@ -234,14 +235,15 @@ mod sqlite_tests {
         .await
         .unwrap();
 
-        let df = DbAdapter::read_table(&adapter, "rt_tbl", None)
+        let df = DbAdapter::read_table_df(&adapter, "rt_tbl", None)
             .await
-            .expect("read_table should return a DataFrame");
+            .expect("read_table_df should return a DataFrame");
         assert_eq!(df.height(), 2, "should have 2 rows");
         assert!(df.column("id").is_ok(), "id column should exist");
         assert!(df.column("label").is_ok(), "label column should exist");
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_sqlite_query_df_returns_dataframe() {
         use arni::adapter::DbAdapter;
@@ -611,6 +613,7 @@ mod sqlite_tests {
     // SQLite stores booleans as 0/1 integers, so the column type changes;
     // we compare values after casting.
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_sqlite_round_trip_schema_matches() {
         use arni::adapter::DbAdapter;
@@ -631,9 +634,9 @@ mod sqlite_tests {
             .await
             .expect("export should succeed");
 
-        let read_back = DbAdapter::read_table(&adapter, "rt_schema", None)
+        let read_back = DbAdapter::read_table_df(&adapter, "rt_schema", None)
             .await
-            .expect("read_table should succeed");
+            .expect("read_table_df should succeed");
 
         // Column names must match (order may differ for some adapters; sort both)
         let mut original_cols: Vec<&str> = original
@@ -660,6 +663,7 @@ mod sqlite_tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_sqlite_round_trip_values_preserved() {
         use arni::adapter::DbAdapter;
@@ -680,7 +684,7 @@ mod sqlite_tests {
             .await
             .unwrap();
 
-        let read_back = DbAdapter::read_table(&adapter, "rt_values", None)
+        let read_back = DbAdapter::read_table_df(&adapter, "rt_values", None)
             .await
             .unwrap();
 
@@ -711,6 +715,7 @@ mod sqlite_tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_sqlite_round_trip_replace_true_no_duplicates() {
         use arni::adapter::DbAdapter;
@@ -733,7 +738,7 @@ mod sqlite_tests {
             .expect("second export with replace=true should succeed");
         assert_eq!(rows, 3, "replace=true should write exactly 3 rows");
 
-        let read_back = DbAdapter::read_table(&adapter, "rt_replace", None)
+        let read_back = DbAdapter::read_table_df(&adapter, "rt_replace", None)
             .await
             .unwrap();
         assert_eq!(
@@ -743,6 +748,7 @@ mod sqlite_tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_sqlite_round_trip_replace_false_appends() {
         use arni::adapter::DbAdapter;
@@ -765,7 +771,7 @@ mod sqlite_tests {
             .expect("append should succeed");
         assert_eq!(rows, 2, "append should insert 2 more rows");
 
-        let read_back = DbAdapter::read_table(&adapter, "rt_append", None)
+        let read_back = DbAdapter::read_table_df(&adapter, "rt_append", None)
             .await
             .unwrap();
         assert_eq!(
@@ -775,6 +781,7 @@ mod sqlite_tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_sqlite_round_trip_empty_dataframe() {
         use arni::adapter::DbAdapter;
@@ -803,7 +810,7 @@ mod sqlite_tests {
             .expect("empty export should succeed");
         assert_eq!(rows, 0, "exporting empty DataFrame should insert 0 rows");
 
-        let read_back = DbAdapter::read_table(&adapter, "rt_empty", None)
+        let read_back = DbAdapter::read_table_df(&adapter, "rt_empty", None)
             .await
             .unwrap();
         assert_eq!(

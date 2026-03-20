@@ -6,7 +6,7 @@
 //! Set TEST_MSSQL_AVAILABLE=true to enable:
 //! ```bash
 //! export TEST_MSSQL_AVAILABLE=true
-//! cargo test -p arni-data --features mssql --test mssql
+//! cargo test -p arni --features mssql --test mssql
 //! ```
 
 mod common;
@@ -1642,6 +1642,7 @@ mod mssql_tests {
     // DATAFRAME ROUND-TRIP TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_mssql_round_trip_schema_matches() {
         use polars::prelude::*;
@@ -1667,9 +1668,9 @@ mod mssql_tests {
             .await
             .expect("export should succeed");
 
-        let read_back = DbAdapter::read_table(&adapter, table, None)
+        let read_back = DbAdapter::read_table_df(&adapter, table, None)
             .await
-            .expect("read_table should succeed");
+            .expect("read_table_df should succeed");
 
         let mut orig_cols: Vec<String> = original
             .get_column_names()
@@ -1694,6 +1695,7 @@ mod mssql_tests {
             .unwrap();
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_mssql_round_trip_unicode_nvarchar_preserved() {
         use polars::prelude::*;
@@ -1719,9 +1721,9 @@ mod mssql_tests {
             .await
             .expect("export with unicode should succeed");
 
-        let read_back = DbAdapter::read_table(&adapter, table, None)
+        let read_back = DbAdapter::read_table_df(&adapter, table, None)
             .await
-            .expect("read_table should succeed");
+            .expect("read_table_df should succeed");
 
         assert_eq!(read_back.height(), 3, "all 3 unicode rows must round-trip");
 

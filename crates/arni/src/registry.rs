@@ -179,6 +179,7 @@ mod tests {
         fn metadata(&self) -> crate::adapter::AdapterMetadata<'_> {
             unimplemented!()
         }
+        #[cfg(feature = "polars")]
         async fn export_dataframe(
             &self,
             _df: &polars::prelude::DataFrame,

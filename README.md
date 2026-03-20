@@ -7,19 +7,39 @@
 /_/   \_\_| \_\_| \_|___|
 ```
 
-**Unified database access for Rust — every query returns a Polars DataFrame.**
+**Unified database access for Rust — lightweight `QueryResult` by default, Polars DataFrames when you need them.**
 
-[![CI](https://github.com/acroberts16/arni/actions/workflows/ci.yml/badge.svg)](https://github.com/acroberts16/arni/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/codecov/c/github/acroberts16/arni)](https://codecov.io/gh/acroberts16/arni)
+[![CI](https://github.com/aaroncroberts/arni/actions/workflows/ci.yml/badge.svg)](https://github.com/aaroncroberts/arni/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/codecov/c/github/aaroncroberts/arni)](https://codecov.io/gh/aaroncroberts/arni)
 [![Crates.io](https://img.shields.io/crates/v/arni)](https://crates.io/crates/arni)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Named for Árni Magnússon (1663–1730), the Icelandic scholar who gathered and preserved the largest known collection of Norse manuscripts, **arni** brings that same principle to your data layer.
-Connect to PostgreSQL, MySQL, MongoDB, Oracle, SQL Server, DuckDB, or SQLite through a single trait-based API — and receive every result as a Polars DataFrame, ready for analysis.
+Connect to PostgreSQL, MySQL, MongoDB, Oracle, SQL Server, DuckDB, or SQLite through a single trait-based API.
+Base queries return a lightweight `QueryResult`; add the `polars` feature to get full DataFrame support.
 
 ## Overview
 
-Arni is a multi-database adapter library for Rust that provides a unified interface for working with various databases (PostgreSQL, MySQL, MongoDB, Oracle, SQL Server, DuckDB, SQLite). All query results are returned as Polars DataFrames for easy data analysis and manipulation.
+Writing database code in Rust today means picking a driver per database, learning its async model,
+writing your own type-mapping, and starting over when you swap backends. arni removes that friction.
+
+**One trait. Seven databases. Three ways to use it:**
+
+- **Library** — embed arni in your Rust application. Write your query logic once against `DbAdapter`;
+  switch from DuckDB to Postgres to MySQL by changing one line. Use DuckDB in-memory for zero-setup
+  unit tests, stream large result sets row-by-row with `execute_query_stream`, or pull results
+  straight into Polars DataFrames for analytics.
+
+- **MCP server** — run `arni mcp` and register it with Claude Desktop or Claude Code. Claude gains
+  live access to your database schemas and data: it calls `describe_table` before writing a struct,
+  queries live data during an incident investigation, and drafts migrations that account for your
+  real indexes and foreign keys — all without you copy-pasting schemas into the chat.
+
+- **CLI** — inspect tables, run queries, export to CSV/Parquet/JSON, and perform bulk operations
+  from the shell. One binary, no database-specific client tools required.
+
+Database drivers are individually opt-in via feature flags — compile only what you need.
+See [docs/use-cases.md](docs/use-cases.md) for concrete examples of each surface in action.
 
 ## Project Structure
 
@@ -50,8 +70,11 @@ arni/
 
 ## Features
 
-- **Unified Interface**: Common trait-based API across all seven database adapters
-- **DataFrame Results**: Every query returns a Polars DataFrame — no adapter-specific code in your business logic
+- **Unified Interface**: Common `DbAdapter` trait across all seven database adapters
+- **Lightweight by default**: Base API returns `QueryResult` — no Polars, no heavy compile
+- **Opt-in DataFrames**: Add `features = ["polars"]` for `query_df`, `export_dataframe`, CSV/JSON/Parquet/Excel
+- **Fine-grained feature flags**: `postgres`, `mysql`, `sqlite`, `mongodb`, `mssql`, `oracle`, `duckdb` — pick what you need (see [docs/feature-flags.md](docs/feature-flags.md))
+- **System DuckDB**: `duckdb` feature links against a system install; `duckdb-bundled` builds from source when no system install is available
 - **Async-First**: Built on Tokio; connection pools, RwLock-guarded clients throughout
 - **Schema Introspection**: Tables, views, indexes, foreign keys, stored procedures, and server metadata
 - **Bulk Operations**: Batch insert, update, and delete with automatic chunking
@@ -65,6 +88,10 @@ arni/
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | `connect` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `execute_query` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `execute_query_stream`¹ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `execute_query_mapped`¹ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `execute_query_json`² | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `execute_query_csv`³ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `export_dataframe` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `list_tables` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `describe_table` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -83,6 +110,9 @@ arni/
 
 **Notes:**
 
+- ¹ `execute_query_stream` / `execute_query_mapped` — no extra feature flag; requires implementing [`FromQueryRow`](https://docs.rs/arni/latest/arni/trait.FromQueryRow.html) for your type. All seven adapters implemented. Note: MSSQL materializes internally due to tiberius driver lifetime constraints; all others stream row-by-row.
+- ² `execute_query_json` — requires `--features json`
+- ³ `execute_query_csv` — requires `--features csv`
 - `row_count ⚠️ approx` — PostgreSQL, MySQL, Oracle use catalog statistics (fast, not exact); use `SELECT COUNT(*)` for precision
 - `get_views ⚠️` MongoDB — views not enumerable via driver; returns empty list
 - `get_indexes ⚠️` DuckDB — index introspection limited; returns empty list
@@ -92,21 +122,38 @@ arni/
 
 ## Quick Start
 
-Add to `Cargo.toml`:
+### Without Polars (lightweight — any database)
 
 ```toml
 [dependencies]
-arni = { version = "0.2", features = ["duckdb"] }  # or "postgres", "mysql", etc.
+# PostgreSQL only, no polars — minimal compile
+arni = { version = "0.4", default-features = false, features = ["postgres"] }
+```
+
+```rust
+use arni::{adapters::postgres::PostgresAdapter, ConnectionConfig, DatabaseType, DbAdapter};
+
+let result = adapter.execute_query("SELECT * FROM users LIMIT 5").await?;
+for row in &result.rows {
+    println!("{:?}", row);
+}
+```
+
+### With Polars (DataFrame API)
+
+```toml
+[dependencies]
+# DuckDB in-memory + DataFrame output
+arni = { version = "0.4", default-features = false, features = ["duckdb", "polars"] }
 ```
 
 ```rust
 use std::collections::HashMap;
 use arni::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
-use polars::prelude::*;
+use arni::polars::prelude::*;  // polars re-exported — no direct dep needed
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Connect — swap DuckDbAdapter for PostgresAdapter, MySqlAdapter, etc. with no API changes
     let config = ConnectionConfig {
         id: "demo".into(), name: "demo".into(), db_type: DatabaseType::DuckDB,
         host: None, port: None, database: ":memory:".into(),
@@ -116,28 +163,19 @@ async fn main() -> anyhow::Result<()> {
     let mut adapter = DuckDbAdapter::new(config.clone());
     adapter.connect(&config, None).await?;
 
-    // Write a Polars DataFrame into the database
+    // Write a DataFrame into the database
     let df = df!["name" => ["Alice", "Bob", "Carol"], "score" => [92.5f64, 87.0, 95.1]]?;
     adapter.export_dataframe(&df, "players", None, true).await?;
 
-    // Query it back — every result is a Polars DataFrame
+    // Query back as a DataFrame
     let result = adapter.query_df("SELECT * FROM players ORDER BY score DESC").await?;
     println!("{result}");
-    // shape: (3, 2)
-    // ┌───────┬───────┐
-    // │ name  ┆ score │
-    // │ ---   ┆ ---   │
-    // │ str   ┆ f64   │
-    // ╞═══════╪═══════╡
-    // │ Carol ┆ 95.1  │
-    // │ Alice ┆ 92.5  │
-    // │ Bob   ┆ 87.0  │
-    // └───────┴───────┘
     Ok(())
 }
 ```
 
-See [`crates/arni/examples/quickstart.rs`](crates/arni/examples/quickstart.rs) for the full runnable version including schema introspection.
+See [`crates/arni/examples/quickstart.rs`](crates/arni/examples/quickstart.rs) for the full runnable version.
+See [docs/feature-flags.md](docs/feature-flags.md) for all feature flags, install examples, and system DuckDB setup.
 
 ## CLI Usage
 
@@ -210,12 +248,14 @@ arni export "SELECT * FROM events WHERE date > '2024-01-01'" \
 | Guide | Description |
 | :--- | :--- |
 | **[Getting Started](docs/getting-started.md)** | Five-minute introduction: first query, bulk ops, CLI tour, common errors |
-| **[Configuration Reference](docs/configuration.md)** | Full YAML/TOML schema, all fields, environment variable substitution |
+| **[Use Cases](docs/use-cases.md)** | Real-world patterns for the library, MCP server, and CLI — when to use each and what it looks like |
 | **[MCP Server](docs/mcp.md)** | Connect Claude and other AI agents directly to your databases |
+| **[Configuration Reference](docs/configuration.md)** | Full YAML/TOML schema, all fields, environment variable substitution |
 | **[Architecture Guide](docs/architecture.md)** | Codebase internals, trait hierarchy, and how to add a new adapter |
 | **[Examples](crates/arni/examples/README.md)** | Runnable programs: analytics, multi-adapter comparison |
 | **[Axum API Example](examples/axum-api/README.md)** | Full Axum HTTP server using arni as a library — zero-config SQLite, swap to any database |
 | **[Local Databases](docs/local-databases.md)** | Spin up PostgreSQL, MySQL, MongoDB and more via Docker/Podman |
+| **[Release Process](docs/release-process.md)** | Step-by-step release checklist: quality gates, merge, PR, tag, publish |
 
 ## Local Development with Databases
 

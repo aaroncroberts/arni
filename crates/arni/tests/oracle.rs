@@ -1669,6 +1669,7 @@ mod oracle_tests {
     // DATAFRAME ROUND-TRIP TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_round_trip_schema_matches() {
@@ -1691,9 +1692,9 @@ mod oracle_tests {
             .await
             .expect("export should succeed");
 
-        let read_back = DbAdapter::read_table(&adapter, table, None)
+        let read_back = DbAdapter::read_table_df(&adapter, table, None)
             .await
-            .expect("read_table should succeed");
+            .expect("read_table_df should succeed");
 
         // Oracle uppercases all identifiers
         let mut orig_cols: Vec<String> = original
@@ -1719,6 +1720,7 @@ mod oracle_tests {
             .unwrap();
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore = "Oracle requires 2 GB RAM + 60 s startup; run locally with arni dev start"]
     async fn test_oracle_round_trip_number_values_preserved() {
@@ -1740,7 +1742,9 @@ mod oracle_tests {
             .await
             .unwrap();
 
-        let read_back = DbAdapter::read_table(&adapter, table, None).await.unwrap();
+        let read_back = DbAdapter::read_table_df(&adapter, table, None)
+            .await
+            .unwrap();
 
         let orig_ids: Vec<i64> = original
             .column("ID")

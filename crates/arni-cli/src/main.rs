@@ -5,16 +5,20 @@ mod discovery;
 mod filter;
 mod json_output;
 mod logging_config;
+mod output_formatter;
+use output_formatter::OutputFormatter;
 
 use arni::adapter::{ConnectionConfig, DatabaseType, QueryValue, TableSearchMode};
-use arni::export::{to_bytes, to_file, DataFormat};
+#[cfg(feature = "polars")]
+use arni::polars::prelude::DataFrame;
+#[cfg(feature = "polars")]
+use arni::{to_bytes, to_file, DataFormat};
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
 use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as CTable};
 use config::{ConfigStore, ConnectionEntry};
 use figlet_rs::FIGfont;
 use filter::{json_to_query_value, parse_bulk_insert_data, parse_filter_json};
-use polars::prelude::DataFrame;
 use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
@@ -29,7 +33,7 @@ const COMPOSE_FILE: &str = "compose.yml";
 #[command(
     author,
     version,
-    about = "Unified database access — every query returns a Polars DataFrame"
+    about = "Unified database access — query any database, get QueryResult or DataFrame"
 )]
 #[command(
     long_about = "Unified database access for Rust.\n\nConnect to PostgreSQL, MySQL, MongoDB, Oracle, SQL Server, DuckDB, or SQLite\nthrough a single trait-based API and receive every result as a Polars DataFrame.\n\nFor agent/script use, add --json to any command to receive a machine-readable\n{ok, …} envelope instead of human-readable formatted output.\n\nDiscovery flags (require no subcommand):\n  arni --list-tools       JSON list of all commands with argument schemas\n  arni --capabilities     JSON of supported database types and features\n  arni --schema <cmd>     JSON input/output schema for a specific command"
@@ -410,6 +414,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tracing::info!("arni v{VERSION} started");
 
     let json_mode = cli.json_output;
+    let fmt = OutputFormatter::new(json_mode);
 
     // ── Discovery flags: short-circuit before any subcommand dispatch ─────────
     if cli.list_tools {
@@ -453,10 +458,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     };
 
-    let result = run_command(command, json_mode).await;
+    let result = run_command(command, &fmt).await;
 
     if let Err(e) = result {
-        if json_mode {
+        if fmt.is_json() {
             json_output::emit(&json_output::error("COMMAND_ERROR", &e.to_string()));
             std::process::exit(1);
         }
@@ -468,16 +473,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 // ─── Top-level command dispatcher ─────────────────────────────────────────────
 
-async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn Error>> {
+async fn run_command(command: Commands, fmt: &OutputFormatter) -> Result<(), Box<dyn Error>> {
     match command {
-        Commands::Config { action } => handle_config_command(action, json_mode).await,
+        Commands::Config { action } => handle_config_command(action, fmt).await,
         Commands::Dev { action } => handle_dev_command(action).await,
-        Commands::Connect { profile } => handle_connect_command(profile, json_mode).await,
+        Commands::Connect { profile } => handle_connect_command(profile, fmt).await,
         Commands::Query {
             query,
             profile,
             format,
-        } => handle_query_command(query, profile, format, json_mode).await,
+        } => handle_query_command(query, profile, format, fmt).await,
         Commands::Metadata {
             profile,
             tables,
@@ -505,7 +510,7 @@ async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn E
                 fkeys,
                 procs,
                 server,
-                json_mode,
+                fmt,
             )
             .await
         }
@@ -514,33 +519,33 @@ async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn E
             profile,
             format,
             output,
-        } => handle_export_command(query, profile, format, output, json_mode).await,
+        } => handle_export_command(query, profile, format, output, fmt).await,
         Commands::Mcp => arni_mcp::serve().await.map_err(|e| e.into()),
         Commands::BulkInsert {
             profile,
             table,
             data,
             schema,
-        } => handle_bulk_insert_command(profile, table, data, schema, json_mode).await,
+        } => handle_bulk_insert_command(profile, table, data, schema, fmt).await,
         Commands::BulkUpdate {
             profile,
             table,
             filter,
             values,
             schema,
-        } => handle_bulk_update_command(profile, table, filter, values, schema, json_mode).await,
+        } => handle_bulk_update_command(profile, table, filter, values, schema, fmt).await,
         Commands::BulkDelete {
             profile,
             table,
             filter,
             schema,
-        } => handle_bulk_delete_command(profile, table, filter, schema, json_mode).await,
+        } => handle_bulk_delete_command(profile, table, filter, schema, fmt).await,
         Commands::FindTables {
             profile,
             pattern,
             mode,
             schema,
-        } => handle_find_tables_command(profile, pattern, mode, schema, json_mode).await,
+        } => handle_find_tables_command(profile, pattern, mode, schema, fmt).await,
     }
 }
 
@@ -548,7 +553,7 @@ async fn run_command(command: Commands, json_mode: bool) -> Result<(), Box<dyn E
 
 async fn handle_config_command(
     action: ConfigAction,
-    json_mode: bool,
+    fmt: &OutputFormatter,
 ) -> Result<(), Box<dyn Error>> {
     match action {
         ConfigAction::Add {
@@ -606,30 +611,28 @@ async fn handle_config_command(
             store.add(name.clone(), entry)?;
             store.save()?;
 
-            if json_mode {
-                json_output::emit(&serde_json::json!({
+            fmt.success(
+                serde_json::json!({
                     "ok": true,
                     "name": name,
                     "saved_to": store.config_dir().join("connections.yml").to_string_lossy()
-                }));
-            } else {
-                println!(
-                    "{} {} {}",
-                    "✓".bright_green(),
+                }),
+                format!(
+                    "{} {}",
                     "Saved connection profile:".green(),
                     name.bright_white()
-                );
-                println!(
-                    "  Config: {}",
-                    store.config_dir().join("connections.yml").display()
-                );
-            }
+                ),
+            );
+            fmt.info(format!(
+                "  Config: {}",
+                store.config_dir().join("connections.yml").display()
+            ));
         }
 
         ConfigAction::List => {
             let store = ConfigStore::load(None)?;
             let profiles = store.list();
-            if json_mode {
+            if fmt.is_json() {
                 let arr: Vec<serde_json::Value> = profiles
                     .iter()
                     .map(|(name, entry)| {
@@ -643,7 +646,7 @@ async fn handle_config_command(
                         })
                     })
                     .collect();
-                json_output::emit(&serde_json::json!({ "ok": true, "profiles": arr }));
+                fmt.emit(serde_json::json!({ "ok": true, "profiles": arr }));
             } else {
                 if profiles.is_empty() {
                     println!("{}", "No connection profiles configured.".yellow());
@@ -661,48 +664,38 @@ async fn handle_config_command(
             let mut store = ConfigStore::load(None)?;
             store.remove(&name)?;
             store.save()?;
-            if json_mode {
-                json_output::emit(&serde_json::json!({ "ok": true, "name": name }));
-            } else {
-                println!(
-                    "{} {} {}",
-                    "✓".bright_green(),
+            fmt.success(
+                serde_json::json!({ "ok": true, "name": name }),
+                format!(
+                    "{} {}",
                     "Removed connection profile:".green(),
                     name.bright_white()
-                );
-            }
+                ),
+            );
         }
 
         ConfigAction::Test { name } => {
             let store = ConfigStore::load(None)?;
             let cfg = store.get(&name)?;
 
-            if !json_mode {
-                println!(
-                    "Testing '{}' ({}) ...",
-                    name.bright_white(),
-                    cfg.db_type.to_string().cyan()
-                );
-            }
+            fmt.info(format!(
+                "Testing '{}' ({}) ...",
+                name.bright_white(),
+                cfg.db_type.to_string().cyan()
+            ));
 
             match test_connection(&cfg).await {
                 Ok(detail) => {
-                    if json_mode {
-                        json_output::emit(
-                            &serde_json::json!({ "ok": true, "name": name, "detail": detail }),
-                        );
-                    } else {
-                        println!("  {} {}", "✓ OK:".bright_green(), detail);
-                    }
+                    fmt.success(
+                        serde_json::json!({ "ok": true, "name": name, "detail": detail }),
+                        format!("  {} {}", "OK:".bright_green(), detail),
+                    );
                 }
                 Err(e) => {
-                    if json_mode {
-                        // Let the error propagate — main() will emit the JSON error envelope.
-                        return Err(e);
-                    } else {
+                    if !fmt.is_json() {
                         println!("  {} {}", "✗ FAILED:".bright_red(), e);
-                        return Err(e);
                     }
+                    return Err(e);
                 }
             }
         }
@@ -935,7 +928,10 @@ fn run_compose_command(args: &[&str]) -> Result<(), Box<dyn Error>> {
 
 // ─── Connect command handler ──────────────────────────────────────────────────
 
-async fn handle_connect_command(profile: String, json_mode: bool) -> Result<(), Box<dyn Error>> {
+async fn handle_connect_command(
+    profile: String,
+    fmt: &OutputFormatter,
+) -> Result<(), Box<dyn Error>> {
     let store = ConfigStore::load(None)?;
     let cfg = store.get(&profile).map_err(|e| {
         format!(
@@ -944,17 +940,15 @@ async fn handle_connect_command(profile: String, json_mode: bool) -> Result<(), 
         )
     })?;
 
-    if !json_mode {
-        println!(
-            "Connecting to '{}' ({})...",
-            profile.bright_white(),
-            cfg.db_type.to_string().cyan()
-        );
-    }
+    fmt.info(format!(
+        "Connecting to '{}' ({})...",
+        profile.bright_white(),
+        cfg.db_type.to_string().cyan()
+    ));
 
     let adapter = db::connect(&store, &profile).await?;
 
-    if json_mode {
+    if fmt.is_json() {
         // Collect server info and table count for the JSON envelope.
         let (server_type, version, extra_info) = if let Ok(info) = adapter.get_server_info().await {
             (
@@ -975,7 +969,7 @@ async fn handle_connect_command(profile: String, json_mode: bool) -> Result<(), 
             .await
             .map(|t| t.len())
             .unwrap_or(0);
-        json_output::emit(&serde_json::json!({
+        fmt.emit(serde_json::json!({
             "ok": true,
             "server_type": server_type,
             "version": version,
@@ -1017,7 +1011,7 @@ async fn handle_query_command(
     query: String,
     profile: String,
     format: String,
-    json_mode: bool,
+    fmt: &OutputFormatter,
 ) -> Result<(), Box<dyn Error>> {
     let store = ConfigStore::load(None)?;
     let adapter = db::connect(&store, &profile).await.map_err(|e| {
@@ -1027,63 +1021,87 @@ async fn handle_query_command(
         )
     })?;
 
-    let mut df = adapter
-        .query_df(&query)
-        .await
-        .map_err(|e| format!("Query failed: {}", e))?;
+    #[cfg(feature = "polars")]
+    {
+        let mut df = adapter
+            .query_df(&query)
+            .await
+            .map_err(|e| format!("Query failed: {}", e))?;
 
-    // --json overrides --format: always emit the agent envelope.
-    if json_mode {
-        json_output::emit(&json_output::query_result(&df));
-        return Ok(());
+        // --json overrides --format: always emit the agent envelope.
+        if fmt.is_json() {
+            fmt.emit(json_output::query_result(&df));
+            return Ok(());
+        }
+
+        // Human-readable output — validate and apply --format.
+        // "table"/"t" is a CLI-only display mode; all other values must be a valid DataFormat.
+        let fmt_str = format.to_lowercase();
+        let is_table = matches!(fmt_str.as_str(), "table" | "t");
+        let data_fmt: Option<DataFormat> = if is_table {
+            None
+        } else {
+            let parsed: DataFormat = fmt_str.parse().map_err(|_: String| {
+                format!("Unknown format '{}'. Valid: table, json, csv, xml", format)
+            })?;
+            // Binary formats can only be used with `arni export`.
+            if matches!(parsed, DataFormat::Parquet | DataFormat::Excel) {
+                return Err(format!(
+                    "'{}' is a binary format; use `arni export --format {} --output file.{}` instead",
+                    fmt_str,
+                    fmt_str,
+                    parsed.extension()
+                )
+                .into());
+            }
+            Some(parsed)
+        };
+
+        match data_fmt {
+            None => {
+                // "table" / "t"
+                println!("{}", df_to_table(&df));
+                println!(
+                    "\n{} row(s) × {} column(s)",
+                    df.height().to_string().bright_white(),
+                    df.width().to_string().bright_white()
+                );
+            }
+            Some(DataFormat::Json) => {
+                let bytes = to_bytes(&mut df, DataFormat::Json)?;
+                println!("{}", String::from_utf8(bytes)?);
+            }
+            Some(DataFormat::Csv) => {
+                let bytes = to_bytes(&mut df, DataFormat::Csv)?;
+                print!("{}", String::from_utf8(bytes)?);
+            }
+            Some(DataFormat::Xml) => {
+                let bytes = to_bytes(&mut df, DataFormat::Xml)?;
+                println!("{}", String::from_utf8(bytes)?);
+            }
+            Some(_) => unreachable!("binary formats already rejected above"),
+        }
     }
 
-    // Human-readable output — validate and apply --format.
-    // "table"/"t" is a CLI-only display mode; all other values must be a valid DataFormat.
-    let fmt = format.to_lowercase();
-    let is_table = matches!(fmt.as_str(), "table" | "t");
-    let data_fmt: Option<DataFormat> = if is_table {
-        None
-    } else {
-        let parsed: DataFormat = fmt.parse().map_err(|_: String| {
-            format!("Unknown format '{}'. Valid: table, json, csv, xml", format)
-        })?;
-        // Binary formats can only be used with `arni export`.
-        if matches!(parsed, DataFormat::Parquet | DataFormat::Excel) {
-            return Err(format!(
-                "'{}' is a binary format; use `arni export --format {} --output file.{}` instead",
-                fmt,
-                fmt,
-                parsed.extension()
-            )
-            .into());
-        }
-        Some(parsed)
-    };
+    #[cfg(not(feature = "polars"))]
+    {
+        let qr = adapter
+            .execute_query(&query)
+            .await
+            .map_err(|e| format!("Query failed: {}", e))?;
 
-    match data_fmt {
-        None => {
-            // "table" / "t"
-            println!("{}", df_to_table(&df));
-            println!(
-                "\n{} row(s) × {} column(s)",
-                df.height().to_string().bright_white(),
-                df.width().to_string().bright_white()
-            );
+        if fmt.is_json() {
+            fmt.emit(json_output::query_result_from_qr(&qr));
+            return Ok(());
         }
-        Some(DataFormat::Json) => {
-            let bytes = to_bytes(&mut df, DataFormat::Json)?;
-            println!("{}", String::from_utf8(bytes)?);
-        }
-        Some(DataFormat::Csv) => {
-            let bytes = to_bytes(&mut df, DataFormat::Csv)?;
-            print!("{}", String::from_utf8(bytes)?);
-        }
-        Some(DataFormat::Xml) => {
-            let bytes = to_bytes(&mut df, DataFormat::Xml)?;
-            println!("{}", String::from_utf8(bytes)?);
-        }
-        Some(_) => unreachable!("binary formats already rejected above"),
+
+        println!("{}", qr_to_table(&qr));
+        println!(
+            "\n{} row(s) × {} column(s)",
+            qr.rows.len().to_string().bright_white(),
+            qr.columns.len().to_string().bright_white()
+        );
+        let _ = format; // suppress unused warning
     }
 
     Ok(())
@@ -1105,7 +1123,7 @@ async fn handle_metadata_command(
     fkeys: bool,
     procs: bool,
     server: bool,
-    json_mode: bool,
+    fmt: &OutputFormatter,
 ) -> Result<(), Box<dyn Error>> {
     // Validate flags that require --table before connecting (fast-fail).
     if columns && table.is_none() {
@@ -1139,13 +1157,13 @@ async fn handle_metadata_command(
             .await
             .map_err(|e| format!("find_tables failed: {}", e))?;
 
-        if json_mode {
+        if fmt.is_json() {
             let mode_str = match mode {
                 TableSearchMode::StartsWith => "starts",
                 TableSearchMode::Contains => "contains",
                 TableSearchMode::EndsWith => "ends",
             };
-            json_output::emit(&serde_json::json!({
+            fmt.emit(serde_json::json!({
                 "ok": true,
                 "pattern": pattern,
                 "mode": mode_str,
@@ -1180,7 +1198,7 @@ async fn handle_metadata_command(
     let any_flag = tables || columns || schemas || views || indexes || fkeys || procs || server;
 
     // ── JSON mode: collect all requested sections into one envelope ───────────
-    if json_mode {
+    if fmt.is_json() {
         let mut out = serde_json::Map::new();
         out.insert("ok".into(), serde_json::Value::Bool(true));
 
@@ -1269,7 +1287,7 @@ async fn handle_metadata_command(
             );
         }
 
-        json_output::emit(&serde_json::Value::Object(out));
+        fmt.emit(serde_json::Value::Object(out));
         return Ok(());
     }
 
@@ -1450,79 +1468,86 @@ async fn handle_metadata_command(
 
 // ─── Export command handler ───────────────────────────────────────────────────
 
+// The `return Ok(())` inside the #[cfg(feature = "polars")] block is required:
+// without it, `Ok(())` would be the block's value (discarded), not the function's return.
+// Clippy flags it as "needless" when polars is enabled because it's the last expression,
+// but it IS needed for the cfg-dual-path pattern to work correctly in both compile modes.
+#[allow(clippy::needless_return)]
 async fn handle_export_command(
     query: String,
     profile: String,
     format: String,
     output: String,
-    json_mode: bool,
+    fmt: &OutputFormatter,
 ) -> Result<(), Box<dyn Error>> {
-    // Parse and validate format before connecting (fast fail, no wasted connection).
-    let data_fmt: DataFormat = format.parse().map_err(|e: String| e)?;
+    #[cfg(feature = "polars")]
+    {
+        // Parse and validate format before connecting (fast fail, no wasted connection).
+        let data_fmt: DataFormat = format.parse().map_err(|e: String| e)?;
 
-    let store = ConfigStore::load(None)?;
-    let adapter = db::connect(&store, &profile).await.map_err(|e| {
-        format!(
-            "{}\nhint: run `arni config list` to see available profiles",
-            e
-        )
-    })?;
+        let store = ConfigStore::load(None)?;
+        let adapter = db::connect(&store, &profile).await.map_err(|e| {
+            format!(
+                "{}\nhint: run `arni config list` to see available profiles",
+                e
+            )
+        })?;
 
-    if !json_mode {
-        println!("{}", "Executing query...".dimmed());
-    }
-    let mut df = adapter
-        .query_df(&query)
-        .await
-        .map_err(|e| format!("Query failed: {}", e))?;
+        fmt.info("Executing query...".dimmed().to_string());
+        let mut df = adapter
+            .query_df(&query)
+            .await
+            .map_err(|e| format!("Query failed: {}", e))?;
 
-    let rows = df.height();
+        let rows = df.height();
 
-    if !json_mode {
-        println!(
+        fmt.info(format!(
             "Fetched {} row(s). Writing {} to '{}'...",
             rows.to_string().bright_white(),
             data_fmt.to_string().cyan(),
             output.bright_white()
+        ));
+
+        match data_fmt {
+            DataFormat::Json => {
+                let bytes = to_bytes(&mut df, DataFormat::Json)?;
+                std::fs::write(&output, bytes)?;
+            }
+            DataFormat::Csv => {
+                let bytes = to_bytes(&mut df, DataFormat::Csv)?;
+                std::fs::write(&output, bytes)?;
+            }
+            DataFormat::Xml => {
+                to_file(&mut df, DataFormat::Xml, std::path::Path::new(&output))?;
+            }
+            DataFormat::Parquet => {
+                to_file(&mut df, DataFormat::Parquet, std::path::Path::new(&output))?;
+            }
+            DataFormat::Excel => {
+                to_file(&mut df, DataFormat::Excel, std::path::Path::new(&output))?;
+            }
+        }
+
+        fmt.success(
+            serde_json::json!({
+                "ok": true,
+                "file": output,
+                "rows": rows,
+                "format": format,
+            }),
+            format!("Exported {} row(s) to '{}'.", rows, output.bright_white()),
         );
+
+        return Ok(());
     }
 
-    match data_fmt {
-        DataFormat::Json => {
-            let bytes = to_bytes(&mut df, DataFormat::Json)?;
-            std::fs::write(&output, bytes)?;
-        }
-        DataFormat::Csv => {
-            let bytes = to_bytes(&mut df, DataFormat::Csv)?;
-            std::fs::write(&output, bytes)?;
-        }
-        DataFormat::Xml => {
-            to_file(&mut df, DataFormat::Xml, std::path::Path::new(&output))?;
-        }
-        DataFormat::Parquet => {
-            to_file(&mut df, DataFormat::Parquet, std::path::Path::new(&output))?;
-        }
-        DataFormat::Excel => {
-            to_file(&mut df, DataFormat::Excel, std::path::Path::new(&output))?;
-        }
+    #[cfg(not(feature = "polars"))]
+    {
+        let _ = (query, profile, format, output, fmt);
+        Err("The 'export' command requires the 'polars' feature. \
+             Rebuild with: cargo install arni --features polars"
+            .into())
     }
-
-    if json_mode {
-        json_output::emit(&serde_json::json!({
-            "ok": true,
-            "file": output,
-            "rows": rows,
-            "format": format,
-        }));
-    } else {
-        println!(
-            "{} Exported {} row(s) to '{}'.",
-            "✓".bright_green(),
-            rows,
-            output.bright_white()
-        );
-    }
-    Ok(())
 }
 
 // ─── Bulk-insert command handler ──────────────────────────────────────────────
@@ -1532,7 +1557,7 @@ async fn handle_bulk_insert_command(
     table: String,
     data_path: String,
     schema: Option<String>,
-    json_mode: bool,
+    fmt: &OutputFormatter,
 ) -> Result<(), Box<dyn Error>> {
     let raw = std::fs::read_to_string(&data_path)
         .map_err(|e| format!("Cannot read data file '{}': {}", data_path, e))?;
@@ -1548,13 +1573,11 @@ async fn handle_bulk_insert_command(
         )
     })?;
 
-    if !json_mode {
-        println!(
-            "Inserting {} row(s) into '{}'...",
-            rows.len().to_string().bright_white(),
-            table.bright_cyan()
-        );
-    }
+    fmt.info(format!(
+        "Inserting {} row(s) into '{}'...",
+        rows.len().to_string().bright_white(),
+        table.bright_cyan()
+    ));
 
     let inserted = adapter
         .bulk_insert(&table, &columns, &rows, schema.as_deref())
@@ -1563,20 +1586,18 @@ async fn handle_bulk_insert_command(
 
     tracing::info!(table = %table, rows = inserted, "bulk_insert completed");
 
-    if json_mode {
-        json_output::emit(&serde_json::json!({
+    fmt.success(
+        serde_json::json!({
             "ok": true,
             "table": table,
             "rows_affected": inserted,
-        }));
-    } else {
-        println!(
-            "{} Inserted {} row(s) into '{}'.",
-            "✓".bright_green(),
+        }),
+        format!(
+            "Inserted {} row(s) into '{}'.",
             inserted.to_string().bright_white(),
             table.bright_cyan()
-        );
-    }
+        ),
+    );
     Ok(())
 }
 
@@ -1588,7 +1609,7 @@ async fn handle_bulk_update_command(
     filter: String,
     values: String,
     schema: Option<String>,
-    json_mode: bool,
+    fmt: &OutputFormatter,
 ) -> Result<(), Box<dyn Error>> {
     let filter_expr = parse_filter_json(&filter)?;
 
@@ -1610,12 +1631,10 @@ async fn handle_bulk_update_command(
         )
     })?;
 
-    if !json_mode {
-        println!(
-            "Updating rows in '{}' matching filter...",
-            table.bright_cyan()
-        );
-    }
+    fmt.info(format!(
+        "Updating rows in '{}' matching filter...",
+        table.bright_cyan()
+    ));
 
     let updated = adapter
         .bulk_update(&table, &[(col_values, filter_expr)], schema.as_deref())
@@ -1624,20 +1643,18 @@ async fn handle_bulk_update_command(
 
     tracing::info!(table = %table, rows = updated, "bulk_update completed");
 
-    if json_mode {
-        json_output::emit(&serde_json::json!({
+    fmt.success(
+        serde_json::json!({
             "ok": true,
             "table": table,
             "rows_affected": updated,
-        }));
-    } else {
-        println!(
-            "{} Updated {} row(s) in '{}'.",
-            "✓".bright_green(),
+        }),
+        format!(
+            "Updated {} row(s) in '{}'.",
             updated.to_string().bright_white(),
             table.bright_cyan()
-        );
-    }
+        ),
+    );
     Ok(())
 }
 
@@ -1648,7 +1665,7 @@ async fn handle_bulk_delete_command(
     table: String,
     filter: String,
     schema: Option<String>,
-    json_mode: bool,
+    fmt: &OutputFormatter,
 ) -> Result<(), Box<dyn Error>> {
     let filter_expr = parse_filter_json(&filter)?;
 
@@ -1660,12 +1677,10 @@ async fn handle_bulk_delete_command(
         )
     })?;
 
-    if !json_mode {
-        println!(
-            "Deleting rows from '{}' matching filter...",
-            table.bright_cyan()
-        );
-    }
+    fmt.info(format!(
+        "Deleting rows from '{}' matching filter...",
+        table.bright_cyan()
+    ));
 
     let deleted = adapter
         .bulk_delete(&table, &[filter_expr], schema.as_deref())
@@ -1674,20 +1689,18 @@ async fn handle_bulk_delete_command(
 
     tracing::info!(table = %table, rows = deleted, "bulk_delete completed");
 
-    if json_mode {
-        json_output::emit(&serde_json::json!({
+    fmt.success(
+        serde_json::json!({
             "ok": true,
             "table": table,
             "rows_affected": deleted,
-        }));
-    } else {
-        println!(
-            "{} Deleted {} row(s) from '{}'.",
-            "✓".bright_green(),
+        }),
+        format!(
+            "Deleted {} row(s) from '{}'.",
             deleted.to_string().bright_white(),
             table.bright_cyan()
-        );
-    }
+        ),
+    );
     Ok(())
 }
 
@@ -1698,7 +1711,7 @@ async fn handle_find_tables_command(
     pattern: String,
     mode: String,
     schema: Option<String>,
-    json_mode: bool,
+    fmt: &OutputFormatter,
 ) -> Result<(), Box<dyn Error>> {
     let search_mode = match mode.to_lowercase().as_str() {
         "starts" | "starts-with" | "startswith" => TableSearchMode::StartsWith,
@@ -1720,13 +1733,13 @@ async fn handle_find_tables_command(
         .await
         .map_err(|e| format!("find_tables failed: {}", e))?;
 
-    if json_mode {
+    if fmt.is_json() {
         let mode_str = match search_mode {
             TableSearchMode::StartsWith => "starts",
             TableSearchMode::Contains => "contains",
             TableSearchMode::EndsWith => "ends",
         };
-        json_output::emit(&serde_json::json!({
+        fmt.emit(serde_json::json!({
             "ok": true,
             "pattern": pattern,
             "mode": mode_str,
@@ -1758,9 +1771,36 @@ async fn handle_find_tables_command(
     Ok(())
 }
 
-// ─── DataFrame formatting helpers ─────────────────────────────────────────────
+// ─── Table formatting helpers ─────────────────────────────────────────────────
+
+/// Render a [`QueryResult`] as a pretty UTF-8 table (no polars required).
+#[cfg(not(feature = "polars"))]
+fn qr_to_table(qr: &arni::QueryResult) -> String {
+    let mut table = CTable::new();
+    table.load_preset(presets::UTF8_FULL);
+    table.set_content_arrangement(ContentArrangement::Dynamic);
+
+    let headers: Vec<Cell> = qr
+        .columns
+        .iter()
+        .map(|name| {
+            Cell::new(name)
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan)
+        })
+        .collect();
+    table.set_header(headers);
+
+    for row in &qr.rows {
+        let cells: Vec<String> = row.iter().map(|v| v.to_string()).collect();
+        table.add_row(cells);
+    }
+
+    table.to_string()
+}
 
 /// Render a DataFrame as a pretty UTF-8 table using comfy-table.
+#[cfg(feature = "polars")]
 fn df_to_table(df: &DataFrame) -> String {
     let mut table = CTable::new();
     table.load_preset(presets::UTF8_FULL);

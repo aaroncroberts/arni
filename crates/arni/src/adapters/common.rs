@@ -5,10 +5,82 @@
 
 use crate::adapter::QueryValue;
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 
+#[cfg(feature = "polars")]
 pub(crate) type Result<T> = std::result::Result<T, DataError>;
 
+/// Return the standard "not connected" [`DataError`].
+///
+/// Use as `.ok_or_else(super::common::not_connected_error)?` to replace the
+/// repeated inline closure pattern across all adapters.
+#[allow(dead_code)] // used by adapter impls gated on DB feature flags
+pub(crate) fn not_connected_error() -> DataError {
+    DataError::Connection("Not connected — call connect() first".to_string())
+}
+
+/// Convert a [`sqlx::types::Decimal`] to a [`QueryValue`].
+///
+/// Attempts to parse the decimal as `f64`. Falls back to [`QueryValue::Text`] when
+/// the parse yields a non-finite value (overflow to ±infinity) or when the string
+/// representation is not a valid `f64` literal.
+///
+/// Used by the MySQL (`DECIMAL`/`NUMERIC`) adapter.
+/// Avoids calling `to_string()` twice compared to the inline version.
+#[cfg(feature = "mysql")]
+pub(crate) fn decimal_to_query_value(d: sqlx::types::Decimal) -> QueryValue {
+    let s = d.to_string();
+    s.parse::<f64>()
+        .ok()
+        .filter(|f| f.is_finite())
+        .map(QueryValue::Float)
+        .unwrap_or_else(|| QueryValue::Text(s))
+}
+
+/// Map a Polars [`DataType`] to a generic ANSI SQL type name.
+///
+/// Returns the closest standard SQL type for each Polars primitive. Adapter
+/// dtype-mapping functions should use this as their `_` wildcard arm and
+/// override only the types that differ in their target dialect.
+///
+/// | Polars type       | Generic SQL |
+/// |-------------------|-------------|
+/// | `Boolean`         | `BOOLEAN`   |
+/// | `Int8`            | `TINYINT`   |
+/// | `Int16`           | `SMALLINT`  |
+/// | `Int32`           | `INTEGER`   |
+/// | `Int64`           | `BIGINT`    |
+/// | `UInt8`           | `TINYINT`   |
+/// | `UInt16`          | `SMALLINT`  |
+/// | `UInt32`          | `INTEGER`   |
+/// | `UInt64`          | `BIGINT`    |
+/// | `Float32`         | `FLOAT`     |
+/// | `Float64`         | `DOUBLE`    |
+/// | `String`          | `TEXT`      |
+/// | `Binary`          | `BLOB`      |
+/// | _(anything else)_ | `TEXT`      |
+#[cfg(feature = "polars")]
+pub(crate) fn polars_dtype_to_generic_sql(dtype: &DataType) -> &'static str {
+    match dtype {
+        DataType::Boolean => "BOOLEAN",
+        DataType::Int8 => "TINYINT",
+        DataType::Int16 => "SMALLINT",
+        DataType::Int32 => "INTEGER",
+        DataType::Int64 => "BIGINT",
+        DataType::UInt8 => "TINYINT",
+        DataType::UInt16 => "SMALLINT",
+        DataType::UInt32 => "INTEGER",
+        DataType::UInt64 => "BIGINT",
+        DataType::Float32 => "FLOAT",
+        DataType::Float64 => "DOUBLE",
+        DataType::String => "TEXT",
+        DataType::Binary => "BLOB",
+        _ => "TEXT",
+    }
+}
+
+#[cfg(feature = "polars")]
 /// Convert a single value from a Polars [`Series`] at `row_idx` to an SQL literal string.
 ///
 /// # Parameters
@@ -142,6 +214,7 @@ pub(crate) fn series_value_to_sql_literal(
 ///
 /// Convenience wrapper around [`series_value_to_sql_literal`] with `bool_as_int = true`.
 /// Used by SQLite, SQL Server (MSSQL), and Oracle adapters.
+#[cfg(feature = "polars")]
 #[allow(dead_code)]
 pub(crate) fn series_value_to_sql_literal_int_bool(
     series: &Series,
@@ -154,6 +227,7 @@ pub(crate) fn series_value_to_sql_literal_int_bool(
 ///
 /// Convenience wrapper around [`series_value_to_sql_literal`] with `bool_as_int = false`.
 /// Used by DuckDB and standard-SQL adapters.
+#[cfg(feature = "polars")]
 #[allow(dead_code)]
 pub(crate) fn series_value_to_sql_literal_bool_keyword(
     series: &Series,
@@ -224,6 +298,7 @@ pub(crate) fn detect_sql_type(sql: &str) -> &'static str {
         "DROP" => "DROP",
         "ALTER" => "ALTER",
         "TRUNCATE" => "TRUNCATE",
+        "REPLACE" => "REPLACE",
         "WITH" => "WITH",
         _ => "OTHER",
     }
@@ -247,66 +322,159 @@ pub(crate) fn sql_preview(sql: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
 
+    // ── polars_dtype_to_generic_sql ───────────────────────────────────────────
+
+    #[cfg(feature = "polars")]
+    #[test]
+    fn generic_sql_signed_ints() {
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Int8), "TINYINT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Int16), "SMALLINT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Int32), "INTEGER");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Int64), "BIGINT");
+    }
+
+    #[cfg(feature = "polars")]
+    #[test]
+    fn generic_sql_unsigned_ints() {
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::UInt8), "TINYINT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::UInt16), "SMALLINT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::UInt32), "INTEGER");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::UInt64), "BIGINT");
+    }
+
+    #[cfg(feature = "polars")]
+    #[test]
+    fn generic_sql_scalars() {
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Boolean), "BOOLEAN");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Float32), "FLOAT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Float64), "DOUBLE");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::String), "TEXT");
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Binary), "BLOB");
+    }
+
+    #[cfg(feature = "polars")]
+    #[test]
+    fn generic_sql_unknown_falls_back_to_text() {
+        assert_eq!(polars_dtype_to_generic_sql(&DataType::Date), "TEXT");
+    }
+
+    // ── decimal_to_query_value ────────────────────────────────────────────────
+
+    #[cfg(feature = "mysql")]
+    #[test]
+    fn decimal_normal_value_becomes_float() {
+        use std::str::FromStr;
+        let d = sqlx::types::Decimal::from_str("3.14").unwrap();
+        match decimal_to_query_value(d) {
+            #[allow(clippy::approx_constant)]
+            QueryValue::Float(f) => assert!((f - 3.14).abs() < 1e-10),
+            other => panic!("expected Float, got {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "mysql")]
+    #[test]
+    fn decimal_integer_value_becomes_float() {
+        use std::str::FromStr;
+        let d = sqlx::types::Decimal::from_str("42").unwrap();
+        assert!(matches!(decimal_to_query_value(d), QueryValue::Float(f) if f == 42.0));
+    }
+
+    #[cfg(feature = "mysql")]
+    #[test]
+    fn decimal_very_large_value_falls_back_to_text() {
+        // A decimal with more significant digits than f64 can represent accurately
+        // still parses as f64 (rounding), so we verify the Text fallback via a
+        // manually constructed non-finite case using MAX * 10.
+        use std::str::FromStr;
+        // Decimal::MAX is ~7.9e28 — well within f64 range, so parse succeeds.
+        // To force Text, construct a Decimal that exceeds f64::MAX (~1.8e308).
+        // rust_decimal's max is ~7.9e28 so it will ALWAYS parse to f64 Float.
+        // Confirm that a finite decimal always becomes Float (no Text fallback in practice).
+        let d = sqlx::types::Decimal::from_str("999999999999999999.99").unwrap();
+        assert!(matches!(decimal_to_query_value(d), QueryValue::Float(_)));
+    }
+
+    #[cfg(feature = "mysql")]
+    #[test]
+    fn decimal_zero_becomes_float_zero() {
+        use std::str::FromStr;
+        let d = sqlx::types::Decimal::from_str("0").unwrap();
+        assert!(matches!(decimal_to_query_value(d), QueryValue::Float(f) if f == 0.0));
+    }
+
+    #[cfg(feature = "polars")]
     fn bool_series(vals: &[bool]) -> Series {
         Series::new("col".into(), vals)
     }
 
+    #[cfg(feature = "polars")]
     fn int_series(vals: &[i64]) -> Series {
         Series::new("col".into(), vals)
     }
 
+    #[cfg(feature = "polars")]
     fn str_series(vals: &[&str]) -> Series {
         Series::new("col".into(), vals)
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bool_as_int_true() {
         let s = bool_series(&[true]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "1");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bool_as_int_false() {
         let s = bool_series(&[false]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "0");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bool_as_keyword_true() {
         let s = bool_series(&[true]);
         assert_eq!(series_value_to_sql_literal(&s, 0, false).unwrap(), "TRUE");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bool_as_keyword_false() {
         let s = bool_series(&[false]);
         assert_eq!(series_value_to_sql_literal(&s, 0, false).unwrap(), "FALSE");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn integer_value() {
         let s = int_series(&[42]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "42");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn string_value_escaped() {
         let s = str_series(&["it's"]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "'it''s'");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn null_value() {
         let s = Series::new_null("col".into(), 1);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "NULL");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn float_nan_is_null() {
         let s = Series::new("col".into(), &[f64::NAN]);
         assert_eq!(series_value_to_sql_literal(&s, 0, true).unwrap(), "NULL");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn float64_inf_is_null() {
         let pos = Series::new("col".into(), &[f64::INFINITY]);
@@ -323,6 +491,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn float32_inf_is_null() {
         let pos = Series::new("col".into(), &[f32::INFINITY]);
@@ -331,6 +500,7 @@ mod tests {
         assert_eq!(series_value_to_sql_literal(&neg, 0, true).unwrap(), "NULL");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn bytes_render_as_hex_literal() {
         let bytes: Vec<u8> = vec![0xCA, 0xFE, 0xBA, 0xBE];
@@ -341,6 +511,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn empty_bytes_render_as_empty_hex_literal() {
         let empty: Vec<u8> = vec![];
@@ -359,6 +530,8 @@ mod tests {
         assert_eq!(detect_sql_type("INSERT INTO t VALUES (1)"), "INSERT");
         assert_eq!(detect_sql_type("UPDATE t SET a=1"), "UPDATE");
         assert_eq!(detect_sql_type("DELETE FROM t"), "DELETE");
+        assert_eq!(detect_sql_type("REPLACE INTO t VALUES (1)"), "REPLACE");
+        assert_eq!(detect_sql_type("replace into t values (1)"), "REPLACE");
     }
 
     #[test]

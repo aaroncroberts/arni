@@ -24,6 +24,7 @@ tracing = "0.1"
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 futures-util = "0.3"
+async-stream = "0.3"
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }
@@ -31,14 +32,21 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 toml.workspace = true
 
-# Data manipulation
-polars = { workspace = true, features = ["lazy", "dtype-full", "serde", "csv", "json", "parquet"] }
+# Data manipulation — optional; gate behind the "polars" feature to avoid
+# forcing the 1.2 GB polars compile on users who only need raw QueryResult rows.
+polars = { workspace = true, features = ["lazy", "dtype-full", "serde", "csv", "json", "parquet"], optional = true }
+
+# DataFrame serialization formats — only needed with polars
+rust_xlsxwriter = { version = "0.92.0", optional = true }
 
 # XML serialization
 quick-xml = "0.39"
 
 # Pattern matching
 regex = "1"
+
+# Lightweight output convenience layers (optional, gate-guarded)
+csv = { version = "1", optional = true }
 
 # Database drivers (optional, enabled via features)
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "chrono", "rust_decimal"], optional = true }
@@ -48,24 +56,58 @@ tiberius = { workspace = true, optional = true }
 bb8 = { version = "0.9", optional = true }
 bb8-tiberius = { version = "0.16", default-features = false, features = ["tds73", "with-tokio"], optional = true }
 duckdb = { workspace = true, optional = true }
-rust_xlsxwriter = "0.92.0"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }
 # serde_yaml is already a regular dependency — no need to repeat it here
+anyhow = { workspace = true }
+
+[[example]]
+name = "quickstart"
+required-features = ["duckdb", "polars"]
+
+[[example]]
+name = "row_mapping"
+required-features = ["duckdb", "json", "csv"]
+
+[[example]]
+name = "multi_adapter"
+required-features = ["duckdb", "sqlite", "polars"]
+
+[[example]]
+name = "analytics"
+required-features = ["duckdb", "polars"]
 
 [features]
 default = []
 
-# Database-specific features (to be implemented)
+# ── Polars / DataFrame support ─────────────────────────────────────────────────
+# Enables DataFrame-based API: read_table_df, query_df, export_dataframe, export module.
+# Without this feature, all APIs return lightweight QueryResult (Vec<Vec<QueryValue>>).
+polars = ["dep:polars", "dep:rust_xlsxwriter"]
+
+# Alias for users who prefer the explicit name
+dataframe = ["polars"]
+
+# ── Database-specific features ─────────────────────────────────────────────────
 postgres = ["dep:sqlx", "sqlx?/postgres"]
 mysql = ["dep:sqlx", "sqlx?/mysql"]
 sqlite = ["dep:sqlx", "sqlx?/sqlite"]
 mongodb = ["dep:mongodb"]
 mssql = ["dep:tiberius", "dep:bb8", "dep:bb8-tiberius"]
 oracle = ["dep:oracle"]
+# duckdb: links against system DuckDB via pkg-config (default, small compile)
+# duckdb-bundled: builds DuckDB from source (large compile, no system install needed)
 duckdb = ["dep:duckdb"]
+duckdb-bundled = ["duckdb", "duckdb/bundled"]
 
-# Convenience feature to enable all databases
+# ── Lightweight output convenience layers ──────────────────────────────────────
+# execute_query_json: serde_json is already a required dep — feature just gates the method.
+json = []
+# execute_query_csv: adds the csv crate (~100 KB, no heavy transitive deps).
+csv = ["dep:csv"]
+
+# Convenience bundles
 all-databases = ["postgres", "mysql", "sqlite", "mongodb", "mssql", "oracle", "duckdb"]
+full = ["all-databases", "polars"]

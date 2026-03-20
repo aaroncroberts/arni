@@ -180,6 +180,85 @@ control. Use environment variable substitution (`${VAR}`) instead.
 
 ---
 
+## Real-world examples
+
+These examples show what an arni-connected Claude session actually looks like — the
+user prompt, the tool calls Claude makes, and the outcome.
+
+### Schema-aware code generation
+
+> **You:** Write me a Rust struct and sqlx query to fetch all active users with their most
+> recent order date.
+
+Claude calls `describe_table("users")`, `describe_table("orders")`, and
+`get_foreign_keys("orders")` before writing a single line. It sees the real column names,
+types, nullable flags, and the FK relationship — so the struct fields, the JOIN condition,
+and the `Option<>` wrappers match your actual schema rather than a generic template.
+
+**Tools invoked:** `describe_table`, `get_foreign_keys`
+
+---
+
+### Incident investigation
+
+> **You:** We're seeing failed checkouts in staging. Can you look at the orders table and
+> find patterns in rows where status = 'failed' in the last 6 hours?
+
+Claude calls `query` with a grouping query over `orders`, notices a cluster of failures
+tied to a specific `payment_provider` value, then follows up with a second query correlating
+those rows against `users` to check whether it's isolated to a particular account tier.
+It surfaces the pattern and suggests the next diagnostic step — without you writing a
+single SQL statement.
+
+**Tools invoked:** `query` (multiple), `describe_table`, `get_foreign_keys`
+
+---
+
+### Migration drafting
+
+> **You:** I want to add soft-delete to the users table. What migration do I need and what
+> queries in the codebase should I update?
+
+Claude calls `describe_table("users")` to see existing columns, `get_indexes("users")` to
+check what indexes exist, and `get_foreign_keys("users")` to find dependent tables. It
+produces a migration that adds `deleted_at TIMESTAMPTZ`, a partial index on `WHERE deleted_at IS NULL`,
+and notes which FK-referencing tables may need `WHERE deleted_at IS NULL` guards added to
+their queries — all grounded in your real schema.
+
+**Tools invoked:** `describe_table`, `get_indexes`, `get_foreign_keys`
+
+---
+
+### Cross-database comparison
+
+> **You:** Are there any tables in staging that don't exist in dev? Do the schemas match
+> for the users and orders tables?
+
+With two profiles registered (`dev` and `staging`), Claude calls `tables(profile="dev")`
+and `tables(profile="staging")`, diffs the lists, then calls `describe_table` for each
+divergent or shared table to surface column-level drift — missing columns, type mismatches,
+nullable differences. Useful before a deploy or after an out-of-band schema change.
+
+**Tools invoked:** `tables` (×2 profiles), `describe_table` (×multiple)
+
+---
+
+### Bulk data cleanup
+
+> **You:** Remove all sessions that expired more than 30 days ago. Show me what the filter
+> looks like before you run it.
+
+Claude constructs the `bulk_delete` filter expression, explains it in plain English, and
+waits for confirmation before executing. After deletion it reports the row count.
+
+**Tools invoked:** `describe_table`, `bulk_delete`
+
+---
+
+See [use-cases.md](use-cases.md) for the full use-case reference across the library, MCP, and CLI.
+
+---
+
 ## Limitations vs the CLI
 
 | Feature | CLI | MCP |

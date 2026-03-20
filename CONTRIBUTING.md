@@ -26,7 +26,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 ## Getting the Code
 
 ```bash
-git clone https://github.com/acroberts16/arni.git
+git clone https://github.com/aaroncroberts/arni.git
 cd arni
 ```
 
@@ -185,5 +185,5 @@ Open a draft PR early — maintainers are happy to give feedback before the impl
 
 ## Questions?
 
-- Open a [GitHub Discussion](https://github.com/acroberts16/arni/discussions) for questions and ideas
-- Open an [Issue](https://github.com/acroberts16/arni/issues) for bugs and feature requests
+- Open a [GitHub Discussion](https://github.com/aaroncroberts/arni/discussions) for questions and ideas
+- Open an [Issue](https://github.com/aaroncroberts/arni/issues) for bugs and feature requests

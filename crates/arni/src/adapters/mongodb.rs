@@ -1,7 +1,7 @@
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
     DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
-    ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    RowStream, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 use async_trait::async_trait;
@@ -10,6 +10,7 @@ use mongodb::{
     options::ClientOptions,
     Client,
 };
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use regex::Regex;
 use std::collections::HashMap;
@@ -324,7 +325,7 @@ impl ConnectionTrait for MongoDbAdapter {
         debug!("Performing health check");
         let client = self.client.as_ref().ok_or_else(|| {
             warn!("Health check called but not connected");
-            DataError::Connection("Not connected".to_string())
+            super::common::not_connected_error()
         })?;
 
         let db_name = self
@@ -374,7 +375,7 @@ impl DbAdapter for MongoDbAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            DataError::Connection("Not connected".to_string())
+            super::common::not_connected_error()
         })?;
 
         let db_name = self
@@ -470,6 +471,64 @@ impl DbAdapter for MongoDbAdapter {
         })
     }
 
+    async fn execute_query_stream(
+        &self,
+        query: &str,
+    ) -> Result<RowStream<Vec<QueryValue>>, DataError> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| {
+                error!(
+                    adapter = "mongodb",
+                    operation = "execute_query_stream",
+                    "Not connected"
+                );
+                super::common::not_connected_error()
+            })?
+            .clone();
+        let db_name = self
+            .current_database
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("No database selected".to_string()))?
+            .clone();
+        let query = query.to_string();
+
+        let stream = async_stream::try_stream! {
+            use mongodb::bson::Document;
+            let command: Document = serde_json::from_str(&query)
+                .map_err(|e| DataError::Query(format!("Invalid MongoDB query format: {}", e)))?;
+
+            let collection_name = command.get_str("collection")
+                .map_err(|_| DataError::Query("Missing 'collection' field in query".to_string()))?.to_string();
+
+            let filter = command.get_document("filter").cloned().unwrap_or_default();
+            let limit = command.get_i64("limit").ok().map(|l| l as u64);
+
+            let db = client.database(&db_name);
+            let collection = db.collection::<Document>(&collection_name);
+            let mut cursor = collection.find(filter).await
+                .map_err(|e| DataError::Query(format!("Failed to execute find: {}", e)))?;
+
+            let mut count = 0u64;
+            while cursor.advance().await
+                .map_err(|e| DataError::Query(format!("Failed to fetch document: {}", e)))?
+            {
+                let doc = cursor.deserialize_current()
+                    .map_err(|e| DataError::Query(format!("Failed to deserialize document: {}", e)))?;
+                let row: Vec<QueryValue> = doc.iter()
+                    .map(|(_, v)| MongoDbAdapter::bson_to_query_value(v))
+                    .collect();
+                yield row;
+                count += 1;
+                if let Some(lim) = limit {
+                    if count >= lim { break; }
+                }
+            }
+        };
+        Ok(Box::pin(stream))
+    }
+
     async fn connect(
         &mut self,
         config: &ConnectionConfig,
@@ -514,6 +573,7 @@ impl DbAdapter for MongoDbAdapter {
         }
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, _df), fields(adapter = "mongodb", collection = %_table_name))]
     async fn export_dataframe(
         &self,
@@ -527,8 +587,9 @@ impl DbAdapter for MongoDbAdapter {
         ))
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self), fields(adapter = "mongodb", collection = %_table_name))]
-    async fn read_table(
+    async fn read_table_df(
         &self,
         _table_name: &str,
         _schema: Option<&str>,
@@ -538,6 +599,7 @@ impl DbAdapter for MongoDbAdapter {
         ))
     }
 
+    #[cfg(feature = "polars")]
     async fn query_df(&self, _query: &str) -> Result<DataFrame, DataError> {
         Err(DataError::NotSupported(
             "query_df not yet implemented for MongoDB".to_string(),
@@ -565,7 +627,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
         let collection = client.database(db_name).collection::<Document>(table_name);
 
@@ -611,7 +673,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
         let collection = client.database(db_name).collection::<Document>(table_name);
 
@@ -655,7 +717,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
         let collection = client.database(db_name).collection::<Document>(table_name);
 
@@ -676,7 +738,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self.current_database.as_deref().unwrap_or("admin");
         let db = client.database(db_name);
@@ -717,7 +779,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_names = client
             .list_database_names()
@@ -732,7 +794,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self
             .current_database
@@ -758,7 +820,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self
             .current_database
@@ -797,7 +859,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self
             .current_database
@@ -873,7 +935,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self
             .current_database
@@ -1290,6 +1352,194 @@ mod tests {
         let re = Regex::new(&pattern).unwrap();
         assert!(re.is_match("DATA_PS_"), "DATA_PS_ should match PS_$");
         assert!(!re.is_match("DATA_PS_X"), "DATA_PS_X should not match PS_$");
+    }
+
+    // ── bson_to_query_value ──────────────────────────────────────────────────
+
+    #[test]
+    fn bson_null_and_undefined_yield_query_null() {
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Null),
+            QueryValue::Null
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Undefined),
+            QueryValue::Null
+        );
+    }
+
+    #[test]
+    fn bson_boolean_yields_query_bool() {
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Boolean(true)),
+            QueryValue::Bool(true)
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Boolean(false)),
+            QueryValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn bson_int32_and_int64_yield_query_int() {
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Int32(42)),
+            QueryValue::Int(42)
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Int32(-1)),
+            QueryValue::Int(-1)
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Int64(i64::MAX)),
+            QueryValue::Int(i64::MAX)
+        );
+    }
+
+    #[test]
+    fn bson_double_yields_query_float() {
+        #[allow(clippy::approx_constant)]
+        match MongoDbAdapter::bson_to_query_value(&Bson::Double(3.14)) {
+            #[allow(clippy::approx_constant)]
+            QueryValue::Float(f) => assert!((f - 3.14).abs() < 1e-10),
+            other => panic!("expected Float, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_string_yields_query_text() {
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::String("hello".to_string())),
+            QueryValue::Text("hello".to_string())
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::String(String::new())),
+            QueryValue::Text(String::new())
+        );
+    }
+
+    #[test]
+    fn bson_binary_yields_query_bytes() {
+        let bytes = vec![0x01u8, 0x02, 0x03];
+        let bin = Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: bytes.clone(),
+        };
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Binary(bin)),
+            QueryValue::Bytes(bytes)
+        );
+    }
+
+    #[test]
+    fn bson_object_id_yields_24_char_hex_text() {
+        use mongodb::bson::oid::ObjectId;
+        let oid = ObjectId::new();
+        match MongoDbAdapter::bson_to_query_value(&Bson::ObjectId(oid)) {
+            QueryValue::Text(s) => assert_eq!(s.len(), 24, "ObjectId hex should be 24 chars"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_datetime_yields_text() {
+        let dt = mongodb::bson::DateTime::now();
+        match MongoDbAdapter::bson_to_query_value(&Bson::DateTime(dt)) {
+            QueryValue::Text(s) => assert!(!s.is_empty()),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_array_yields_text_debug_repr() {
+        let arr = vec![Bson::Int32(1), Bson::String("x".to_string())];
+        match MongoDbAdapter::bson_to_query_value(&Bson::Array(arr)) {
+            QueryValue::Text(s) => {
+                assert!(s.contains("Int32"), "array repr should contain type names")
+            }
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_document_yields_text_debug_repr() {
+        let doc = doc! { "key": "value", "n": 42 };
+        match MongoDbAdapter::bson_to_query_value(&Bson::Document(doc)) {
+            QueryValue::Text(s) => assert!(s.contains("key") || s.contains("value")),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bson_catch_all_yields_text_debug_repr() {
+        // Timestamp is an exotic BSON type with no SQL equivalent → catch-all arm
+        let ts = mongodb::bson::Timestamp {
+            time: 1_700_000_000,
+            increment: 1,
+        };
+        match MongoDbAdapter::bson_to_query_value(&Bson::Timestamp(ts)) {
+            QueryValue::Text(s) => assert!(!s.is_empty()),
+            other => panic!("expected Text for Timestamp catch-all, got {:?}", other),
+        }
+    }
+
+    // ── bson_type_name ───────────────────────────────────────────────────────
+
+    #[test]
+    fn bson_type_name_covers_common_types() {
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Null), "null");
+        assert_eq!(
+            MongoDbAdapter::bson_type_name(&Bson::Boolean(true)),
+            "boolean"
+        );
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Int32(0)), "int32");
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Int64(0)), "int64");
+        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Double(0.0)), "double");
+        assert_eq!(
+            MongoDbAdapter::bson_type_name(&Bson::String(String::new())),
+            "string"
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_type_name(&Bson::Array(vec![])),
+            "array"
+        );
+        assert_eq!(
+            MongoDbAdapter::bson_type_name(&Bson::Document(doc! {})),
+            "document"
+        );
+    }
+
+    // ── not-connected error paths ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_query_not_connected_returns_error() {
+        let adapter = MongoDbAdapter::new(make_config("localhost", "test_db"));
+        let result = adapter.execute_query("db.users.find({})").await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("connect"),
+            "error should mention 'connect': {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tables_not_connected_returns_error() {
+        let adapter = MongoDbAdapter::new(make_config("localhost", "test_db"));
+        let result = adapter.list_tables(None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connect"));
+    }
+
+    #[tokio::test]
+    async fn bulk_insert_not_connected_returns_error() {
+        let adapter = MongoDbAdapter::new(make_config("localhost", "test_db"));
+        let cols = vec!["name".to_string()];
+        let rows = vec![vec![QueryValue::Text("alice".to_string())]];
+        let result = adapter.bulk_insert("users", &cols, &rows, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connect"));
     }
 
     // ── test_connection() unit tests ────────────────────────────────────────

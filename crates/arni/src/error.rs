@@ -44,6 +44,7 @@ pub enum DataError {
     #[error("Operation not supported: {0}")]
     NotSupported(String),
 
+    #[cfg(feature = "polars")]
     #[error(transparent)]
     Polars(#[from] polars::error::PolarsError),
 

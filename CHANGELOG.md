@@ -11,6 +11,50 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.4.0] — 2026-03-19
+
+### Added
+- **Full streaming coverage** — `execute_query_stream` now implemented for all seven adapters:
+  - **MySQL**: `sqlx::query().fetch()` + `async-stream::try_stream!`, true cursor streaming
+  - **MSSQL**: `bb8::Pool::get_owned()` + `tokio::mpsc` channel; tiberius `QueryStream<'_>`
+    lifetime constraints require internal materialization before yielding, but the consumer API
+    is identical to the other adapters
+  - **MongoDB**: client cloned into `async_stream::try_stream!`; iterates the MongoDB cursor
+    (`.advance()` / `.deserialize_current()`) row by row without materializing the full set
+  - **Oracle**: `spawn_blocking` + `tokio::mpsc` channel (same pattern as DuckDB), iterating
+    the synchronous `oracle::ResultSet` row by row
+  Because `execute_query_json` and `execute_query_csv` are blanket impls over
+  `execute_query_stream`, all seven adapters now support all four output tiers for free.
+
+### Changed
+- **Adapter functions decomposed** — `PostgresAdapter::export_dataframe` and
+  `::describe_table` (previously 89 and 116 lines) are extracted into focused private helpers
+  (`recreate_table`, `build_insert_sql`, `insert_rows_batch`, `fetch_column_metadata`,
+  `fetch_primary_keys`, `fetch_table_stats`). `OracleAdapter::execute_query_blocking` inner
+  closure is now a free function `collect_oracle_result`. `MySqlAdapter::execute_query` routes
+  through `run_dml_query` / `run_select_query` helpers.
+- **`OutputFormatter`** — replaces the scattered `json_mode: bool` branches throughout
+  `arni-cli`. All human-readable vs. JSON-envelope switching now goes through a single type,
+  keeping command handler code focused on logic rather than output formatting.
+- **`detect_sql_type` centralized** — per-adapter `is_dml`/`is_select_query` functions retired;
+  all adapters now route through `common::detect_sql_type()`.
+- **`not_connected_error` centralized** — repeated `DataError::Connection(…)` closures
+  across all adapters replaced by `common::not_connected_error()`.
+- **`polars_dtype_to_generic_sql` centralized** — extracted from individual adapters into
+  `common.rs` so the SQL DDL mapping is consistent across backends.
+- **`decimal_to_query_value` helper** — `NUMERIC`/`DECIMAL` to `QueryValue` conversion
+  centralized in `common.rs`; cfg narrowed to `mysql` only (the sole production caller).
+- **Feature rename**: `csv-output` → `csv` for consistency with the `json` feature name.
+  If you used `features = ["csv-output"]`, change to `features = ["csv"]`.
+
+### Fixed
+- Clippy clean across all feature-flag combinations (including no-features and full-features
+  builds). `dead_code` lints for `not_connected_error` and `decimal_to_query_value` resolved.
+- `db.rs` test for non-compiled adapters used `Result::unwrap_err()` which requires `T: Debug`;
+  replaced with `.err().unwrap()` since `SharedAdapter` is not `Debug`.
+
+---
+
 ## [0.3.0] — 2026-03-18
 
 ### Added

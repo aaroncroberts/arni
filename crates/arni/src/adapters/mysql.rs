@@ -46,9 +46,10 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection, ConnectionConfig,
     DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult,
-    QueryValue, Result, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    QueryValue, Result, RowStream, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
+#[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Executor, Row, TypeInfo};
@@ -176,139 +177,85 @@ impl MySqlAdapter {
         let mut values = Vec::new();
 
         for (i, column) in row.columns().iter().enumerate() {
-            let type_info = column.type_info();
-            let type_name = type_info.name();
-
+            let type_name = column.type_info().name();
             let value = match type_name {
                 // Boolean (TINYINT(1))
-                "TINYINT(1)" | "BOOLEAN" => {
-                    let val: Option<bool> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bool value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bool(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                "TINYINT(1)" | "BOOLEAN" => row
+                    .try_get::<Option<bool>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get bool value: {}", e)))?
+                    .map(QueryValue::Bool)
+                    .unwrap_or(QueryValue::Null),
                 // Integer types
-                "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => {
-                    let val: Option<i64> = row
-                        .try_get(i)
-                        .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?;
-                    match val {
-                        Some(v) => QueryValue::Int(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Floating point types (direct wire conversion)
-                "FLOAT" | "DOUBLE" => {
-                    let val: Option<f64> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get float value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Float(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // DECIMAL/NUMERIC: sqlx requires rust_decimal feature — decode as
-                // Decimal then convert to f64 via its Display/FromStr round-trip.
-                "DECIMAL" | "NUMERIC" => {
-                    let val: Option<sqlx::types::Decimal> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get decimal value: {}", e))
-                    })?;
-                    match val {
-                        Some(d) => d
-                            .to_string()
-                            .parse::<f64>()
-                            .map(QueryValue::Float)
-                            .unwrap_or_else(|_| QueryValue::Text(d.to_string())),
-                        None => QueryValue::Null,
-                    }
-                }
+                "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => row
+                    .try_get::<Option<i64>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?
+                    .map(QueryValue::Int)
+                    .unwrap_or(QueryValue::Null),
+                // Floating point types
+                "FLOAT" | "DOUBLE" => row
+                    .try_get::<Option<f64>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get float value: {}", e)))?
+                    .map(QueryValue::Float)
+                    .unwrap_or(QueryValue::Null),
+                // DECIMAL/NUMERIC: decode via common helper (avoids double to_string())
+                "DECIMAL" | "NUMERIC" => row
+                    .try_get::<Option<sqlx::types::Decimal>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get decimal value: {}", e)))?
+                    .map(super::common::decimal_to_query_value)
+                    .unwrap_or(QueryValue::Null),
                 // Text types
-                "CHAR" | "VARCHAR" | "TEXT" | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT" => {
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get text value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                "CHAR" | "VARCHAR" | "TEXT" | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT" => row
+                    .try_get::<Option<String>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get text value: {}", e)))?
+                    .map(QueryValue::Text)
+                    .unwrap_or(QueryValue::Null),
                 // Timestamp (stored as UTC DateTime)
                 "TIMESTAMP" => {
                     use sqlx::types::chrono::{DateTime, Utc};
-                    let val: Option<DateTime<Utc>> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get timestamp value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()),
-                        None => QueryValue::Null,
-                    }
+                    row.try_get::<Option<DateTime<Utc>>, _>(i)
+                        .map_err(|e| {
+                            DataError::Query(format!("Failed to get timestamp value: {}", e))
+                        })?
+                        .map(|v| QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()))
+                        .unwrap_or(QueryValue::Null)
                 }
                 // Datetime (timezone-naive)
                 "DATETIME" => {
                     use sqlx::types::chrono::NaiveDateTime;
-                    let val: Option<NaiveDateTime> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get datetime value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()),
-                        None => QueryValue::Null,
-                    }
+                    row.try_get::<Option<NaiveDateTime>, _>(i)
+                        .map_err(|e| {
+                            DataError::Query(format!("Failed to get datetime value: {}", e))
+                        })?
+                        .map(|v| QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()))
+                        .unwrap_or(QueryValue::Null)
                 }
                 // Date
                 "DATE" => {
                     use sqlx::types::chrono::NaiveDate;
-                    let val: Option<NaiveDate> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get date value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d").to_string()),
-                        None => QueryValue::Null,
-                    }
+                    row.try_get::<Option<NaiveDate>, _>(i)
+                        .map_err(|e| DataError::Query(format!("Failed to get date value: {}", e)))?
+                        .map(|v| QueryValue::Text(v.format("%Y-%m-%d").to_string()))
+                        .unwrap_or(QueryValue::Null)
                 }
                 // Binary types
-                "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
-                    let val: Option<Vec<u8>> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bytes value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bytes(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Other types - try to get as text
-                _ => {
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!(
-                            "Failed to get value for type {}: {}",
-                            type_name, e
-                        ))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => row
+                    .try_get::<Option<Vec<u8>>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get bytes value: {}", e)))?
+                    .map(QueryValue::Bytes)
+                    .unwrap_or(QueryValue::Null),
+                _ => row
+                    .try_get::<Option<String>, _>(i)
+                    .map_err(|e| {
+                        DataError::Query(format!("Failed to get value for type {type_name}: {e}"))
+                    })?
+                    .map(QueryValue::Text)
+                    .unwrap_or(QueryValue::Null),
             };
 
             values.push(value);
         }
 
         Ok(values)
-    }
-
-    /// Return true when `sql` is a DML statement (INSERT/UPDATE/DELETE/REPLACE/TRUNCATE)
-    /// that does not return rows but does report `rows_affected`.
-    /// These must be run with `execute()` rather than `fetch_all()`.
-    fn is_dml(sql: &str) -> bool {
-        let upper = sql.trim_start().to_uppercase();
-        upper.starts_with("INSERT")
-            || upper.starts_with("UPDATE")
-            || upper.starts_with("DELETE")
-            || upper.starts_with("REPLACE")
-            || upper.starts_with("TRUNCATE")
     }
 
     /// Execute a SQL query and return results
@@ -351,60 +298,79 @@ impl MySqlAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
-        // Get pool
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            error!(
-                adapter = "mysql",
-                operation = "execute_query",
-                "Pool not available"
-            );
-            DataError::Connection("Pool not available".to_string())
-        })?;
-
-        let map_err = |e: sqlx::Error| {
-            error!(adapter = "mysql", operation = "execute_query", sql_type, error = %e, "Query execution failed");
-            let error_msg = e.to_string();
-            if error_msg.contains("syntax") {
-                DataError::Query(format!("SQL syntax error: {}", e))
-            } else if error_msg.contains("Access denied") || error_msg.contains("permission") {
-                DataError::Query(format!("Permission denied: {}", e))
-            } else if error_msg.contains("doesn't exist") || error_msg.contains("Unknown") {
-                DataError::Query(format!("Object not found: {}", e))
-            } else if error_msg.contains("Duplicate") || error_msg.contains("constraint") {
-                DataError::Query(format!("Constraint violation: {}", e))
-            } else {
-                DataError::Query(format!("Query failed: {}", e))
-            }
-        };
-
-        // DML statements (INSERT/UPDATE/DELETE) don't return rows; use execute()
-        // so that the engine's rows_affected count is captured accurately.
         let start = std::time::Instant::now();
-        if Self::is_dml(query) {
-            let result = sqlx::query(query).execute(pool).await.map_err(map_err)?;
-            let affected = result.rows_affected();
-            let duration = start.elapsed();
-            info!(
-                sql_type,
-                rows_affected = affected,
-                columns = 0usize,
-                duration_ms = duration.as_millis(),
-                "DML executed"
-            );
-            return Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                rows_affected: Some(affected),
-            });
+        if matches!(
+            sql_type,
+            "INSERT" | "UPDATE" | "DELETE" | "REPLACE" | "TRUNCATE"
+        ) {
+            return Self::run_dml_query(pool, query, sql_type, start).await;
         }
+        Self::run_select_query(pool, query, sql_type, start).await
+    }
 
-        let rows = sqlx::query(query).fetch_all(pool).await.map_err(map_err)?;
+    /// Classifies a sqlx error into a user-facing [`DataError::Query`] variant.
+    fn classify_query_error(sql_type: &str, e: sqlx::Error) -> DataError {
+        error!(adapter = "mysql", operation = "execute_query", sql_type, error = %e, "Query execution failed");
+        let msg = e.to_string();
+        if msg.contains("syntax") {
+            DataError::Query(format!("SQL syntax error: {}", e))
+        } else if msg.contains("Access denied") || msg.contains("permission") {
+            DataError::Query(format!("Permission denied: {}", e))
+        } else if msg.contains("doesn't exist") || msg.contains("Unknown") {
+            DataError::Query(format!("Object not found: {}", e))
+        } else if msg.contains("Duplicate") || msg.contains("constraint") {
+            DataError::Query(format!("Constraint violation: {}", e))
+        } else {
+            DataError::Query(format!("Query failed: {}", e))
+        }
+    }
 
+    /// Executes a DML statement (INSERT/UPDATE/DELETE/REPLACE/TRUNCATE) and
+    /// returns the rows-affected count without fetching any rows.
+    async fn run_dml_query(
+        pool: &MySqlPool,
+        query: &str,
+        sql_type: &str,
+        start: std::time::Instant,
+    ) -> Result<QueryResult> {
+        let result = sqlx::query(query)
+            .execute(pool)
+            .await
+            .map_err(|e| Self::classify_query_error(sql_type, e))?;
+        let affected = result.rows_affected();
+        info!(
+            sql_type,
+            rows_affected = affected,
+            columns = 0usize,
+            duration_ms = start.elapsed().as_millis(),
+            "DML executed"
+        );
+        Ok(QueryResult {
+            columns: vec![],
+            rows: vec![],
+            rows_affected: Some(affected),
+        })
+    }
+
+    /// Executes a SELECT query, extracts column names, and converts each row
+    /// to a `Vec<QueryValue>`.
+    async fn run_select_query(
+        pool: &MySqlPool,
+        query: &str,
+        sql_type: &str,
+        start: std::time::Instant,
+    ) -> Result<QueryResult> {
+        let rows = sqlx::query(query)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| Self::classify_query_error(sql_type, e))?;
         let duration = start.elapsed();
 
         if rows.is_empty() {
@@ -415,7 +381,6 @@ impl MySqlAdapter {
                 columns = 0usize,
                 "Query executed successfully"
             );
-            debug!("Query returned no rows");
             return Ok(QueryResult {
                 columns: vec![],
                 rows: vec![],
@@ -423,13 +388,11 @@ impl MySqlAdapter {
             });
         }
 
-        // Extract column names
         let columns: Vec<String> = rows[0]
             .columns()
             .iter()
-            .map(|col| col.name().to_string())
+            .map(|c| c.name().to_string())
             .collect();
-
         info!(
             sql_type,
             duration_ms = duration.as_millis(),
@@ -437,15 +400,11 @@ impl MySqlAdapter {
             columns = columns.len(),
             "Query executed successfully"
         );
-        debug!(columns = columns.len(), "Extracted column metadata");
 
-        // Convert rows to QueryValue vectors
         let mut result_rows = Vec::new();
         for row in &rows {
-            let values = Self::row_to_values(row)?;
-            result_rows.push(values);
+            result_rows.push(Self::row_to_values(row)?);
         }
-
         Ok(QueryResult {
             columns,
             rows: result_rows,
@@ -524,9 +483,7 @@ impl Connection for MySqlAdapter {
         // Check internal state first
         if self.pool.is_none() {
             warn!("Health check failed: not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -644,6 +601,7 @@ impl DbAdapter for MySqlAdapter {
         self.execute_query(query).await
     }
 
+    #[cfg(feature = "polars")]
     #[instrument(skip(self, df), fields(adapter = "mysql", table = %table_name, rows = df.height(), columns = df.width(), replace = replace))]
     async fn export_dataframe(
         &self,
@@ -664,9 +622,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "export_dataframe", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -741,6 +697,27 @@ impl DbAdapter for MySqlAdapter {
         Ok(rows_inserted)
     }
 
+    // ===== Streaming =====
+
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
+        use futures_util::TryStreamExt;
+        if self.pool.is_none() {
+            return Err(super::common::not_connected_error());
+        }
+        let pool = self
+            .pool
+            .clone()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        let query = query.to_string();
+        let stream = async_stream::try_stream! {
+            let mut cursor = sqlx::query(&query).fetch(&pool);
+            while let Some(row) = cursor.try_next().await.map_err(|e| DataError::Query(format!("Stream fetch error: {}", e)))? {
+                yield MySqlAdapter::row_to_values(&row)?;
+            }
+        };
+        Ok(Box::pin(stream))
+    }
+
     // ===== Schema Discovery =====
     // These methods will be implemented in arni-8b0.1.4
 
@@ -753,9 +730,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "list_databases",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -785,9 +760,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "list_tables",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -848,9 +821,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "find_tables",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool = self
@@ -902,9 +873,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "describe_table",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1000,9 +969,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "get_indexes", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1065,9 +1032,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "get_foreign_keys", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1140,9 +1105,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "get_views", "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1187,9 +1150,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "get_view_definition",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1228,9 +1189,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "list_stored_procedures",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1275,9 +1234,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "get_server_info",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
         let pool = self
             .pool
@@ -1318,9 +1275,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "bulk_insert", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Validate all rows have the same column count
@@ -1396,9 +1351,7 @@ impl DbAdapter for MySqlAdapter {
 
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "bulk_update", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool = self
@@ -1466,9 +1419,7 @@ impl DbAdapter for MySqlAdapter {
 
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "bulk_delete", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool = self
@@ -1502,6 +1453,24 @@ impl DbAdapter for MySqlAdapter {
 }
 
 impl MySqlAdapter {
+    #[cfg(feature = "polars")]
+    /// Map a Polars [`DataType`] to the corresponding MySQL column type name.
+    ///
+    /// MySQL uses `INT` (not `INTEGER`), and supports unsigned integer variants.
+    /// All other types (booleans, signed ints, floats, strings, binary) match
+    /// the generic SQL mapping and are delegated to [`super::common::polars_dtype_to_generic_sql`].
+    fn polars_dtype_to_mysql_type(dtype: &DataType) -> &'static str {
+        match dtype {
+            DataType::Int32 => "INT", // MySQL: INT vs ANSI INTEGER
+            DataType::UInt8 => "TINYINT UNSIGNED",
+            DataType::UInt16 => "SMALLINT UNSIGNED",
+            DataType::UInt32 => "INT UNSIGNED",
+            DataType::UInt64 => "BIGINT UNSIGNED",
+            _ => super::common::polars_dtype_to_generic_sql(dtype),
+        }
+    }
+
+    #[cfg(feature = "polars")]
     /// Generate CREATE TABLE SQL from DataFrame schema
     fn generate_create_table_sql(&self, df: &DataFrame, table_name: &str) -> Result<String> {
         let mut column_defs = Vec::new();
@@ -1510,22 +1479,7 @@ impl MySqlAdapter {
             let name = column.name();
             let dtype = column.dtype();
 
-            let mysql_type = match dtype {
-                DataType::Boolean => "BOOLEAN",
-                DataType::Int8 => "TINYINT",
-                DataType::Int16 => "SMALLINT",
-                DataType::Int32 => "INT",
-                DataType::Int64 => "BIGINT",
-                DataType::UInt8 => "TINYINT UNSIGNED",
-                DataType::UInt16 => "SMALLINT UNSIGNED",
-                DataType::UInt32 => "INT UNSIGNED",
-                DataType::UInt64 => "BIGINT UNSIGNED",
-                DataType::Float32 => "FLOAT",
-                DataType::Float64 => "DOUBLE",
-                DataType::String => "TEXT",
-                DataType::Binary => "BLOB",
-                _ => "TEXT", // Fallback for unsupported types
-            };
+            let mysql_type = Self::polars_dtype_to_mysql_type(dtype);
 
             column_defs.push(format!("{} {}", name, mysql_type));
         }
@@ -1537,6 +1491,7 @@ impl MySqlAdapter {
         ))
     }
 
+    #[cfg(feature = "polars")]
     /// Bind a Series value at a specific row index to a sqlx query
     fn bind_series_value<'q>(
         &self,
@@ -1991,6 +1946,7 @@ mod tests {
             .expect("Failed to disconnect");
     }
 
+    #[cfg(feature = "polars")]
     #[test]
     fn test_generate_create_table_sql() {
         use polars::prelude::*;
@@ -2018,6 +1974,7 @@ mod tests {
         assert!(sql.contains("active BOOLEAN"));
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore]
     async fn test_export_dataframe_replace() {
@@ -2100,13 +2057,13 @@ mod tests {
             .await
             .expect("Failed to insert data");
 
-        // Read table as DataFrame
+        // Read table as QueryResult
         let result = DbAdapter::read_table(&adapter, "test_read_table", None).await;
         assert!(result.is_ok());
 
-        let df = result.unwrap();
-        assert_eq!(df.height(), 2);
-        assert_eq!(df.width(), 2);
+        let qr = result.unwrap();
+        assert_eq!(qr.rows.len(), 2);
+        assert_eq!(qr.columns.len(), 2);
 
         // Clean up
         adapter
@@ -2119,6 +2076,7 @@ mod tests {
             .expect("Failed to disconnect");
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     #[ignore]
     async fn test_query_df() {
@@ -2459,5 +2417,44 @@ mod tests {
         let filters = [FilterExpr::Eq("id".to_string(), QueryValue::Int(1))];
         let result = adapter.bulk_delete("t", &filters, None).await;
         assert!(result.is_err());
+    }
+
+    // ---- execute_query_stream tests ----
+
+    #[tokio::test]
+    async fn test_execute_query_stream_not_connected_returns_error() {
+        let adapter = MySqlAdapter::new(create_test_config());
+        let result = adapter.execute_query_stream("SELECT 1").await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
+    }
+
+    // ---- helper unit tests ----
+
+    #[test]
+    fn classify_syntax_error_maps_to_sql_syntax_error() {
+        let e = sqlx::Error::Protocol("syntax error".to_string());
+        let result = MySqlAdapter::classify_query_error("SELECT", e);
+        assert!(matches!(result, DataError::Query(msg) if msg.contains("SQL syntax error")));
+    }
+
+    #[test]
+    fn classify_access_denied_maps_to_permission_denied() {
+        let e = sqlx::Error::Protocol("Access denied for user".to_string());
+        let result = MySqlAdapter::classify_query_error("SELECT", e);
+        assert!(matches!(result, DataError::Query(msg) if msg.contains("Permission denied")));
+    }
+
+    #[test]
+    fn classify_duplicate_maps_to_constraint_violation() {
+        let e = sqlx::Error::Protocol("Duplicate entry".to_string());
+        let result = MySqlAdapter::classify_query_error("INSERT", e);
+        assert!(matches!(result, DataError::Query(msg) if msg.contains("Constraint violation")));
+    }
+
+    #[test]
+    fn classify_generic_error_maps_to_query_failed() {
+        let e = sqlx::Error::Protocol("something went wrong".to_string());
+        let result = MySqlAdapter::classify_query_error("SELECT", e);
+        assert!(matches!(result, DataError::Query(msg) if msg.contains("Query failed")));
     }
 }
