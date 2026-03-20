@@ -137,7 +137,17 @@ impl ConnectionEntry {
     /// Returns an error if the resolved host is absent for network-based
     /// databases.
     pub fn into_connection_config(self, name: &str) -> Result<ConnectionConfig> {
-        let requires_host = !matches!(self.db_type, DatabaseType::SQLite | DatabaseType::DuckDB);
+        #[allow(unreachable_patterns)]
+        let requires_host = !match self.db_type {
+            DatabaseType::SQLite | DatabaseType::DuckDB => true,
+            #[cfg(feature = "cloudflare-d1")]
+            DatabaseType::CloudflareD1 => true,
+            #[cfg(feature = "cloudflare-kv")]
+            DatabaseType::CloudflareKV => true,
+            #[cfg(feature = "cloudflare-r2")]
+            DatabaseType::CloudflareR2 => true,
+            _ => false,
+        };
         if requires_host && self.host.is_none() {
             bail!(
                 "Connection '{}' (type: {}) requires a 'host' field",

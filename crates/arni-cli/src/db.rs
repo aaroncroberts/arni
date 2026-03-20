@@ -44,6 +44,18 @@ pub fn create_adapter(
         DatabaseType::Oracle => Ok(Box::new(arni::adapters::oracle::OracleAdapter::new(config))),
         #[cfg(feature = "duckdb")]
         DatabaseType::DuckDB => Ok(Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config))),
+        #[cfg(feature = "cloudflare-d1")]
+        DatabaseType::CloudflareD1 => Ok(Box::new(arni::adapters::cloudflare::d1::D1Adapter::new(
+            config,
+        ))),
+        #[cfg(feature = "cloudflare-kv")]
+        DatabaseType::CloudflareKV => Ok(Box::new(arni::adapters::cloudflare::kv::KVAdapter::new(
+            config,
+        ))),
+        #[cfg(feature = "cloudflare-r2")]
+        DatabaseType::CloudflareR2 => Ok(Box::new(arni::adapters::cloudflare::r2::R2Adapter::new(
+            config,
+        ))),
         db_type => Err(anyhow!(
             "Database type {:?} is not compiled in. \
              Rebuild with the appropriate feature flag, e.g.: \
@@ -56,9 +68,22 @@ pub fn create_adapter(
 
 // ─── Connection helper ────────────────────────────────────────────────────────
 
-/// Returns `true` for database types that require user credentials.
+/// Returns `true` for database types that require a password prompt.
+///
+/// Cloudflare adapters authenticate via `api_token` / `access_key_id` stored
+/// in `parameters`, not via an interactive password, so they are excluded.
 fn needs_auth(db_type: &DatabaseType) -> bool {
-    !matches!(db_type, DatabaseType::SQLite | DatabaseType::DuckDB)
+    #[allow(unreachable_patterns)]
+    match db_type {
+        DatabaseType::SQLite | DatabaseType::DuckDB => false,
+        #[cfg(feature = "cloudflare-d1")]
+        DatabaseType::CloudflareD1 => false,
+        #[cfg(feature = "cloudflare-kv")]
+        DatabaseType::CloudflareKV => false,
+        #[cfg(feature = "cloudflare-r2")]
+        DatabaseType::CloudflareR2 => false,
+        _ => true,
+    }
 }
 
 /// Load a named connection profile, obtain a password (stored or prompted),
