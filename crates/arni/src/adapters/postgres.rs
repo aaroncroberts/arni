@@ -52,7 +52,9 @@ use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Executor, Row, TypeInfo};
+use sqlx::{Column, Row, TypeInfo};
+#[cfg(feature = "polars")]
+use sqlx::Executor;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

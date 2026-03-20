@@ -23,32 +23,29 @@ pub fn create_adapter(
     config: ConnectionConfig,
 ) -> Result<Box<dyn DbAdapter + Send + Sync + 'static>> {
     #[allow(unreachable_patterns)]
-    let adapter: Box<dyn DbAdapter + Send + Sync + 'static> = match config.db_type {
+    match config.db_type {
         #[cfg(feature = "postgres")]
-        DatabaseType::Postgres => Box::new(arni::adapters::postgres::PostgresAdapter::new(config)),
+        DatabaseType::Postgres => Ok(Box::new(arni::adapters::postgres::PostgresAdapter::new(config))),
         #[cfg(feature = "mysql")]
-        DatabaseType::MySQL => Box::new(arni::adapters::mysql::MySqlAdapter::new(config)),
+        DatabaseType::MySQL => Ok(Box::new(arni::adapters::mysql::MySqlAdapter::new(config))),
         #[cfg(feature = "sqlite")]
-        DatabaseType::SQLite => Box::new(arni::adapters::sqlite::SqliteAdapter::new(config)),
+        DatabaseType::SQLite => Ok(Box::new(arni::adapters::sqlite::SqliteAdapter::new(config))),
         #[cfg(feature = "mongodb")]
-        DatabaseType::MongoDB => Box::new(arni::adapters::mongodb::MongoDbAdapter::new(config)),
+        DatabaseType::MongoDB => Ok(Box::new(arni::adapters::mongodb::MongoDbAdapter::new(config))),
         #[cfg(feature = "mssql")]
-        DatabaseType::SQLServer => Box::new(arni::adapters::mssql::SqlServerAdapter::new(config)),
+        DatabaseType::SQLServer => Ok(Box::new(arni::adapters::mssql::SqlServerAdapter::new(config))),
         #[cfg(feature = "oracle")]
-        DatabaseType::Oracle => Box::new(arni::adapters::oracle::OracleAdapter::new(config)),
+        DatabaseType::Oracle => Ok(Box::new(arni::adapters::oracle::OracleAdapter::new(config))),
         #[cfg(feature = "duckdb")]
-        DatabaseType::DuckDB => Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config)),
-        db_type => {
-            return Err(anyhow!(
-                "Database type {:?} is not compiled in. \
-                 Rebuild with the appropriate feature flag, e.g.: \
-                 cargo install arni --features {:?}",
-                db_type,
-                db_type
-            ))
-        }
-    };
-    Ok(adapter)
+        DatabaseType::DuckDB => Ok(Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config))),
+        db_type => Err(anyhow!(
+            "Database type {:?} is not compiled in. \
+             Rebuild with the appropriate feature flag, e.g.: \
+             cargo install arni --features {:?}",
+            db_type,
+            db_type
+        )),
+    }
 }
 
 // ─── Connection helper ────────────────────────────────────────────────────────

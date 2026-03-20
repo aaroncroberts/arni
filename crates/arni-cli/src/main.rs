@@ -1476,6 +1476,11 @@ async fn handle_metadata_command(
 
 // ─── Export command handler ───────────────────────────────────────────────────
 
+// The `return Ok(())` inside the #[cfg(feature = "polars")] block is required:
+// without it, `Ok(())` would be the block's value (discarded), not the function's return.
+// Clippy flags it as "needless" when polars is enabled because it's the last expression,
+// but it IS needed for the cfg-dual-path pattern to work correctly in both compile modes.
+#[allow(clippy::needless_return)]
 async fn handle_export_command(
     query: String,
     profile: String,
@@ -1550,17 +1555,17 @@ async fn handle_export_command(
                 output.bright_white()
             );
         }
+
+        return Ok(());
     }
 
     #[cfg(not(feature = "polars"))]
     {
         let _ = (query, profile, format, output, json_mode);
-        return Err("The 'export' command requires the 'polars' feature. \
-                    Rebuild with: cargo install arni --features polars"
-            .into());
+        Err("The 'export' command requires the 'polars' feature. \
+             Rebuild with: cargo install arni --features polars"
+            .into())
     }
-
-    Ok(())
 }
 
 // ─── Bulk-insert command handler ──────────────────────────────────────────────
@@ -1799,6 +1804,7 @@ async fn handle_find_tables_command(
 // ─── Table formatting helpers ─────────────────────────────────────────────────
 
 /// Render a [`QueryResult`] as a pretty UTF-8 table (no polars required).
+#[cfg(not(feature = "polars"))]
 fn qr_to_table(qr: &arni::QueryResult) -> String {
     let mut table = CTable::new();
     table.load_preset(presets::UTF8_FULL);

@@ -17,6 +17,7 @@
 
 #[cfg(feature = "polars")]
 use arni::polars::prelude::{AnyValue, DataFrame};
+#[cfg(not(feature = "polars"))]
 use arni::QueryResult;
 use serde_json::{json, Value};
 
@@ -55,7 +56,8 @@ pub fn query_result(df: &DataFrame) -> Value {
 /// Build the query-result envelope from a lightweight [`QueryResult`]:
 /// `{"ok": true, "columns": [...], "rows": [[...]]}`.
 ///
-/// Available regardless of the `polars` feature.
+/// Used in the non-polars query path.
+#[cfg(not(feature = "polars"))]
 pub fn query_result_from_qr(qr: &QueryResult) -> Value {
     let columns: Vec<String> = qr.columns.clone();
     let rows: Vec<Vec<Value>> = qr

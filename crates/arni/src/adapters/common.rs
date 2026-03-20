@@ -4,10 +4,12 @@
 //! They are `pub(crate)` — internal to arni, not part of the public API.
 
 use crate::adapter::QueryValue;
+#[cfg(feature = "polars")]
 use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 
+#[cfg(feature = "polars")]
 pub(crate) type Result<T> = std::result::Result<T, DataError>;
 
 #[cfg(feature = "polars")]
