@@ -61,6 +61,7 @@ pub(crate) fn decimal_to_query_value(d: sqlx::types::Decimal) -> QueryValue {
 /// | `Binary`          | `BLOB`      |
 /// | _(anything else)_ | `TEXT`      |
 #[cfg(feature = "polars")]
+#[allow(dead_code)] // called by SQL adapters; absent in Cloudflare-only builds
 pub(crate) fn polars_dtype_to_generic_sql(dtype: &DataType) -> &'static str {
     match dtype {
         DataType::Boolean => "BOOLEAN",

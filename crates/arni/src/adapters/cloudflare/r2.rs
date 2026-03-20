@@ -30,6 +30,7 @@
 
 use async_trait::async_trait;
 use aws_config::Region;
+
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{config::Builder as S3ConfigBuilder, Client as S3Client};
 
@@ -364,6 +365,31 @@ impl DbAdapter for R2Adapter {
     }
 
     async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
+        // For GET, stream the body as chunks rather than materialising the whole object.
+        // LIST and DELETE are already small/metadata-only; keep them on the materialized path.
+        if let R2Command::Get(key) = parse_dsl(query)? {
+            let client = self.client()?.clone();
+            let bucket = self.bucket()?.to_string();
+            let stream = async_stream::try_stream! {
+                let resp = client
+                    .get_object()
+                    .bucket(&bucket)
+                    .key(&key)
+                    .send()
+                    .await
+                    .map_err(|e| DataError::Query(format!("R2 GetObject failed: {e}")))?;
+
+                let mut body = resp.body;
+                while let Some(result) = body.next().await {
+                    let chunk = result
+                        .map_err(|e| DataError::Query(format!("R2 stream read failed: {e}")))?;
+                    yield vec![QueryValue::Bytes(chunk.to_vec())];
+                }
+            };
+            return Ok(Box::pin(stream));
+        }
+
+        // Non-GET: materialise and wrap (list / delete results are small).
         let result = self.execute_query(query).await?;
         let rows = result.rows;
         let stream = async_stream::stream! {
@@ -450,14 +476,20 @@ impl DbAdapter for R2Adapter {
     #[cfg(feature = "polars")]
     async fn export_dataframe(
         &self,
-        mut df: polars::prelude::DataFrame,
+        df: &polars::prelude::DataFrame,
         table_name: &str,
         _schema: Option<&str>,
         _replace: bool,
     ) -> Result<u64> {
+        use aws_sdk_s3::primitives::ByteStream;
+        use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
         use polars::prelude::*;
         use std::io::Cursor;
 
+        const MULTIPART_THRESHOLD: usize = 50 * 1024 * 1024; // 50 MB
+        const PART_SIZE: usize = 5 * 1024 * 1024; // 5 MB (S3 minimum part size)
+
+        let mut df = df.clone();
         let mut buf = Cursor::new(Vec::new());
         ParquetWriter::new(&mut buf).finish(&mut df).map_err(|e| {
             DataError::Query(format!("failed to serialize DataFrame to Parquet: {e}"))
@@ -470,15 +502,94 @@ impl DbAdapter for R2Adapter {
         let client = self.client()?;
         let bucket = self.bucket()?;
 
-        client
-            .put_object()
-            .bucket(bucket)
-            .key(&key)
-            .content_type("application/octet-stream")
-            .body(aws_sdk_s3::primitives::ByteStream::from(parquet_bytes))
-            .send()
-            .await
-            .map_err(|e| DataError::Query(format!("R2 PutObject failed: {e}")))?;
+        if parquet_bytes.len() < MULTIPART_THRESHOLD {
+            // Small object — single PUT is simpler and has lower latency.
+            client
+                .put_object()
+                .bucket(bucket)
+                .key(&key)
+                .content_type("application/octet-stream")
+                .body(ByteStream::from(parquet_bytes))
+                .send()
+                .await
+                .map_err(|e| DataError::Query(format!("R2 PutObject failed: {e}")))?;
+        } else {
+            // Large object — use multipart upload (5 MB parts).
+            let upload = client
+                .create_multipart_upload()
+                .bucket(bucket)
+                .key(&key)
+                .content_type("application/octet-stream")
+                .send()
+                .await
+                .map_err(|e| {
+                    DataError::Query(format!("R2 CreateMultipartUpload failed: {e}"))
+                })?;
+            let upload_id = upload
+                .upload_id()
+                .ok_or_else(|| DataError::Query("R2 CreateMultipartUpload: no upload_id".into()))?
+                .to_string();
+
+            let mut completed_parts: Vec<CompletedPart> = Vec::new();
+            let mut upload_err: Option<DataError> = None;
+
+            for (i, chunk) in parquet_bytes.chunks(PART_SIZE).enumerate() {
+                let part_number = (i + 1) as i32;
+                match client
+                    .upload_part()
+                    .bucket(bucket)
+                    .key(&key)
+                    .upload_id(&upload_id)
+                    .part_number(part_number)
+                    .body(ByteStream::from(chunk.to_vec()))
+                    .send()
+                    .await
+                {
+                    Ok(resp) => {
+                        completed_parts.push(
+                            CompletedPart::builder()
+                                .part_number(part_number)
+                                .e_tag(resp.e_tag().unwrap_or_default())
+                                .build(),
+                        );
+                    }
+                    Err(e) => {
+                        upload_err = Some(DataError::Query(format!(
+                            "R2 UploadPart {part_number} failed: {e}"
+                        )));
+                        break;
+                    }
+                }
+            }
+
+            if let Some(err) = upload_err {
+                // Best-effort abort — ignore abort errors, surface the upload error.
+                let _ = client
+                    .abort_multipart_upload()
+                    .bucket(bucket)
+                    .key(&key)
+                    .upload_id(&upload_id)
+                    .send()
+                    .await;
+                return Err(err);
+            }
+
+            client
+                .complete_multipart_upload()
+                .bucket(bucket)
+                .key(&key)
+                .upload_id(&upload_id)
+                .multipart_upload(
+                    CompletedMultipartUpload::builder()
+                        .set_parts(Some(completed_parts))
+                        .build(),
+                )
+                .send()
+                .await
+                .map_err(|e| {
+                    DataError::Query(format!("R2 CompleteMultipartUpload failed: {e}"))
+                })?;
+        }
 
         Ok(row_count)
     }
