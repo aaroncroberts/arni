@@ -1,6 +1,7 @@
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
     DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
+    RowStream,
     ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
@@ -469,6 +470,50 @@ impl DbAdapter for MongoDbAdapter {
             rows: results,
             rows_affected: None,
         })
+    }
+
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>, DataError> {
+        let client = self.client.as_ref().ok_or_else(|| {
+            error!(adapter = "mongodb", operation = "execute_query_stream", "Not connected");
+            super::common::not_connected_error()
+        })?.clone();
+        let db_name = self.current_database.as_ref()
+            .ok_or_else(|| DataError::Connection("No database selected".to_string()))?.clone();
+        let query = query.to_string();
+
+        let stream = async_stream::try_stream! {
+            use mongodb::bson::Document;
+            let command: Document = serde_json::from_str(&query)
+                .map_err(|e| DataError::Query(format!("Invalid MongoDB query format: {}", e)))?;
+
+            let collection_name = command.get_str("collection")
+                .map_err(|_| DataError::Query("Missing 'collection' field in query".to_string()))?.to_string();
+
+            let filter = command.get_document("filter").cloned().unwrap_or_default();
+            let limit = command.get_i64("limit").ok().map(|l| l as u64);
+
+            let db = client.database(&db_name);
+            let collection = db.collection::<Document>(&collection_name);
+            let mut cursor = collection.find(filter).await
+                .map_err(|e| DataError::Query(format!("Failed to execute find: {}", e)))?;
+
+            let mut count = 0u64;
+            while cursor.advance().await
+                .map_err(|e| DataError::Query(format!("Failed to fetch document: {}", e)))?
+            {
+                let doc = cursor.deserialize_current()
+                    .map_err(|e| DataError::Query(format!("Failed to deserialize document: {}", e)))?;
+                let row: Vec<QueryValue> = doc.iter()
+                    .map(|(_, v)| MongoDbAdapter::bson_to_query_value(v))
+                    .collect();
+                yield row;
+                count += 1;
+                if let Some(lim) = limit {
+                    if count >= lim { break; }
+                }
+            }
+        };
+        Ok(Box::pin(stream))
     }
 
     async fn connect(

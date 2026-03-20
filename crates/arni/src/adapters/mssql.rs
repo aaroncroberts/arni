@@ -26,13 +26,16 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
-    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    ProcedureInfo, QueryResult, QueryValue, RowStream, ServerInfo, TableInfo, TableSearchMode,
+    ViewInfo,
 };
 use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tiberius::{AuthMethod, Config};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
 
 type MssqlPool = bb8::Pool<bb8_tiberius::ConnectionManager>;
@@ -704,6 +707,66 @@ impl DbAdapter for SqlServerAdapter {
             rows: result_rows,
             rows_affected: None,
         })
+    }
+
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
+        let pool = self.pool.as_ref().ok_or_else(|| {
+            error!(adapter = "mssql", operation = "execute_query_stream", "Not connected");
+            super::common::not_connected_error()
+        })?.clone();
+
+        let effective_query = if Self::needs_exec_wrapper(query) {
+            let escaped = query.replace('\'', "''");
+            format!("EXEC(N'{}')", escaped)
+        } else {
+            query.to_string()
+        };
+
+        let (tx, mut rx) = mpsc::channel::<Result<Vec<QueryValue>>>(64);
+
+        // bb8::Pool::get_owned() returns an OwnedPooledConnection<M> that is 'static,
+        // allowing it to be moved into the spawned task.
+        tokio::spawn(async move {
+            let mut conn = match pool.get_owned().await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.send(Err(DataError::Connection(format!("Failed to acquire connection: {}", e)))).await;
+                    return;
+                }
+            };
+            let stream = match conn.query(&effective_query, &[]).await {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = tx.send(Err(DataError::Query(format!("Query failed: {}", e)))).await;
+                    return;
+                }
+            };
+            let rows_result = match stream.into_results().await {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx.send(Err(DataError::Query(format!("Failed to fetch results: {}", e)))).await;
+                    return;
+                }
+            };
+            for row in rows_result.into_iter().flatten() {
+                match MssqlAdapter::row_to_values(&row) {
+                    Ok(vals) => {
+                        if tx.send(Ok(vals)).await.is_err() { break; }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        let stream = async_stream::try_stream! {
+            while let Some(result) = rx.recv().await {
+                yield result?;
+            }
+        };
+        Ok(Box::pin(stream))
     }
 
     #[instrument(skip(self), fields(adapter = "sqlserver"))]

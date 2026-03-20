@@ -22,10 +22,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `get_server_info`, `get_views`, `list_stored_procedures`, `bulk_insert`, `bulk_update`,
   `bulk_delete`, and `shutdown`. Every response uses the standard `{ok, …}` envelope and every
   command is logged via `arni-logging` with `cmd`, `profile`, and `duration_ms`.
-- **True cursor streaming** for MySQL (`execute_query_stream`) — implemented via
-  `sqlx::query().fetch()` + `async-stream::try_stream!`, matching the SQLite, PostgreSQL, and
-  DuckDB implementations. Because `execute_query_json` and `execute_query_csv` are blanket impls
-  over `execute_query_stream`, MySQL gets JSON and CSV output tiers for free.
+- **Full streaming coverage** — `execute_query_stream` now implemented for all seven adapters:
+  - **MySQL**: `sqlx::query().fetch()` + `async-stream::try_stream!`, true cursor streaming
+  - **MSSQL**: `bb8::Pool::get_owned()` + `tokio::mpsc` channel; tiberius `QueryStream<'_>`
+    lifetime constraints require internal materialization before yielding, but the consumer API
+    is identical to the other adapters
+  - **MongoDB**: client cloned into `async_stream::try_stream!`; iterates the MongoDB cursor
+    (`.advance()` / `.deserialize_current()`) row by row without materializing the full set
+  - **Oracle**: `spawn_blocking` + `tokio::mpsc` channel (same pattern as DuckDB), iterating
+    the synchronous `oracle::ResultSet` row by row
+  Because `execute_query_json` and `execute_query_csv` are blanket impls over
+  `execute_query_stream`, all seven adapters now support all four output tiers for free.
 
 ### Changed
 - **Adapter functions decomposed** — `PostgresAdapter::export_dataframe` and

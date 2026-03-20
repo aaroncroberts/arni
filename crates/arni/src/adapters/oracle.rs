@@ -53,15 +53,15 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
-    ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo, TableInfo, TableSearchMode,
-    ViewInfo,
+    ProcedureInfo, QueryResult, QueryValue, Result, RowStream, ServerInfo, TableInfo,
+    TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, instrument, warn};
 
 /// Oracle database adapter
@@ -707,6 +707,66 @@ impl DbAdapter for OracleAdapter {
                 rows_affected: Some(rows_affected),
             })
         }
+    }
+
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
+        if !*self.connected.read().await {
+            error!(adapter = "oracle", operation = "execute_query_stream", "Not connected");
+            return Err(super::common::not_connected_error());
+        }
+        let connection = Arc::clone(&self.connection);
+        let query = query.to_string();
+        let (tx, mut rx) = mpsc::channel::<Result<Vec<QueryValue>>>(64);
+
+        tokio::task::spawn_blocking(move || {
+            let guard = connection.blocking_read();
+            let conn = match guard.as_ref() {
+                Some(c) => c,
+                None => {
+                    let _ = tx.blocking_send(Err(super::common::not_connected_error()));
+                    return;
+                }
+            };
+            let mut stmt = match conn.statement(&query).build() {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(DataError::Query(format!("Failed to prepare statement: {}", e))));
+                    return;
+                }
+            };
+            let result_set = match stmt.query(&[]) {
+                Ok(rs) => rs,
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(DataError::Query(format!("Query execution failed: {}", e))));
+                    return;
+                }
+            };
+            let column_count = result_set.column_info().len();
+            for row_result in result_set {
+                match row_result {
+                    Ok(row) => match OracleAdapter::row_to_values(&row, column_count) {
+                        Ok(vals) => {
+                            if tx.blocking_send(Ok(vals)).is_err() { break; }
+                        }
+                        Err(e) => {
+                            let _ = tx.blocking_send(Err(e));
+                            break;
+                        }
+                    },
+                    Err(e) => {
+                        let _ = tx.blocking_send(Err(DataError::Query(format!("Failed to fetch row: {}", e))));
+                        break;
+                    }
+                }
+            }
+        });
+
+        let stream = async_stream::try_stream! {
+            while let Some(result) = rx.recv().await {
+                yield result?;
+            }
+        };
+        Ok(Box::pin(stream))
     }
 
     #[cfg(feature = "polars")]
