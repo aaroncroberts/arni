@@ -380,6 +380,18 @@ pub fn validate_connection(config: &ConnectionConfig) -> Result<()> {
                 )));
             }
         }
+        #[cfg(feature = "cloudflare-d1")]
+        DatabaseType::CloudflareD1 => {
+            // REST API adapter — host/port not used; auth via parameters map
+        }
+        #[cfg(feature = "cloudflare-kv")]
+        DatabaseType::CloudflareKV => {
+            // REST API adapter — host/port not used; auth via parameters map
+        }
+        #[cfg(feature = "cloudflare-r2")]
+        DatabaseType::CloudflareR2 => {
+            // REST API adapter — host/port not used; auth via parameters map
+        }
     }
 
     // Validate port range if provided
@@ -408,6 +420,12 @@ pub fn validate_connection(config: &ConnectionConfig) -> Result<()> {
         DatabaseType::SQLite | DatabaseType::DuckDB => {
             // Port not required for file-based databases
         }
+        #[cfg(feature = "cloudflare-d1")]
+        DatabaseType::CloudflareD1 => {}
+        #[cfg(feature = "cloudflare-kv")]
+        DatabaseType::CloudflareKV => {}
+        #[cfg(feature = "cloudflare-r2")]
+        DatabaseType::CloudflareR2 => {}
     }
 
     Ok(())

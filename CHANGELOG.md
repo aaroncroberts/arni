@@ -11,6 +11,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.5.0] — 2026-03-20
+
+### Added
+- **Cloudflare D1 adapter** (`cloudflare-d1` feature) — SQL-over-REST adapter using Cloudflare's
+  D1 `/raw` endpoint. Supports `execute_query` (SQL), `read_table`, `describe_table`
+  (via `PRAGMA table_info`), `list_tables` (via `sqlite_master`), and `export_dataframe`
+  (DROP/CREATE + row-by-row INSERT). Uses SQLite-compatible SQL syntax.
+- **Cloudflare KV adapter** (`cloudflare-kv` feature) — Key-value store adapter with a
+  line-oriented DSL: `GET <key>`, `PUT <key> <value>`, `DELETE <key>`, `LIST [prefix]`.
+  `read_table` lists all keys under a prefix with their values. `export_dataframe` stores each
+  row as JSON under `<table>/<index>`. Cursor pagination handles large namespaces.
+- **Cloudflare R2 adapter** (`cloudflare-r2` feature) — Object storage adapter using the
+  S3-compatible R2 API (`aws-sdk-s3`). DSL supports `LIST [prefix]`, `GET <key>`,
+  `DELETE <key>`. `read_table` returns `(key, size, etag, last_modified)` metadata rows.
+  `export_dataframe` serializes a Polars DataFrame to Parquet in memory and uploads it.
+- **Shared Cloudflare HTTP client** (`http.rs`) — `CloudflareClient` wraps `reqwest` with Bearer
+  token auth, Cloudflare `{success, errors, result}` envelope parsing, and exponential-backoff
+  retry on HTTP 429 with `Retry-After` header support.
+- **Cloudflare feature flags**: `cloudflare-d1`, `cloudflare-kv`, `cloudflare-r2`, and
+  `cloudflare` (bundle) in `arni`, `arni-cli`, and `arni-mcp`.
+- **`DatabaseType` variants**: `CloudflareD1`, `CloudflareKV`, `CloudflareR2` (each individually
+  `#[cfg]`-gated for match exhaustiveness correctness).
+- **`docs/cloudflare.md`** — Auth setup, `ConnectionConfig` parameter reference, DSL command
+  tables, integration test environment variables for all three adapters.
+
+---
+
 ## [0.4.0] — 2026-03-19
 
 ### Added
@@ -141,7 +168,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-[Unreleased]: https://github.com/aaroncroberts/arni/compare/v0.3.0...HEAD
+[0.5.0]: https://github.com/aaroncroberts/arni/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/aaroncroberts/arni/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aaroncroberts/arni/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aaroncroberts/arni/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aaroncroberts/arni/releases/tag/v0.1.0

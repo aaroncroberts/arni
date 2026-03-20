@@ -427,7 +427,8 @@ cargo clippy --fix
 - **Integration Tests:** [tests/README.md](../tests/README.md)
 - **CI/CD:** [.github/workflows/README.md](../.github/workflows/README.md)
 - **Issue Tracking:** See [docs/issue-tracking.md](../docs/issue-tracking.md) — issues synced to [aaroncroberts/arni on DoltHub](https://www.dolthub.com/repositories/aaroncroberts/arni)
-- **Release Process:** See [docs/release-process.md](../docs/release-process.md) — mandatory steps: quality gates → merge main → PR → CI → tag. Never delete `aaron/agentic-coder`.
+- **Release Process:** See [docs/release-process.md](../docs/release-process.md) — open draft PR first, commit continuously, CI gates the merge, then tag. Never delete `aaron/agentic-coder`.
+- **Draft PR Workflow (portable):** See [docs/draft-pr-workflow.md](../docs/draft-pr-workflow.md) — generic, project-agnostic version of the same workflow.
 - **Rust Book:** https://doc.rust-lang.org/book/
 - **Clippy Lints:** https://rust-lang.github.io/rust-clippy/
 

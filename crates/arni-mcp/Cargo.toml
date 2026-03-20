@@ -24,6 +24,10 @@ mssql         = ["arni/mssql"]
 oracle        = ["arni/oracle"]
 duckdb        = ["arni/duckdb"]
 duckdb-bundled = ["arni/duckdb-bundled"]
+cloudflare-d1 = ["arni/cloudflare-d1"]
+cloudflare-kv = ["arni/cloudflare-kv"]
+cloudflare-r2 = ["arni/cloudflare-r2"]
+cloudflare    = ["arni/cloudflare"]
 polars        = ["arni/polars"]
 
 # Convenience bundles

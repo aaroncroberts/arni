@@ -57,6 +57,13 @@ bb8 = { version = "0.9", optional = true }
 bb8-tiberius = { version = "0.16", default-features = false, features = ["tds73", "with-tokio"], optional = true }
 duckdb = { workspace = true, optional = true }
 
+# Cloudflare adapter deps (optional, enabled via cloudflare-* features)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false, optional = true }
+bytes = { version = "1", optional = true }
+aws-sdk-s3 = { version = "1", optional = true }
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"], optional = true }
+aws-config = { version = "1", optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = { workspace = true }
@@ -101,6 +108,15 @@ oracle = ["dep:oracle"]
 # duckdb-bundled: builds DuckDB from source (large compile, no system install needed)
 duckdb = ["dep:duckdb"]
 duckdb-bundled = ["duckdb", "duckdb/bundled"]
+# ── Cloudflare adapters ────────────────────────────────────────────────────────
+# cloudflare-d1: SQL-over-REST adapter for Cloudflare D1 (requires reqwest)
+# cloudflare-kv: Key-value DSL adapter for Cloudflare Workers KV (requires reqwest)
+# cloudflare-r2: Object storage DSL adapter for Cloudflare R2 (requires aws-sdk-s3)
+# cloudflare: convenience bundle enabling all three
+cloudflare-d1 = ["dep:reqwest", "dep:bytes"]
+cloudflare-kv = ["dep:reqwest", "dep:bytes"]
+cloudflare-r2 = ["dep:aws-sdk-s3", "dep:aws-credential-types", "dep:aws-config"]
+cloudflare = ["cloudflare-d1", "cloudflare-kv", "cloudflare-r2"]
 
 # ── Lightweight output convenience layers ──────────────────────────────────────
 # execute_query_json: serde_json is already a required dep — feature just gates the method.

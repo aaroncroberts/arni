@@ -30,6 +30,18 @@ pub fn create_adapter(
         DatabaseType::Oracle => Box::new(arni::adapters::oracle::OracleAdapter::new(config)),
         #[cfg(feature = "duckdb")]
         DatabaseType::DuckDB => Box::new(arni::adapters::duckdb::DuckDbAdapter::new(config)),
+        #[cfg(feature = "cloudflare-d1")]
+        DatabaseType::CloudflareD1 => {
+            Box::new(arni::adapters::cloudflare::d1::D1Adapter::new(config))
+        }
+        #[cfg(feature = "cloudflare-kv")]
+        DatabaseType::CloudflareKV => {
+            Box::new(arni::adapters::cloudflare::kv::KVAdapter::new(config))
+        }
+        #[cfg(feature = "cloudflare-r2")]
+        DatabaseType::CloudflareR2 => {
+            Box::new(arni::adapters::cloudflare::r2::R2Adapter::new(config))
+        }
         db_type => {
             return Err(anyhow!(
                 "Database type {:?} is not compiled in. \

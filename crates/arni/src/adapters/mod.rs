@@ -44,3 +44,10 @@ pub mod mssql;
 
 #[cfg(feature = "duckdb")]
 pub mod duckdb;
+
+#[cfg(any(
+    feature = "cloudflare-d1",
+    feature = "cloudflare-kv",
+    feature = "cloudflare-r2"
+))]
+pub mod cloudflare;
