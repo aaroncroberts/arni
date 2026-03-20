@@ -1398,7 +1398,9 @@ mod tests {
 
     #[test]
     fn bson_double_yields_query_float() {
+        #[allow(clippy::approx_constant)]
         match MongoDbAdapter::bson_to_query_value(&Bson::Double(3.14)) {
+            #[allow(clippy::approx_constant)]
             QueryValue::Float(f) => assert!((f - 3.14).abs() < 1e-10),
             other => panic!("expected Float, got {:?}", other),
         }

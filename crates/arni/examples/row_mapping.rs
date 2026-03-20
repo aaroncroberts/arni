@@ -41,7 +41,7 @@ struct User {
 /// is missing or has an unexpected type.
 impl FromQueryRow for User {
     fn from_row(row: Vec<QueryValue>) -> Result<Self, DataError> {
-        let id = match row.get(0) {
+        let id = match row.first() {
             Some(QueryValue::Int(n)) => *n,
             _ => {
                 return Err(DataError::TypeConversion(

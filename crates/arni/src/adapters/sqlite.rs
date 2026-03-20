@@ -1385,7 +1385,7 @@ mod tests {
 
         impl crate::adapter::FromQueryRow for Row {
             fn from_row(row: Vec<QueryValue>) -> std::result::Result<Self, DataError> {
-                let id = match row.get(0) {
+                let id = match row.first() {
                     Some(QueryValue::Int(n)) => *n,
                     _ => return Err(DataError::TypeConversion("id".into())),
                 };

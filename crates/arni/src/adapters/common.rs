@@ -366,6 +366,7 @@ mod tests {
         use std::str::FromStr;
         let d = sqlx::types::Decimal::from_str("3.14").unwrap();
         match decimal_to_query_value(d) {
+            #[allow(clippy::approx_constant)]
             QueryValue::Float(f) => assert!((f - 3.14).abs() < 1e-10),
             other => panic!("expected Float, got {:?}", other),
         }

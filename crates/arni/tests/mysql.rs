@@ -1685,6 +1685,7 @@ mod mysql_tests {
     // DATAFRAME ROUND-TRIP TESTS
     // ═══════════════════════════════════════════════════════════════════════
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_mysql_round_trip_schema_matches() {
         use polars::prelude::*;
@@ -1706,9 +1707,9 @@ mod mysql_tests {
             .await
             .expect("export should succeed");
 
-        let read_back = DbAdapter::read_table(&adapter, table, None)
+        let read_back = DbAdapter::read_table_df(&adapter, table, None)
             .await
-            .expect("read_table should succeed");
+            .expect("read_table_df should succeed");
 
         let mut orig_cols: Vec<String> = original
             .get_column_names()
@@ -1733,6 +1734,7 @@ mod mysql_tests {
             .unwrap();
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_mysql_round_trip_values_preserved() {
         use polars::prelude::*;
@@ -1753,7 +1755,9 @@ mod mysql_tests {
             .await
             .unwrap();
 
-        let read_back = DbAdapter::read_table(&adapter, table, None).await.unwrap();
+        let read_back = DbAdapter::read_table_df(&adapter, table, None)
+            .await
+            .unwrap();
 
         let orig_ids: Vec<i64> = original
             .column("id")

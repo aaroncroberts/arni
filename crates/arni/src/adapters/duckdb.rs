@@ -1713,7 +1713,7 @@ mod tests {
 
         impl FromQueryRow for Row {
             fn from_row(row: Vec<QueryValue>) -> std::result::Result<Self, crate::DataError> {
-                let id = match row.get(0) {
+                let id = match row.first() {
                     Some(QueryValue::Int(n)) => *n,
                     _ => return Err(crate::DataError::TypeConversion("id".into())),
                 };

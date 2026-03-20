@@ -33,7 +33,6 @@ use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tiberius::{AuthMethod, Config};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
@@ -470,7 +469,7 @@ impl SqlServerAdapter {
         let pool = self
             .pool
             .as_ref()
-            .ok_or_else(|| super::common::not_connected_error())?;
+            .ok_or_else(super::common::not_connected_error)?;
         let mut conn = pool
             .get()
             .await
@@ -770,7 +769,7 @@ impl DbAdapter for SqlServerAdapter {
                 }
             };
             for row in rows_result.into_iter().flatten() {
-                match MssqlAdapter::row_to_values(&row) {
+                match Self::row_to_values(&row) {
                     Ok(vals) => {
                         if tx.send(Ok(vals)).await.is_err() {
                             break;
