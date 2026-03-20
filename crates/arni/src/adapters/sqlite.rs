@@ -137,56 +137,34 @@ impl SqliteAdapter {
         let mut values = Vec::new();
 
         for (i, column) in row.columns().iter().enumerate() {
-            let type_info = column.type_info();
-            let type_name = type_info.name();
-
             // SQLite has a simpler type system: NULL, INTEGER, REAL, TEXT, BLOB
+            let type_name = column.type_info().name();
             let value = match type_name {
-                "BOOLEAN" | "BOOL" => {
-                    let val: Option<bool> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bool value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bool(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                "INTEGER" | "INT" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "BIGINT" => {
-                    let val: Option<i64> = row
-                        .try_get(i)
-                        .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?;
-                    match val {
-                        Some(v) => QueryValue::Int(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                "REAL" | "DOUBLE" | "FLOAT" => {
-                    let val: Option<f64> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get float value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Float(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                "TEXT" | "VARCHAR" | "CHAR" | "CLOB" => {
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get text value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                "BLOB" => {
-                    let val: Option<Vec<u8>> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bytes value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bytes(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                "BOOLEAN" | "BOOL" => row
+                    .try_get::<Option<bool>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get bool value: {}", e)))?
+                    .map(QueryValue::Bool)
+                    .unwrap_or(QueryValue::Null),
+                "INTEGER" | "INT" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "BIGINT" => row
+                    .try_get::<Option<i64>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?
+                    .map(QueryValue::Int)
+                    .unwrap_or(QueryValue::Null),
+                "REAL" | "DOUBLE" | "FLOAT" => row
+                    .try_get::<Option<f64>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get float value: {}", e)))?
+                    .map(QueryValue::Float)
+                    .unwrap_or(QueryValue::Null),
+                "TEXT" | "VARCHAR" | "CHAR" | "CLOB" => row
+                    .try_get::<Option<String>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get text value: {}", e)))?
+                    .map(QueryValue::Text)
+                    .unwrap_or(QueryValue::Null),
+                "BLOB" => row
+                    .try_get::<Option<Vec<u8>>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get bytes value: {}", e)))?
+                    .map(QueryValue::Bytes)
+                    .unwrap_or(QueryValue::Null),
                 "NULL" => {
                     // sqlx reports undeclared-type columns (e.g. PRAGMA results) as
                     // type "NULL". The actual SQLite storage class may be INTEGER,
@@ -199,19 +177,11 @@ impl SqliteAdapter {
                         QueryValue::Null
                     }
                 }
-                _ => {
-                    // For unknown types, try to get as text
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!(
-                            "Failed to get value for type {}: {}",
-                            type_name, e
-                        ))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                _ => row
+                    .try_get::<Option<String>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get value for type {type_name}: {e}")))?
+                    .map(QueryValue::Text)
+                    .unwrap_or(QueryValue::Null),
             };
 
             values.push(value);

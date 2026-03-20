@@ -52,7 +52,7 @@ use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Executor, Row, TypeInfo};
+use sqlx::{Column, Row, TypeInfo};
 use std::collections::HashMap;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -177,121 +177,73 @@ impl MySqlAdapter {
         let mut values = Vec::new();
 
         for (i, column) in row.columns().iter().enumerate() {
-            let type_info = column.type_info();
-            let type_name = type_info.name();
-
+            let type_name = column.type_info().name();
             let value = match type_name {
                 // Boolean (TINYINT(1))
-                "TINYINT(1)" | "BOOLEAN" => {
-                    let val: Option<bool> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bool value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bool(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                "TINYINT(1)" | "BOOLEAN" => row
+                    .try_get::<Option<bool>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get bool value: {}", e)))?
+                    .map(QueryValue::Bool)
+                    .unwrap_or(QueryValue::Null),
                 // Integer types
-                "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => {
-                    let val: Option<i64> = row
-                        .try_get(i)
-                        .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?;
-                    match val {
-                        Some(v) => QueryValue::Int(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Floating point types (direct wire conversion)
-                "FLOAT" | "DOUBLE" => {
-                    let val: Option<f64> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get float value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Float(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // DECIMAL/NUMERIC: sqlx requires rust_decimal feature — decode as
-                // Decimal then convert to f64 via its Display/FromStr round-trip.
-                "DECIMAL" | "NUMERIC" => {
-                    let val: Option<sqlx::types::Decimal> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get decimal value: {}", e))
-                    })?;
-                    match val {
-                        Some(d) => d
-                            .to_string()
-                            .parse::<f64>()
-                            .map(QueryValue::Float)
-                            .unwrap_or_else(|_| QueryValue::Text(d.to_string())),
-                        None => QueryValue::Null,
-                    }
-                }
+                "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" => row
+                    .try_get::<Option<i64>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get int value: {}", e)))?
+                    .map(QueryValue::Int)
+                    .unwrap_or(QueryValue::Null),
+                // Floating point types
+                "FLOAT" | "DOUBLE" => row
+                    .try_get::<Option<f64>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get float value: {}", e)))?
+                    .map(QueryValue::Float)
+                    .unwrap_or(QueryValue::Null),
+                // DECIMAL/NUMERIC: decode via common helper (avoids double to_string())
+                "DECIMAL" | "NUMERIC" => row
+                    .try_get::<Option<sqlx::types::Decimal>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get decimal value: {}", e)))?
+                    .map(super::common::decimal_to_query_value)
+                    .unwrap_or(QueryValue::Null),
                 // Text types
-                "CHAR" | "VARCHAR" | "TEXT" | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT" => {
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get text value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                "CHAR" | "VARCHAR" | "TEXT" | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT" => row
+                    .try_get::<Option<String>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get text value: {}", e)))?
+                    .map(QueryValue::Text)
+                    .unwrap_or(QueryValue::Null),
                 // Timestamp (stored as UTC DateTime)
                 "TIMESTAMP" => {
                     use sqlx::types::chrono::{DateTime, Utc};
-                    let val: Option<DateTime<Utc>> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get timestamp value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()),
-                        None => QueryValue::Null,
-                    }
+                    row.try_get::<Option<DateTime<Utc>>, _>(i)
+                        .map_err(|e| DataError::Query(format!("Failed to get timestamp value: {}", e)))?
+                        .map(|v| QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()))
+                        .unwrap_or(QueryValue::Null)
                 }
                 // Datetime (timezone-naive)
                 "DATETIME" => {
                     use sqlx::types::chrono::NaiveDateTime;
-                    let val: Option<NaiveDateTime> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get datetime value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()),
-                        None => QueryValue::Null,
-                    }
+                    row.try_get::<Option<NaiveDateTime>, _>(i)
+                        .map_err(|e| DataError::Query(format!("Failed to get datetime value: {}", e)))?
+                        .map(|v| QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()))
+                        .unwrap_or(QueryValue::Null)
                 }
                 // Date
                 "DATE" => {
                     use sqlx::types::chrono::NaiveDate;
-                    let val: Option<NaiveDate> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get date value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v.format("%Y-%m-%d").to_string()),
-                        None => QueryValue::Null,
-                    }
+                    row.try_get::<Option<NaiveDate>, _>(i)
+                        .map_err(|e| DataError::Query(format!("Failed to get date value: {}", e)))?
+                        .map(|v| QueryValue::Text(v.format("%Y-%m-%d").to_string()))
+                        .unwrap_or(QueryValue::Null)
                 }
                 // Binary types
-                "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
-                    let val: Option<Vec<u8>> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!("Failed to get bytes value: {}", e))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Bytes(v),
-                        None => QueryValue::Null,
-                    }
-                }
-                // Other types - try to get as text
-                _ => {
-                    let val: Option<String> = row.try_get(i).map_err(|e| {
-                        DataError::Query(format!(
-                            "Failed to get value for type {}: {}",
-                            type_name, e
-                        ))
-                    })?;
-                    match val {
-                        Some(v) => QueryValue::Text(v),
-                        None => QueryValue::Null,
-                    }
-                }
+                "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => row
+                    .try_get::<Option<Vec<u8>>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get bytes value: {}", e)))?
+                    .map(QueryValue::Bytes)
+                    .unwrap_or(QueryValue::Null),
+                _ => row
+                    .try_get::<Option<String>, _>(i)
+                    .map_err(|e| DataError::Query(format!("Failed to get value for type {type_name}: {e}")))?
+                    .map(QueryValue::Text)
+                    .unwrap_or(QueryValue::Null),
             };
 
             values.push(value);
