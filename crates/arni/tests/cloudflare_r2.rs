@@ -102,7 +102,7 @@ mod r2_tests {
         // export_dataframe appends ".parquet" to the table_name to form the object key
         let table_name = "arni-test/put-get-delete";
         let key = format!("{table_name}.parquet");
-        let body = b"hello from arni integration test";
+        let _body = b"hello from arni integration test";
 
         // Upload via export_dataframe is for DataFrames; use execute_query for DSL.
         // R2 DSL doesn't have a PUT command, so upload via the S3-backed put path
@@ -170,7 +170,7 @@ mod r2_tests {
         #[cfg(not(feature = "polars"))]
         {
             // Without polars, just verify LIST on an empty prefix doesn't error
-            let _ = body; // suppress unused warning
+            let _ = _body; // suppress unused warning
             let result = DbAdapter::execute_query(&adapter, "LIST arni-test/")
                 .await
                 .expect("LIST should succeed even on empty prefix");
