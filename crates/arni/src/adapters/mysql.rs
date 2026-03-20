@@ -287,109 +287,91 @@ impl MySqlAdapter {
 
         // Check if connected
         if self.pool.is_none() {
-            error!(
-                adapter = "mysql",
-                operation = "execute_query",
-                "Not connected"
-            );
+            error!(adapter = "mysql", operation = "execute_query", "Not connected");
             return Err(super::common::not_connected_error());
         }
-
-        // Get pool
         let pool = self.pool.as_ref().ok_or_else(|| {
-            error!(
-                adapter = "mysql",
-                operation = "execute_query",
-                "Pool not available"
-            );
             DataError::Connection("Pool not available".to_string())
         })?;
 
-        let map_err = |e: sqlx::Error| {
-            error!(adapter = "mysql", operation = "execute_query", sql_type, error = %e, "Query execution failed");
-            let error_msg = e.to_string();
-            if error_msg.contains("syntax") {
-                DataError::Query(format!("SQL syntax error: {}", e))
-            } else if error_msg.contains("Access denied") || error_msg.contains("permission") {
-                DataError::Query(format!("Permission denied: {}", e))
-            } else if error_msg.contains("doesn't exist") || error_msg.contains("Unknown") {
-                DataError::Query(format!("Object not found: {}", e))
-            } else if error_msg.contains("Duplicate") || error_msg.contains("constraint") {
-                DataError::Query(format!("Constraint violation: {}", e))
-            } else {
-                DataError::Query(format!("Query failed: {}", e))
-            }
-        };
-
-        // DML statements (INSERT/UPDATE/DELETE) don't return rows; use execute()
-        // so that the engine's rows_affected count is captured accurately.
         let start = std::time::Instant::now();
         if matches!(sql_type, "INSERT" | "UPDATE" | "DELETE" | "REPLACE" | "TRUNCATE") {
-            let result = sqlx::query(query).execute(pool).await.map_err(map_err)?;
-            let affected = result.rows_affected();
-            let duration = start.elapsed();
-            info!(
-                sql_type,
-                rows_affected = affected,
-                columns = 0usize,
-                duration_ms = duration.as_millis(),
-                "DML executed"
-            );
-            return Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                rows_affected: Some(affected),
-            });
+            return Self::run_dml_query(pool, query, sql_type, start).await;
         }
+        Self::run_select_query(pool, query, sql_type, start).await
+    }
 
-        let rows = sqlx::query(query).fetch_all(pool).await.map_err(map_err)?;
+    /// Classifies a sqlx error into a user-facing [`DataError::Query`] variant.
+    fn classify_query_error(sql_type: &str, e: sqlx::Error) -> DataError {
+        error!(adapter = "mysql", operation = "execute_query", sql_type, error = %e, "Query execution failed");
+        let msg = e.to_string();
+        if msg.contains("syntax") {
+            DataError::Query(format!("SQL syntax error: {}", e))
+        } else if msg.contains("Access denied") || msg.contains("permission") {
+            DataError::Query(format!("Permission denied: {}", e))
+        } else if msg.contains("doesn't exist") || msg.contains("Unknown") {
+            DataError::Query(format!("Object not found: {}", e))
+        } else if msg.contains("Duplicate") || msg.contains("constraint") {
+            DataError::Query(format!("Constraint violation: {}", e))
+        } else {
+            DataError::Query(format!("Query failed: {}", e))
+        }
+    }
 
+    /// Executes a DML statement (INSERT/UPDATE/DELETE/REPLACE/TRUNCATE) and
+    /// returns the rows-affected count without fetching any rows.
+    async fn run_dml_query(
+        pool: &MySqlPool,
+        query: &str,
+        sql_type: &str,
+        start: std::time::Instant,
+    ) -> Result<QueryResult> {
+        let result = sqlx::query(query)
+            .execute(pool)
+            .await
+            .map_err(|e| Self::classify_query_error(sql_type, e))?;
+        let affected = result.rows_affected();
+        info!(
+            sql_type,
+            rows_affected = affected,
+            columns = 0usize,
+            duration_ms = start.elapsed().as_millis(),
+            "DML executed"
+        );
+        Ok(QueryResult {
+            columns: vec![],
+            rows: vec![],
+            rows_affected: Some(affected),
+        })
+    }
+
+    /// Executes a SELECT query, extracts column names, and converts each row
+    /// to a `Vec<QueryValue>`.
+    async fn run_select_query(
+        pool: &MySqlPool,
+        query: &str,
+        sql_type: &str,
+        start: std::time::Instant,
+    ) -> Result<QueryResult> {
+        let rows = sqlx::query(query)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| Self::classify_query_error(sql_type, e))?;
         let duration = start.elapsed();
 
         if rows.is_empty() {
-            info!(
-                sql_type,
-                duration_ms = duration.as_millis(),
-                rows = 0usize,
-                columns = 0usize,
-                "Query executed successfully"
-            );
-            debug!("Query returned no rows");
-            return Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                rows_affected: Some(0),
-            });
+            info!(sql_type, duration_ms = duration.as_millis(), rows = 0usize, columns = 0usize, "Query executed successfully");
+            return Ok(QueryResult { columns: vec![], rows: vec![], rows_affected: Some(0) });
         }
 
-        // Extract column names
-        let columns: Vec<String> = rows[0]
-            .columns()
-            .iter()
-            .map(|col| col.name().to_string())
-            .collect();
+        let columns: Vec<String> = rows[0].columns().iter().map(|c| c.name().to_string()).collect();
+        info!(sql_type, duration_ms = duration.as_millis(), rows = rows.len(), columns = columns.len(), "Query executed successfully");
 
-        info!(
-            sql_type,
-            duration_ms = duration.as_millis(),
-            rows = rows.len(),
-            columns = columns.len(),
-            "Query executed successfully"
-        );
-        debug!(columns = columns.len(), "Extracted column metadata");
-
-        // Convert rows to QueryValue vectors
         let mut result_rows = Vec::new();
         for row in &rows {
-            let values = Self::row_to_values(row)?;
-            result_rows.push(values);
+            result_rows.push(Self::row_to_values(row)?);
         }
-
-        Ok(QueryResult {
-            columns,
-            rows: result_rows,
-            rows_affected: None,
-        })
+        Ok(QueryResult { columns, rows: result_rows, rows_affected: None })
     }
 }
 
@@ -2376,5 +2358,35 @@ mod tests {
         let filters = [FilterExpr::Eq("id".to_string(), QueryValue::Int(1))];
         let result = adapter.bulk_delete("t", &filters, None).await;
         assert!(result.is_err());
+    }
+
+    // ---- helper unit tests ----
+
+    #[test]
+    fn classify_syntax_error_maps_to_sql_syntax_error() {
+        let e = sqlx::Error::Protocol("syntax error".to_string());
+        let result = MySqlAdapter::classify_query_error("SELECT", e);
+        assert!(matches!(result, DataError::Query(msg) if msg.contains("SQL syntax error")));
+    }
+
+    #[test]
+    fn classify_access_denied_maps_to_permission_denied() {
+        let e = sqlx::Error::Protocol("Access denied for user".to_string());
+        let result = MySqlAdapter::classify_query_error("SELECT", e);
+        assert!(matches!(result, DataError::Query(msg) if msg.contains("Permission denied")));
+    }
+
+    #[test]
+    fn classify_duplicate_maps_to_constraint_violation() {
+        let e = sqlx::Error::Protocol("Duplicate entry".to_string());
+        let result = MySqlAdapter::classify_query_error("INSERT", e);
+        assert!(matches!(result, DataError::Query(msg) if msg.contains("Constraint violation")));
+    }
+
+    #[test]
+    fn classify_generic_error_maps_to_query_failed() {
+        let e = sqlx::Error::Protocol("something went wrong".to_string());
+        let result = MySqlAdapter::classify_query_error("SELECT", e);
+        assert!(matches!(result, DataError::Query(msg) if msg.contains("Query failed")));
     }
 }
