@@ -84,10 +84,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Sanitize cache key
+        run: echo "FEATURES_KEY=$(echo '${{ matrix.features }}' | tr ',' '-')" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-          key: feature-${{ matrix.features }}
+          key: feature-${{ env.FEATURES_KEY }}
       - name: Install DuckDB 1.4.4 (needed for duckdb feature)
         if: contains(matrix.features, 'duckdb') || matrix.features == 'all-databases,polars'
         run: |
