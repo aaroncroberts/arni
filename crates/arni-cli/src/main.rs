@@ -10,6 +10,8 @@ use output_formatter::OutputFormatter;
 
 use arni::adapter::{ConnectionConfig, DatabaseType, QueryValue, TableSearchMode};
 #[cfg(feature = "polars")]
+use arni::polars::prelude::DataFrame;
+#[cfg(feature = "polars")]
 use arni::{to_bytes, to_file, DataFormat};
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
@@ -17,8 +19,6 @@ use comfy_table::{presets, Attribute, Cell, Color, ContentArrangement, Table as 
 use config::{ConfigStore, ConnectionEntry};
 use figlet_rs::FIGfont;
 use filter::{json_to_query_value, parse_bulk_insert_data, parse_filter_json};
-#[cfg(feature = "polars")]
-use arni::polars::prelude::DataFrame;
 use std::collections::HashMap;
 use std::error::Error;
 use std::process::Command;
@@ -617,9 +617,16 @@ async fn handle_config_command(
                     "name": name,
                     "saved_to": store.config_dir().join("connections.yml").to_string_lossy()
                 }),
-                format!("{} {}", "Saved connection profile:".green(), name.bright_white()),
+                format!(
+                    "{} {}",
+                    "Saved connection profile:".green(),
+                    name.bright_white()
+                ),
             );
-            fmt.info(format!("  Config: {}", store.config_dir().join("connections.yml").display()));
+            fmt.info(format!(
+                "  Config: {}",
+                store.config_dir().join("connections.yml").display()
+            ));
         }
 
         ConfigAction::List => {
@@ -659,7 +666,11 @@ async fn handle_config_command(
             store.save()?;
             fmt.success(
                 serde_json::json!({ "ok": true, "name": name }),
-                format!("{} {}", "Removed connection profile:".green(), name.bright_white()),
+                format!(
+                    "{} {}",
+                    "Removed connection profile:".green(),
+                    name.bright_white()
+                ),
             );
         }
 
@@ -917,7 +928,10 @@ fn run_compose_command(args: &[&str]) -> Result<(), Box<dyn Error>> {
 
 // ─── Connect command handler ──────────────────────────────────────────────────
 
-async fn handle_connect_command(profile: String, fmt: &OutputFormatter) -> Result<(), Box<dyn Error>> {
+async fn handle_connect_command(
+    profile: String,
+    fmt: &OutputFormatter,
+) -> Result<(), Box<dyn Error>> {
     let store = ConfigStore::load(None)?;
     let cfg = store.get(&profile).map_err(|e| {
         format!(

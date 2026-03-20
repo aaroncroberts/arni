@@ -53,9 +53,9 @@ use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Row, TypeInfo};
 #[cfg(feature = "polars")]
 use sqlx::Executor;
+use sqlx::{Column, Row, TypeInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -177,7 +177,6 @@ impl PostgresAdapter {
             username, host, port, self.config.database
         ))
     }
-
 }
 
 #[async_trait::async_trait]
@@ -491,15 +490,15 @@ impl DbAdapter for PostgresAdapter {
         })
     }
 
-    async fn execute_query_stream(
-        &self,
-        query: &str,
-    ) -> Result<RowStream<Vec<QueryValue>>> {
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
         use futures_util::TryStreamExt;
         if !*self.connected.read().await {
             return Err(super::common::not_connected_error());
         }
-        let pool = self.pool.read().await
+        let pool = self
+            .pool
+            .read()
+            .await
             .as_ref()
             .cloned()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
@@ -540,7 +539,9 @@ impl DbAdapter for PostgresAdapter {
         }
 
         let (column_names, insert_sql) = Self::build_insert_sql(df, table_name)?;
-        let rows_inserted = self.insert_rows_batch(pool, df, &column_names, &insert_sql).await?;
+        let rows_inserted = self
+            .insert_rows_batch(pool, df, &column_names, &insert_sql)
+            .await?;
 
         info!(table = %table_name, rows_written = rows_inserted, duration_ms = export_start.elapsed().as_millis(), "DataFrame export complete");
         Ok(rows_inserted)
@@ -708,28 +709,40 @@ impl DbAdapter for PostgresAdapter {
         schema: Option<&str>,
     ) -> Result<crate::adapter::TableInfo> {
         if !*self.connected.read().await {
-            error!(adapter = "postgres", operation = "describe_table", "Not connected");
+            error!(
+                adapter = "postgres",
+                operation = "describe_table",
+                "Not connected"
+            );
             return Err(super::common::not_connected_error());
         }
         let pool_guard = self.pool.read().await;
-        let pool = pool_guard.as_ref()
+        let pool = pool_guard
+            .as_ref()
             .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let schema_name = schema.unwrap_or("public");
-        let raw_cols = self.fetch_column_metadata(pool, schema_name, table_name).await?;
-        let primary_keys = self.fetch_primary_keys(pool, schema_name, table_name).await?;
+        let raw_cols = self
+            .fetch_column_metadata(pool, schema_name, table_name)
+            .await?;
+        let primary_keys = self
+            .fetch_primary_keys(pool, schema_name, table_name)
+            .await?;
 
-        let columns: Vec<crate::adapter::ColumnInfo> = raw_cols.iter().map(|row| {
-            let col_name: String = row.try_get(0).unwrap_or_default();
-            let is_pk = primary_keys.contains(&col_name);
-            crate::adapter::ColumnInfo {
-                name: col_name,
-                data_type: row.try_get(1).unwrap_or_default(),
-                nullable: row.try_get::<String, _>(2).unwrap_or_default() == "YES",
-                default_value: row.try_get(3).ok().flatten(),
-                is_primary_key: is_pk,
-            }
-        }).collect();
+        let columns: Vec<crate::adapter::ColumnInfo> = raw_cols
+            .iter()
+            .map(|row| {
+                let col_name: String = row.try_get(0).unwrap_or_default();
+                let is_pk = primary_keys.contains(&col_name);
+                crate::adapter::ColumnInfo {
+                    name: col_name,
+                    data_type: row.try_get(1).unwrap_or_default(),
+                    nullable: row.try_get::<String, _>(2).unwrap_or_default() == "YES",
+                    default_value: row.try_get(3).ok().flatten(),
+                    is_primary_key: is_pk,
+                }
+            })
+            .collect();
 
         let (row_count, size_bytes) = self.fetch_table_stats(pool, schema_name, table_name).await;
         Ok(crate::adapter::TableInfo {
@@ -1301,11 +1314,19 @@ impl PostgresAdapter {
 
     /// Builds the column list and parameterized INSERT SQL (`$1`, `$2`, …) for a DataFrame.
     fn build_insert_sql(df: &DataFrame, table_name: &str) -> Result<(Vec<String>, String)> {
-        let column_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
-        let placeholders: Vec<String> = (1..=column_names.len()).map(|i| format!("${}", i)).collect();
+        let column_names: Vec<String> = df
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let placeholders: Vec<String> = (1..=column_names.len())
+            .map(|i| format!("${}", i))
+            .collect();
         let insert_sql = format!(
             "INSERT INTO {} ({}) VALUES ({})",
-            table_name, column_names.join(", "), placeholders.join(", ")
+            table_name,
+            column_names.join(", "),
+            placeholders.join(", ")
         );
         Ok((column_names, insert_sql))
     }
@@ -1322,13 +1343,17 @@ impl PostgresAdapter {
         for row_idx in 0..df.height() {
             let mut query = sqlx::query(insert_sql);
             for col_name in column_names {
-                let series = df.column(col_name)
-                    .map_err(|e| DataError::DataFrame(format!("Column '{}' not found: {}", col_name, e)))?
+                let series = df
+                    .column(col_name)
+                    .map_err(|e| {
+                        DataError::DataFrame(format!("Column '{}' not found: {}", col_name, e))
+                    })?
                     .as_materialized_series();
                 query = self.bind_series_value(query, series, row_idx)?;
             }
-            query.execute(pool).await
-                .map_err(|e| DataError::Query(format!("Failed to insert row {}: {}", row_idx, e)))?;
+            query.execute(pool).await.map_err(|e| {
+                DataError::Query(format!("Failed to insert row {}: {}", row_idx, e))
+            })?;
             rows_inserted += 1;
             if rows_inserted % 1000 == 0 {
                 debug!(rows_inserted, total_rows = df.height(), "Export progress");
@@ -1354,11 +1379,16 @@ impl PostgresAdapter {
              ORDER BY ordinal_position",
             schema_name, table_name
         );
-        let rows = sqlx::query(&sql).fetch_all(pool).await
+        let rows = sqlx::query(&sql)
+            .fetch_all(pool)
+            .await
             .map_err(|e| DataError::Query(format!("Failed to describe table: {}", e)))?;
         if rows.is_empty() {
             error!(adapter = "postgres", operation = "describe_table", table = %table_name, schema = %schema_name, "Table not found in schema");
-            return Err(DataError::Query(format!("Table '{}.{}' not found", schema_name, table_name)));
+            return Err(DataError::Query(format!(
+                "Table '{}.{}' not found",
+                schema_name, table_name
+            )));
         }
         Ok(rows)
     }
@@ -1376,9 +1406,14 @@ impl PostgresAdapter {
              WHERE i.indrelid = '\"{}\".\"{}\"'::regclass AND i.indisprimary",
             schema_name, table_name
         );
-        let rows = sqlx::query(&sql).fetch_all(pool).await
+        let rows = sqlx::query(&sql)
+            .fetch_all(pool)
+            .await
             .map_err(|e| DataError::Query(format!("Failed to query primary keys: {}", e)))?;
-        Ok(rows.iter().map(|r| r.try_get::<String, _>(0).unwrap_or_default()).collect())
+        Ok(rows
+            .iter()
+            .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+            .collect())
     }
 
     /// Returns `(approximate_row_count, total_size_bytes)` from `pg_class`.
@@ -1392,8 +1427,14 @@ impl PostgresAdapter {
         let sql = "SELECT reltuples::BIGINT, pg_total_relation_size(c.oid) \
                    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
                    WHERE n.nspname = $1 AND c.relname = $2";
-        let stats = sqlx::query(sql).bind(schema_name).bind(table_name).fetch_all(pool).await.ok();
-        stats.as_ref()
+        let stats = sqlx::query(sql)
+            .bind(schema_name)
+            .bind(table_name)
+            .fetch_all(pool)
+            .await
+            .ok();
+        stats
+            .as_ref()
             .and_then(|rows| rows.first())
             .map(|row| {
                 let rc: i64 = row.try_get(0).unwrap_or(0);

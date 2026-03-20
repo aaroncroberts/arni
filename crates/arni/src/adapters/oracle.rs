@@ -466,7 +466,11 @@ impl OracleAdapter {
             let handle = tokio::runtime::Handle::current();
             let conn_guard = handle.block_on(connection.read());
             let conn = conn_guard.as_ref().ok_or_else(|| {
-                error!(adapter = "oracle", operation = "execute_query", "Not connected");
+                error!(
+                    adapter = "oracle",
+                    operation = "execute_query",
+                    "Not connected"
+                );
                 super::common::not_connected_error()
             })?;
             collect_oracle_result(conn, &query)
@@ -477,10 +481,15 @@ impl OracleAdapter {
             DataError::Connection(format!("Task join error: {}", e))
         })??;
 
-        info!(sql_type, duration_ms = start.elapsed().as_millis(), rows = result.rows.len(), columns = result.columns.len(), "Query executed successfully");
+        info!(
+            sql_type,
+            duration_ms = start.elapsed().as_millis(),
+            rows = result.rows.len(),
+            columns = result.columns.len(),
+            "Query executed successfully"
+        );
         Ok(result)
     }
-
 }
 
 /// Prepares and executes an Oracle SELECT query, collecting all rows into a [`QueryResult`].
@@ -497,14 +506,23 @@ fn collect_oracle_result(conn: &oracle::Connection, query: &str) -> Result<Query
         DataError::Query(format!("Query execution failed: {}", e))
     })?;
 
-    let columns: Vec<String> = result_set.column_info().iter().map(|c| c.name().to_string()).collect();
+    let columns: Vec<String> = result_set
+        .column_info()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect();
     let column_count = columns.len();
     let mut rows = Vec::new();
     for row_result in result_set {
-        let row = row_result.map_err(|e| DataError::Query(format!("Failed to fetch row: {}", e)))?;
+        let row =
+            row_result.map_err(|e| DataError::Query(format!("Failed to fetch row: {}", e)))?;
         rows.push(OracleAdapter::row_to_values(&row, column_count)?);
     }
-    Ok(QueryResult { columns, rows, rows_affected: None })
+    Ok(QueryResult {
+        columns,
+        rows,
+        rows_affected: None,
+    })
 }
 
 #[async_trait::async_trait]
@@ -711,7 +729,11 @@ impl DbAdapter for OracleAdapter {
 
     async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
         if !*self.connected.read().await {
-            error!(adapter = "oracle", operation = "execute_query_stream", "Not connected");
+            error!(
+                adapter = "oracle",
+                operation = "execute_query_stream",
+                "Not connected"
+            );
             return Err(super::common::not_connected_error());
         }
         let connection = Arc::clone(&self.connection);
@@ -730,14 +752,20 @@ impl DbAdapter for OracleAdapter {
             let mut stmt = match conn.statement(&query).build() {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = tx.blocking_send(Err(DataError::Query(format!("Failed to prepare statement: {}", e))));
+                    let _ = tx.blocking_send(Err(DataError::Query(format!(
+                        "Failed to prepare statement: {}",
+                        e
+                    ))));
                     return;
                 }
             };
             let result_set = match stmt.query(&[]) {
                 Ok(rs) => rs,
                 Err(e) => {
-                    let _ = tx.blocking_send(Err(DataError::Query(format!("Query execution failed: {}", e))));
+                    let _ = tx.blocking_send(Err(DataError::Query(format!(
+                        "Query execution failed: {}",
+                        e
+                    ))));
                     return;
                 }
             };
@@ -746,7 +774,9 @@ impl DbAdapter for OracleAdapter {
                 match row_result {
                     Ok(row) => match OracleAdapter::row_to_values(&row, column_count) {
                         Ok(vals) => {
-                            if tx.blocking_send(Ok(vals)).is_err() { break; }
+                            if tx.blocking_send(Ok(vals)).is_err() {
+                                break;
+                            }
                         }
                         Err(e) => {
                             let _ = tx.blocking_send(Err(e));
@@ -754,7 +784,10 @@ impl DbAdapter for OracleAdapter {
                         }
                     },
                     Err(e) => {
-                        let _ = tx.blocking_send(Err(DataError::Query(format!("Failed to fetch row: {}", e))));
+                        let _ = tx.blocking_send(Err(DataError::Query(format!(
+                            "Failed to fetch row: {}",
+                            e
+                        ))));
                         break;
                     }
                 }
@@ -1857,7 +1890,10 @@ mod tests {
         // Oracle bulk_update takes &[(HashMap<col,val>, FilterExpr)]
         let mut set_vals = HashMap::new();
         set_vals.insert("name".to_string(), QueryValue::Text("bob".to_string()));
-        let updates = vec![(set_vals, FilterExpr::Eq("id".to_string(), QueryValue::Int(1)))];
+        let updates = vec![(
+            set_vals,
+            FilterExpr::Eq("id".to_string(), QueryValue::Int(1)),
+        )];
         let result = adapter.bulk_update("EMPLOYEES", &updates, None).await;
         assert!(matches!(result, Err(DataError::Connection(_))));
     }

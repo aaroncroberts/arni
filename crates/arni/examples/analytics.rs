@@ -17,11 +17,11 @@
 
 use std::collections::HashMap;
 
+use arni::polars::prelude::*;
 use arni::{
     adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter, FilterExpr,
     QueryValue,
 };
-use arni::polars::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

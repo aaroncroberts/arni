@@ -19,9 +19,7 @@
 use std::collections::HashMap;
 
 use arni::{
-    adapter::DbAdapterExt,
-    adapters::duckdb::DuckDbAdapter,
-    output::DbAdapterOutputExt,
+    adapter::DbAdapterExt, adapters::duckdb::DuckDbAdapter, output::DbAdapterOutputExt,
     ConnectionConfig, DataError, DatabaseType, DbAdapter, FromQueryRow, QueryValue,
 };
 use futures_util::StreamExt;
@@ -45,7 +43,11 @@ impl FromQueryRow for User {
     fn from_row(row: Vec<QueryValue>) -> Result<Self, DataError> {
         let id = match row.get(0) {
             Some(QueryValue::Int(n)) => *n,
-            _ => return Err(DataError::TypeConversion("expected Int at column 0 (id)".into())),
+            _ => {
+                return Err(DataError::TypeConversion(
+                    "expected Int at column 0 (id)".into(),
+                ))
+            }
         };
         let name = match row.get(1) {
             Some(QueryValue::Text(s)) => s.clone(),

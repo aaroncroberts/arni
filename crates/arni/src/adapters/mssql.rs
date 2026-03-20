@@ -467,9 +467,10 @@ impl SqlServerAdapter {
 
     /// Execute a DML or DDL statement, returning rows affected
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            super::common::not_connected_error()
-        })?;
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| super::common::not_connected_error())?;
         let mut conn = pool
             .get()
             .await
@@ -710,10 +711,18 @@ impl DbAdapter for SqlServerAdapter {
     }
 
     async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            error!(adapter = "mssql", operation = "execute_query_stream", "Not connected");
-            super::common::not_connected_error()
-        })?.clone();
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| {
+                error!(
+                    adapter = "mssql",
+                    operation = "execute_query_stream",
+                    "Not connected"
+                );
+                super::common::not_connected_error()
+            })?
+            .clone();
 
         let effective_query = if Self::needs_exec_wrapper(query) {
             let escaped = query.replace('\'', "''");
@@ -730,28 +739,42 @@ impl DbAdapter for SqlServerAdapter {
             let mut conn = match pool.get_owned().await {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = tx.send(Err(DataError::Connection(format!("Failed to acquire connection: {}", e)))).await;
+                    let _ = tx
+                        .send(Err(DataError::Connection(format!(
+                            "Failed to acquire connection: {}",
+                            e
+                        ))))
+                        .await;
                     return;
                 }
             };
             let stream = match conn.query(&effective_query, &[]).await {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = tx.send(Err(DataError::Query(format!("Query failed: {}", e)))).await;
+                    let _ = tx
+                        .send(Err(DataError::Query(format!("Query failed: {}", e))))
+                        .await;
                     return;
                 }
             };
             let rows_result = match stream.into_results().await {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = tx.send(Err(DataError::Query(format!("Failed to fetch results: {}", e)))).await;
+                    let _ = tx
+                        .send(Err(DataError::Query(format!(
+                            "Failed to fetch results: {}",
+                            e
+                        ))))
+                        .await;
                     return;
                 }
             };
             for row in rows_result.into_iter().flatten() {
                 match MssqlAdapter::row_to_values(&row) {
                     Ok(vals) => {
-                        if tx.send(Ok(vals)).await.is_err() { break; }
+                        if tx.send(Ok(vals)).await.is_err() {
+                            break;
+                        }
                     }
                     Err(e) => {
                         let _ = tx.send(Err(e)).await;

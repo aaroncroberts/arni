@@ -16,11 +16,11 @@
 
 use std::collections::HashMap;
 
+use arni::polars::prelude::*;
 use arni::{
     adapters::duckdb::DuckDbAdapter, adapters::sqlite::SqliteAdapter, ConnectionConfig,
     DatabaseType, DbAdapter,
 };
-use arni::polars::prelude::*;
 
 /// Return the same seed DataFrame every time.
 fn seed_data() -> anyhow::Result<DataFrame> {

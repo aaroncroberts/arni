@@ -213,7 +213,9 @@ impl MySqlAdapter {
                 "TIMESTAMP" => {
                     use sqlx::types::chrono::{DateTime, Utc};
                     row.try_get::<Option<DateTime<Utc>>, _>(i)
-                        .map_err(|e| DataError::Query(format!("Failed to get timestamp value: {}", e)))?
+                        .map_err(|e| {
+                            DataError::Query(format!("Failed to get timestamp value: {}", e))
+                        })?
                         .map(|v| QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()))
                         .unwrap_or(QueryValue::Null)
                 }
@@ -221,7 +223,9 @@ impl MySqlAdapter {
                 "DATETIME" => {
                     use sqlx::types::chrono::NaiveDateTime;
                     row.try_get::<Option<NaiveDateTime>, _>(i)
-                        .map_err(|e| DataError::Query(format!("Failed to get datetime value: {}", e)))?
+                        .map_err(|e| {
+                            DataError::Query(format!("Failed to get datetime value: {}", e))
+                        })?
                         .map(|v| QueryValue::Text(v.format("%Y-%m-%d %H:%M:%S").to_string()))
                         .unwrap_or(QueryValue::Null)
                 }
@@ -241,7 +245,9 @@ impl MySqlAdapter {
                     .unwrap_or(QueryValue::Null),
                 _ => row
                     .try_get::<Option<String>, _>(i)
-                    .map_err(|e| DataError::Query(format!("Failed to get value for type {type_name}: {e}")))?
+                    .map_err(|e| {
+                        DataError::Query(format!("Failed to get value for type {type_name}: {e}"))
+                    })?
                     .map(QueryValue::Text)
                     .unwrap_or(QueryValue::Null),
             };
@@ -287,15 +293,23 @@ impl MySqlAdapter {
 
         // Check if connected
         if self.pool.is_none() {
-            error!(adapter = "mysql", operation = "execute_query", "Not connected");
+            error!(
+                adapter = "mysql",
+                operation = "execute_query",
+                "Not connected"
+            );
             return Err(super::common::not_connected_error());
         }
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            DataError::Connection("Pool not available".to_string())
-        })?;
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
 
         let start = std::time::Instant::now();
-        if matches!(sql_type, "INSERT" | "UPDATE" | "DELETE" | "REPLACE" | "TRUNCATE") {
+        if matches!(
+            sql_type,
+            "INSERT" | "UPDATE" | "DELETE" | "REPLACE" | "TRUNCATE"
+        ) {
             return Self::run_dml_query(pool, query, sql_type, start).await;
         }
         Self::run_select_query(pool, query, sql_type, start).await
@@ -360,18 +374,42 @@ impl MySqlAdapter {
         let duration = start.elapsed();
 
         if rows.is_empty() {
-            info!(sql_type, duration_ms = duration.as_millis(), rows = 0usize, columns = 0usize, "Query executed successfully");
-            return Ok(QueryResult { columns: vec![], rows: vec![], rows_affected: Some(0) });
+            info!(
+                sql_type,
+                duration_ms = duration.as_millis(),
+                rows = 0usize,
+                columns = 0usize,
+                "Query executed successfully"
+            );
+            return Ok(QueryResult {
+                columns: vec![],
+                rows: vec![],
+                rows_affected: Some(0),
+            });
         }
 
-        let columns: Vec<String> = rows[0].columns().iter().map(|c| c.name().to_string()).collect();
-        info!(sql_type, duration_ms = duration.as_millis(), rows = rows.len(), columns = columns.len(), "Query executed successfully");
+        let columns: Vec<String> = rows[0]
+            .columns()
+            .iter()
+            .map(|c| c.name().to_string())
+            .collect();
+        info!(
+            sql_type,
+            duration_ms = duration.as_millis(),
+            rows = rows.len(),
+            columns = columns.len(),
+            "Query executed successfully"
+        );
 
         let mut result_rows = Vec::new();
         for row in &rows {
             result_rows.push(Self::row_to_values(row)?);
         }
-        Ok(QueryResult { columns, rows: result_rows, rows_affected: None })
+        Ok(QueryResult {
+            columns,
+            rows: result_rows,
+            rows_affected: None,
+        })
     }
 }
 
@@ -661,15 +699,15 @@ impl DbAdapter for MySqlAdapter {
 
     // ===== Streaming =====
 
-    async fn execute_query_stream(
-        &self,
-        query: &str,
-    ) -> Result<RowStream<Vec<QueryValue>>> {
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
         use futures_util::TryStreamExt;
         if self.pool.is_none() {
             return Err(super::common::not_connected_error());
         }
-        let pool = self.pool.clone().ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        let pool = self
+            .pool
+            .clone()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
         let query = query.to_string();
         let stream = async_stream::try_stream! {
             let mut cursor = sqlx::query(&query).fetch(&pool);
@@ -1423,7 +1461,7 @@ impl MySqlAdapter {
     /// the generic SQL mapping and are delegated to [`super::common::polars_dtype_to_generic_sql`].
     fn polars_dtype_to_mysql_type(dtype: &DataType) -> &'static str {
         match dtype {
-            DataType::Int32 => "INT",              // MySQL: INT vs ANSI INTEGER
+            DataType::Int32 => "INT", // MySQL: INT vs ANSI INTEGER
             DataType::UInt8 => "TINYINT UNSIGNED",
             DataType::UInt16 => "SMALLINT UNSIGNED",
             DataType::UInt32 => "INT UNSIGNED",

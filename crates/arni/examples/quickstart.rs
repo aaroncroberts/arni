@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 
-use arni::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
 use arni::polars::prelude::*;
+use arni::{adapters::duckdb::DuckDbAdapter, ConnectionConfig, DatabaseType, DbAdapter};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

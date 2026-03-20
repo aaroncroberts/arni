@@ -25,15 +25,21 @@ pub fn create_adapter(
     #[allow(unreachable_patterns)]
     match config.db_type {
         #[cfg(feature = "postgres")]
-        DatabaseType::Postgres => Ok(Box::new(arni::adapters::postgres::PostgresAdapter::new(config))),
+        DatabaseType::Postgres => Ok(Box::new(arni::adapters::postgres::PostgresAdapter::new(
+            config,
+        ))),
         #[cfg(feature = "mysql")]
         DatabaseType::MySQL => Ok(Box::new(arni::adapters::mysql::MySqlAdapter::new(config))),
         #[cfg(feature = "sqlite")]
         DatabaseType::SQLite => Ok(Box::new(arni::adapters::sqlite::SqliteAdapter::new(config))),
         #[cfg(feature = "mongodb")]
-        DatabaseType::MongoDB => Ok(Box::new(arni::adapters::mongodb::MongoDbAdapter::new(config))),
+        DatabaseType::MongoDB => Ok(Box::new(arni::adapters::mongodb::MongoDbAdapter::new(
+            config,
+        ))),
         #[cfg(feature = "mssql")]
-        DatabaseType::SQLServer => Ok(Box::new(arni::adapters::mssql::SqlServerAdapter::new(config))),
+        DatabaseType::SQLServer => Ok(Box::new(arni::adapters::mssql::SqlServerAdapter::new(
+            config,
+        ))),
         #[cfg(feature = "oracle")]
         DatabaseType::Oracle => Ok(Box::new(arni::adapters::oracle::OracleAdapter::new(config))),
         #[cfg(feature = "duckdb")]

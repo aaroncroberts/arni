@@ -772,7 +772,8 @@ pub trait FromQueryRow: Sized {
 /// A pinned, heap-allocated async stream of mapped rows.
 ///
 /// This is the return type of [`DbAdapter::execute_query_stream`].
-pub type RowStream<T> = Pin<Box<dyn Stream<Item = std::result::Result<T, crate::DataError>> + Send>>;
+pub type RowStream<T> =
+    Pin<Box<dyn Stream<Item = std::result::Result<T, crate::DataError>> + Send>>;
 
 /// Main trait that all database adapters must implement
 ///
@@ -904,10 +905,7 @@ pub trait DbAdapter: Send + Sync {
     ///     println!("{:?}", row);
     /// }
     /// ```
-    async fn execute_query_stream(
-        &self,
-        _query: &str,
-    ) -> Result<RowStream<Vec<QueryValue>>> {
+    async fn execute_query_stream(&self, _query: &str) -> Result<RowStream<Vec<QueryValue>>> {
         Err(crate::DataError::NotSupported(
             "execute_query_stream is not implemented for this adapter".into(),
         ))

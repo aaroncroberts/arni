@@ -1,8 +1,7 @@
 use crate::adapter::{
     AdapterMetadata, ColumnInfo, Connection as ConnectionTrait, ConnectionConfig, DatabaseType,
     DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult, QueryValue,
-    RowStream,
-    ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    RowStream, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 use async_trait::async_trait;
@@ -472,13 +471,27 @@ impl DbAdapter for MongoDbAdapter {
         })
     }
 
-    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>, DataError> {
-        let client = self.client.as_ref().ok_or_else(|| {
-            error!(adapter = "mongodb", operation = "execute_query_stream", "Not connected");
-            super::common::not_connected_error()
-        })?.clone();
-        let db_name = self.current_database.as_ref()
-            .ok_or_else(|| DataError::Connection("No database selected".to_string()))?.clone();
+    async fn execute_query_stream(
+        &self,
+        query: &str,
+    ) -> Result<RowStream<Vec<QueryValue>>, DataError> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| {
+                error!(
+                    adapter = "mongodb",
+                    operation = "execute_query_stream",
+                    "Not connected"
+                );
+                super::common::not_connected_error()
+            })?
+            .clone();
+        let db_name = self
+            .current_database
+            .as_ref()
+            .ok_or_else(|| DataError::Connection("No database selected".to_string()))?
+            .clone();
         let query = query.to_string();
 
         let stream = async_stream::try_stream! {
@@ -1345,7 +1358,10 @@ mod tests {
 
     #[test]
     fn bson_null_and_undefined_yield_query_null() {
-        assert_eq!(MongoDbAdapter::bson_to_query_value(&Bson::Null), QueryValue::Null);
+        assert_eq!(
+            MongoDbAdapter::bson_to_query_value(&Bson::Null),
+            QueryValue::Null
+        );
         assert_eq!(
             MongoDbAdapter::bson_to_query_value(&Bson::Undefined),
             QueryValue::Null
@@ -1436,7 +1452,9 @@ mod tests {
     fn bson_array_yields_text_debug_repr() {
         let arr = vec![Bson::Int32(1), Bson::String("x".to_string())];
         match MongoDbAdapter::bson_to_query_value(&Bson::Array(arr)) {
-            QueryValue::Text(s) => assert!(s.contains("Int32"), "array repr should contain type names"),
+            QueryValue::Text(s) => {
+                assert!(s.contains("Int32"), "array repr should contain type names")
+            }
             other => panic!("expected Text, got {:?}", other),
         }
     }
@@ -1468,7 +1486,10 @@ mod tests {
     #[test]
     fn bson_type_name_covers_common_types() {
         assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Null), "null");
-        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Boolean(true)), "boolean");
+        assert_eq!(
+            MongoDbAdapter::bson_type_name(&Bson::Boolean(true)),
+            "boolean"
+        );
         assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Int32(0)), "int32");
         assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Int64(0)), "int64");
         assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Double(0.0)), "double");
@@ -1476,7 +1497,10 @@ mod tests {
             MongoDbAdapter::bson_type_name(&Bson::String(String::new())),
             "string"
         );
-        assert_eq!(MongoDbAdapter::bson_type_name(&Bson::Array(vec![])), "array");
+        assert_eq!(
+            MongoDbAdapter::bson_type_name(&Bson::Array(vec![])),
+            "array"
+        );
         assert_eq!(
             MongoDbAdapter::bson_type_name(&Bson::Document(doc! {})),
             "document"
@@ -1491,7 +1515,11 @@ mod tests {
         let result = adapter.execute_query("db.users.find({})").await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("connect"), "error should mention 'connect': {}", msg);
+        assert!(
+            msg.contains("connect"),
+            "error should mention 'connect': {}",
+            msg
+        );
     }
 
     #[tokio::test]

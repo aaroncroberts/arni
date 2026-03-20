@@ -91,7 +91,10 @@ impl SqliteAdapter {
     /// Uses `sqlx::query::execute` rather than `fetch_all` so DML operations
     /// correctly return the row count instead of an empty result set.
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
-        let pool = self.pool.as_ref().ok_or_else(super::common::not_connected_error)?;
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(super::common::not_connected_error)?;
 
         let result = sqlx::query(sql)
             .execute(pool)
@@ -188,7 +191,9 @@ impl SqliteAdapter {
                 }
                 _ => row
                     .try_get::<Option<String>, _>(i)
-                    .map_err(|e| DataError::Query(format!("Failed to get value for type {type_name}: {e}")))?
+                    .map_err(|e| {
+                        DataError::Query(format!("Failed to get value for type {type_name}: {e}"))
+                    })?
                     .map(QueryValue::Text)
                     .unwrap_or(QueryValue::Null),
             };
@@ -395,15 +400,15 @@ impl DbAdapter for SqliteAdapter {
         })
     }
 
-    async fn execute_query_stream(
-        &self,
-        query: &str,
-    ) -> Result<RowStream<Vec<QueryValue>>> {
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
         use futures_util::TryStreamExt;
         if self.pool.is_none() {
             return Err(super::common::not_connected_error());
         }
-        let pool = self.pool.clone().ok_or_else(super::common::not_connected_error)?;
+        let pool = self
+            .pool
+            .clone()
+            .ok_or_else(super::common::not_connected_error)?;
         let query = query.to_string();
         let stream = async_stream::try_stream! {
             let mut cursor = sqlx::query(&query).fetch(&pool);
@@ -1347,7 +1352,10 @@ mod tests {
             .await
             .unwrap();
 
-        let expected = adapter.execute_query("SELECT id, name FROM st").await.unwrap();
+        let expected = adapter
+            .execute_query("SELECT id, name FROM st")
+            .await
+            .unwrap();
 
         let mut stream = adapter
             .execute_query_stream("SELECT id, name FROM st")
@@ -1405,8 +1413,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], Row { id: 10, label: "X".to_string() });
-        assert_eq!(rows[1], Row { id: 20, label: "Y".to_string() });
+        assert_eq!(
+            rows[0],
+            Row {
+                id: 10,
+                label: "X".to_string()
+            }
+        );
+        assert_eq!(
+            rows[1],
+            Row {
+                id: 20,
+                label: "Y".to_string()
+            }
+        );
     }
 
     #[tokio::test]
@@ -1432,9 +1452,8 @@ mod tests {
             .await
             .unwrap();
 
-        let result: Result<Vec<BadMapper>> = adapter
-            .execute_query_mapped("SELECT x FROM errtest")
-            .await;
+        let result: Result<Vec<BadMapper>> =
+            adapter.execute_query_mapped("SELECT x FROM errtest").await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), DataError::TypeConversion(_)));

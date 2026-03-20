@@ -63,11 +63,7 @@ pub fn query_result_from_qr(qr: &QueryResult) -> Value {
     let rows: Vec<Vec<Value>> = qr
         .rows
         .iter()
-        .map(|row| {
-            row.iter()
-                .map(|v| json!(v.to_string()))
-                .collect()
-        })
+        .map(|row| row.iter().map(|v| json!(v.to_string())).collect())
         .collect();
     json!({ "ok": true, "columns": columns, "rows": rows })
 }

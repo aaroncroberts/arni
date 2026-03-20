@@ -198,7 +198,11 @@ impl DuckDbAdapter {
             DataType::String => "VARCHAR",
             _ => {
                 let g = super::common::polars_dtype_to_generic_sql(dtype);
-                if g == "TEXT" { "VARCHAR" } else { g }
+                if g == "TEXT" {
+                    "VARCHAR"
+                } else {
+                    g
+                }
             }
         }
     }
@@ -387,10 +391,7 @@ impl DbAdapter for DuckDbAdapter {
         self.execute_query_blocking(query.to_string()).await
     }
 
-    async fn execute_query_stream(
-        &self,
-        query: &str,
-    ) -> Result<RowStream<Vec<QueryValue>>> {
+    async fn execute_query_stream(&self, query: &str) -> Result<RowStream<Vec<QueryValue>>> {
         // DuckDB's driver is synchronous. We run the query in spawn_blocking and
         // send rows over a tokio channel one at a time, then stream from the
         // receiver side — providing true back-pressure without materialising all rows.
@@ -401,28 +402,51 @@ impl DbAdapter for DuckDbAdapter {
         let query = query.to_string();
         // Unbounded channel: DuckDB doesn't support async yield from blocking code.
         // Rows are sent as they are decoded; the receiver drives consumption.
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<std::result::Result<Vec<QueryValue>, DataError>>(64);
+        let (tx, mut rx) =
+            tokio::sync::mpsc::channel::<std::result::Result<Vec<QueryValue>, DataError>>(64);
         tokio::task::spawn_blocking(move || {
             let guard = match connection.lock() {
                 Ok(g) => g,
-                Err(_) => { let _ = tx.blocking_send(Err(DataError::Connection("Lock poisoned".to_string()))); return; }
+                Err(_) => {
+                    let _ =
+                        tx.blocking_send(Err(DataError::Connection("Lock poisoned".to_string())));
+                    return;
+                }
             };
             let conn = match guard.as_ref() {
                 Some(c) => c,
-                None => { let _ = tx.blocking_send(Err(super::common::not_connected_error())); return; }
+                None => {
+                    let _ = tx.blocking_send(Err(super::common::not_connected_error()));
+                    return;
+                }
             };
             let mut stmt = match conn.prepare(&query) {
                 Ok(s) => s,
-                Err(e) => { let _ = tx.blocking_send(Err(DataError::Query(format!("Failed to prepare statement: {}", e)))); return; }
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(DataError::Query(format!(
+                        "Failed to prepare statement: {}",
+                        e
+                    ))));
+                    return;
+                }
             };
             let mut rows_iter = match stmt.query([]) {
                 Ok(r) => r,
-                Err(e) => { let _ = tx.blocking_send(Err(DataError::Query(format!("Query failed: {}", e)))); return; }
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(DataError::Query(format!("Query failed: {}", e))));
+                    return;
+                }
             };
             let n = rows_iter.as_ref().map(|s| s.column_count()).unwrap_or(0);
             loop {
                 match rows_iter.next() {
-                    Err(e) => { let _ = tx.blocking_send(Err(DataError::Query(format!("Failed to read row: {}", e)))); break; }
+                    Err(e) => {
+                        let _ = tx.blocking_send(Err(DataError::Query(format!(
+                            "Failed to read row: {}",
+                            e
+                        ))));
+                        break;
+                    }
                     Ok(None) => break,
                     Ok(Some(row)) => {
                         let mut values = Vec::with_capacity(n);
@@ -431,13 +455,18 @@ impl DbAdapter for DuckDbAdapter {
                             match DuckDbAdapter::get_value(row, i) {
                                 Ok(v) => values.push(v),
                                 Err(e) => {
-                                    let _ = tx.blocking_send(Err(DataError::Query(format!("Column {}: {}", i, e))));
+                                    let _ = tx.blocking_send(Err(DataError::Query(format!(
+                                        "Column {}: {}",
+                                        i, e
+                                    ))));
                                     ok = false;
                                     break;
                                 }
                             }
                         }
-                        if !ok || tx.blocking_send(Ok(values)).is_err() { break; }
+                        if !ok || tx.blocking_send(Ok(values)).is_err() {
+                            break;
+                        }
                     }
                 }
             }
@@ -1651,7 +1680,10 @@ mod tests {
             .await
             .unwrap();
 
-        let expected = adapter.execute_query("SELECT id, name FROM st").await.unwrap();
+        let expected = adapter
+            .execute_query("SELECT id, name FROM st")
+            .await
+            .unwrap();
 
         let mut stream = adapter
             .execute_query_stream("SELECT id, name FROM st")
@@ -1709,7 +1741,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], Row { id: 10, label: "X".to_string() });
-        assert_eq!(rows[1], Row { id: 20, label: "Y".to_string() });
+        assert_eq!(
+            rows[0],
+            Row {
+                id: 10,
+                label: "X".to_string()
+            }
+        );
+        assert_eq!(
+            rows[1],
+            Row {
+                id: 20,
+                label: "Y".to_string()
+            }
+        );
     }
 }

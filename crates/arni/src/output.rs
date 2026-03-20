@@ -104,9 +104,7 @@ pub trait DbAdapterOutputExt: DbAdapter {
         writer: W,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = std::result::Result<(), crate::DataError>>
-                + Send
-                + 'a,
+            dyn std::future::Future<Output = std::result::Result<(), crate::DataError>> + Send + 'a,
         >,
     >
     where
@@ -122,11 +120,12 @@ pub trait DbAdapterOutputExt: DbAdapter {
 
             // Data rows
             for row in &qr.rows {
-                let record: Vec<String> =
-                    row.iter().map(|v: &crate::QueryValue| v.to_string()).collect();
-                wtr.write_record(&record).map_err(|e| {
-                    crate::DataError::Query(format!("CSV write row error: {}", e))
-                })?;
+                let record: Vec<String> = row
+                    .iter()
+                    .map(|v: &crate::QueryValue| v.to_string())
+                    .collect();
+                wtr.write_record(&record)
+                    .map_err(|e| crate::DataError::Query(format!("CSV write row error: {}", e)))?;
             }
 
             wtr.flush()
@@ -159,20 +158,32 @@ mod tests {
     #[cfg(feature = "json")]
     #[test]
     fn query_value_bool_maps_to_json_bool() {
-        assert_eq!(query_value_to_json(&QueryValue::Bool(true)), serde_json::json!(true));
-        assert_eq!(query_value_to_json(&QueryValue::Bool(false)), serde_json::json!(false));
+        assert_eq!(
+            query_value_to_json(&QueryValue::Bool(true)),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            query_value_to_json(&QueryValue::Bool(false)),
+            serde_json::json!(false)
+        );
     }
 
     #[cfg(feature = "json")]
     #[test]
     fn query_value_int_maps_to_json_number() {
-        assert_eq!(query_value_to_json(&QueryValue::Int(42)), serde_json::json!(42i64));
+        assert_eq!(
+            query_value_to_json(&QueryValue::Int(42)),
+            serde_json::json!(42i64)
+        );
     }
 
     #[cfg(feature = "json")]
     #[test]
     fn query_value_float_maps_to_json_number() {
-        assert_eq!(query_value_to_json(&QueryValue::Float(1.5)), serde_json::json!(1.5f64));
+        assert_eq!(
+            query_value_to_json(&QueryValue::Float(1.5)),
+            serde_json::json!(1.5f64)
+        );
     }
 
     #[cfg(feature = "json")]
@@ -197,21 +208,39 @@ mod tests {
     #[tokio::test]
     async fn execute_query_json_round_trips_rows() {
         use crate::adapter::{ConnectionConfig, DatabaseType, DbAdapter};
-        use crate::output::DbAdapterOutputExt;
         use crate::adapters::sqlite::SqliteAdapter;
+        use crate::output::DbAdapterOutputExt;
         use std::collections::HashMap;
 
         let config = ConnectionConfig {
-            id: "test".into(), name: "test".into(), db_type: DatabaseType::SQLite,
-            host: None, port: None, database: ":memory:".into(),
-            username: None, use_ssl: false, parameters: HashMap::new(), pool_config: None,
+            id: "test".into(),
+            name: "test".into(),
+            db_type: DatabaseType::SQLite,
+            host: None,
+            port: None,
+            database: ":memory:".into(),
+            username: None,
+            use_ssl: false,
+            parameters: HashMap::new(),
+            pool_config: None,
         };
         let mut adapter = SqliteAdapter::new(config.clone());
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
-        adapter.execute_query("CREATE TABLE jt (id INTEGER, name TEXT)").await.unwrap();
-        adapter.execute_query("INSERT INTO jt VALUES (1, 'A'), (2, 'B')").await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+        adapter
+            .execute_query("CREATE TABLE jt (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO jt VALUES (1, 'A'), (2, 'B')")
+            .await
+            .unwrap();
 
-        let rows = adapter.execute_query_json("SELECT id, name FROM jt").await.unwrap();
+        let rows = adapter
+            .execute_query_json("SELECT id, name FROM jt")
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["id"], serde_json::json!(1i64));
         assert_eq!(rows[0]["name"], serde_json::json!("A"));
@@ -222,20 +251,35 @@ mod tests {
     #[tokio::test]
     async fn execute_query_json_empty_result() {
         use crate::adapter::{ConnectionConfig, DatabaseType, DbAdapter};
-        use crate::output::DbAdapterOutputExt;
         use crate::adapters::sqlite::SqliteAdapter;
+        use crate::output::DbAdapterOutputExt;
         use std::collections::HashMap;
 
         let config = ConnectionConfig {
-            id: "test".into(), name: "test".into(), db_type: DatabaseType::SQLite,
-            host: None, port: None, database: ":memory:".into(),
-            username: None, use_ssl: false, parameters: HashMap::new(), pool_config: None,
+            id: "test".into(),
+            name: "test".into(),
+            db_type: DatabaseType::SQLite,
+            host: None,
+            port: None,
+            database: ":memory:".into(),
+            username: None,
+            use_ssl: false,
+            parameters: HashMap::new(),
+            pool_config: None,
         };
         let mut adapter = SqliteAdapter::new(config.clone());
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
-        adapter.execute_query("CREATE TABLE jt2 (id INTEGER)").await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+        adapter
+            .execute_query("CREATE TABLE jt2 (id INTEGER)")
+            .await
+            .unwrap();
 
-        let rows = adapter.execute_query_json("SELECT id FROM jt2").await.unwrap();
+        let rows = adapter
+            .execute_query_json("SELECT id FROM jt2")
+            .await
+            .unwrap();
         assert!(rows.is_empty());
     }
 
@@ -245,22 +289,40 @@ mod tests {
     #[tokio::test]
     async fn execute_query_csv_round_trips_rows() {
         use crate::adapter::{ConnectionConfig, DatabaseType, DbAdapter};
-        use crate::output::DbAdapterOutputExt;
         use crate::adapters::sqlite::SqliteAdapter;
+        use crate::output::DbAdapterOutputExt;
         use std::collections::HashMap;
 
         let config = ConnectionConfig {
-            id: "test".into(), name: "test".into(), db_type: DatabaseType::SQLite,
-            host: None, port: None, database: ":memory:".into(),
-            username: None, use_ssl: false, parameters: HashMap::new(), pool_config: None,
+            id: "test".into(),
+            name: "test".into(),
+            db_type: DatabaseType::SQLite,
+            host: None,
+            port: None,
+            database: ":memory:".into(),
+            username: None,
+            use_ssl: false,
+            parameters: HashMap::new(),
+            pool_config: None,
         };
         let mut adapter = SqliteAdapter::new(config.clone());
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
-        adapter.execute_query("CREATE TABLE ct (id INTEGER, label TEXT)").await.unwrap();
-        adapter.execute_query("INSERT INTO ct VALUES (10, 'X'), (20, 'Y')").await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+        adapter
+            .execute_query("CREATE TABLE ct (id INTEGER, label TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO ct VALUES (10, 'X'), (20, 'Y')")
+            .await
+            .unwrap();
 
         let mut buf = Vec::<u8>::new();
-        adapter.execute_query_csv("SELECT id, label FROM ct", &mut buf).await.unwrap();
+        adapter
+            .execute_query_csv("SELECT id, label FROM ct", &mut buf)
+            .await
+            .unwrap();
         let csv_str = String::from_utf8(buf).unwrap();
 
         let mut rdr = csv::Reader::from_reader(csv_str.as_bytes());
@@ -279,21 +341,36 @@ mod tests {
         // (it reads column names from the first returned row). The CSV will be valid
         // but the header record will be empty. This is a known adapter limitation.
         use crate::adapter::{ConnectionConfig, DatabaseType, DbAdapter};
-        use crate::output::DbAdapterOutputExt;
         use crate::adapters::sqlite::SqliteAdapter;
+        use crate::output::DbAdapterOutputExt;
         use std::collections::HashMap;
 
         let config = ConnectionConfig {
-            id: "test".into(), name: "test".into(), db_type: DatabaseType::SQLite,
-            host: None, port: None, database: ":memory:".into(),
-            username: None, use_ssl: false, parameters: HashMap::new(), pool_config: None,
+            id: "test".into(),
+            name: "test".into(),
+            db_type: DatabaseType::SQLite,
+            host: None,
+            port: None,
+            database: ":memory:".into(),
+            username: None,
+            use_ssl: false,
+            parameters: HashMap::new(),
+            pool_config: None,
         };
         let mut adapter = SqliteAdapter::new(config.clone());
-        DbAdapter::connect(&mut adapter, &config, None).await.unwrap();
-        adapter.execute_query("CREATE TABLE ct2 (id INTEGER, name TEXT)").await.unwrap();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+        adapter
+            .execute_query("CREATE TABLE ct2 (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
 
         let mut buf = Vec::<u8>::new();
-        adapter.execute_query_csv("SELECT id, name FROM ct2", &mut buf).await.unwrap();
+        adapter
+            .execute_query_csv("SELECT id, name FROM ct2", &mut buf)
+            .await
+            .unwrap();
         // Output is valid CSV (succeeds without error); no data rows.
         let csv_str = String::from_utf8(buf).unwrap();
         let mut rdr = csv::Reader::from_reader(csv_str.as_bytes());
