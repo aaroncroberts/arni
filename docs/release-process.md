@@ -154,7 +154,8 @@ remote. Never use `--delete-branch` or `--delete-branch=true`.
 
 After the PR is merged, check out main, pull, and tag with the version.
 This triggers the automated release workflow (`.github/workflows/release.yml`)
-which builds binaries, publishes to crates.io, and attaches artifacts.
+which creates a GitHub Release with notes extracted from the matching
+CHANGELOG section. Source archives (zip, tar.gz) are attached automatically.
 
 ```bash
 git checkout main
@@ -176,18 +177,14 @@ gh run list --branch main --limit 3
 Once the release workflow completes:
 
 ```bash
-# Check the release was created with artifacts
+# Check the GitHub Release was created
 gh release view vX.Y.Z
-
-# Verify crates.io publish (allow ~5 minutes)
-cargo search arni
 ```
 
 Confirm:
 - GitHub release exists with the correct tag
 - Release notes match the CHANGELOG `[X.Y.Z]` section
-- Binaries are attached as release assets
-- `arni` version on crates.io matches the tag
+- Source archives (zip, tar.gz) are attached automatically by GitHub
 
 ---
 
