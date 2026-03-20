@@ -246,7 +246,7 @@ Each database driver is gated behind a Cargo feature to keep compile times and b
 
 ```toml
 # Cargo.toml (user's project)
-arni = { version = "0.2", features = ["duckdb", "postgres"] }
+arni = { version = "0.4", features = ["duckdb", "postgres"] }
 ```
 
 In `crates/arni/Cargo.toml`:

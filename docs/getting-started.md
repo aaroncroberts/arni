@@ -27,9 +27,8 @@ Edit `Cargo.toml` and add `arni`. Enable only the features you need — each dat
 
 ```toml
 [dependencies]
-arni   = { version = "0.2", features = ["duckdb"] }
+arni   = { version = "0.4", features = ["duckdb", "polars"] }
 tokio  = { version = "1",   features = ["full"] }
-polars = { version = "0.53" }
 anyhow = "1"
 ```
 
@@ -313,7 +312,7 @@ error[E0432]: unresolved import `arni::adapters::postgres`
 Add the feature flag to `Cargo.toml`:
 
 ```toml
-arni = { version = "0.2", features = ["postgres"] }
+arni = { version = "0.4", features = ["postgres"] }
 ```
 
 ### `DataError::NotSupported`
