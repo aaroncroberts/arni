@@ -35,3 +35,8 @@ target
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Local credentials — never commit
+.env.test
+.env.local
+.env*.local

@@ -385,17 +385,15 @@ impl DbAdapter for KVAdapter {
     #[cfg(feature = "polars")]
     async fn export_dataframe(
         &self,
-        df: polars::prelude::DataFrame,
+        df: &polars::prelude::DataFrame,
         table_name: &str,
         _schema: Option<&str>,
         _replace: bool,
     ) -> Result<u64> {
-        use polars::prelude::*;
-
         let base = self.ns_base()?;
         let client = self.client()?;
         let height = df.height();
-        let col_names = df.get_column_names();
+        let col_names: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
 
         for i in 0..height {
             let mut obj = serde_json::Map::new();

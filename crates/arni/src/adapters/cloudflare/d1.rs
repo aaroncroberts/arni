@@ -282,13 +282,13 @@ impl DbAdapter for D1Adapter {
     #[cfg(feature = "polars")]
     async fn export_dataframe(
         &self,
-        df: polars::prelude::DataFrame,
+        df: &polars::prelude::DataFrame,
         table_name: &str,
         _schema: Option<&str>,
         replace: bool,
     ) -> Result<u64> {
         use crate::adapters::common::polars_dtype_to_generic_sql;
-        use polars::prelude::*;
+        let df = df.clone();
 
         let client = self.client()?;
         let path = self.d1_raw_path()?;
@@ -330,7 +330,7 @@ impl DbAdapter for D1Adapter {
             return Ok(0);
         }
 
-        let col_names: Vec<&str> = df.get_column_names();
+        let col_names: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
         let placeholders = col_names.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let insert_sql = format!(
             "INSERT INTO \"{table_name}\" ({}) VALUES ({})",
@@ -413,7 +413,7 @@ fn any_value_to_json(v: polars::prelude::AnyValue) -> Value {
             .map(Value::Number)
             .unwrap_or(Value::Null),
         AnyValue::String(s) => Value::String(s.to_string()),
-        AnyValue::StringOwned(s) => Value::String(s),
+        AnyValue::StringOwned(s) => Value::String(s.to_string()),
         _ => Value::String(format!("{v}")),
     }
 }
