@@ -255,6 +255,7 @@ arni export "SELECT * FROM events WHERE date > '2024-01-01'" \
 | **[Examples](crates/arni/examples/README.md)** | Runnable programs: analytics, multi-adapter comparison |
 | **[Axum API Example](examples/axum-api/README.md)** | Full Axum HTTP server using arni as a library — zero-config SQLite, swap to any database |
 | **[Local Databases](docs/local-databases.md)** | Spin up PostgreSQL, MySQL, MongoDB and more via Docker/Podman |
+| **[Release Process](docs/release-process.md)** | Step-by-step release checklist: quality gates, merge, PR, tag, publish |
 
 ## Local Development with Databases
 
