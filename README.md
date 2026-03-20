@@ -227,28 +227,6 @@ arni export "SELECT * FROM events WHERE date > '2024-01-01'" \
   --output events.csv
 ```
 
-### Daemon (persistent connections over Unix socket)
-
-The `arni daemon` command starts a background process that accepts NDJSON commands over a Unix
-domain socket and keeps database connections alive between requests — useful for Cloudflare
-Workers, Node.js services, and any runtime that can't embed a Rust library directly.
-
-```bash
-# Start the daemon (default socket: /tmp/arni.sock)
-arni daemon --socket /tmp/arni.sock
-
-# Send a command with nc (or any Unix socket client)
-echo '{"cmd":"version"}' | nc -U /tmp/arni.sock
-# → {"ok":true,"protocol":"1.0","arni_version":"0.4.0"}
-
-echo '{"cmd":"connect","profile":"my-pg"}' | nc -U /tmp/arni.sock
-echo '{"cmd":"query","profile":"my-pg","sql":"SELECT count(*) FROM users"}' | nc -U /tmp/arni.sock
-echo '{"cmd":"shutdown"}' | nc -U /tmp/arni.sock
-```
-
-All responses use the same `{ok, …}` envelope as the `--json` flag.
-See [docs/mcp.md](docs/mcp.md) for agent integration patterns.
-
 ## Documentation
 
 | Guide | Description |

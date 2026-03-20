@@ -28,8 +28,7 @@ arni/
 │   │   └── tests/                 # Integration tests (per adapter)
 │   ├── arni-cli/                  # Command-line interface
 │   │   └── src/
-│   │       ├── main.rs            # clap commands: connect, query, export, metadata, mcp, daemon
-│   │       ├── daemon.rs          # Unix socket NDJSON daemon — persistent DB connections
+│   │       ├── main.rs            # clap commands: connect, query, export, metadata, mcp
 │   │       ├── output_formatter.rs # OutputFormatter — human/JSON output switching
 │   │       └── config.rs          # ~/.arni/connections.yml loader
 │   ├── arni-mcp/                  # MCP server — exposes arni as AI tool calls

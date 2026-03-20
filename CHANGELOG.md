@@ -14,14 +14,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.4.0] — 2026-03-19
 
 ### Added
-- **`arni daemon`** — new CLI subcommand that starts a persistent background process on a Unix
-  domain socket (`/tmp/arni.sock` by default). Accepts NDJSON commands (one JSON object per
-  line) and responds in kind, maintaining long-lived database connections across requests.
-  Protocol covers the full `DbAdapter` surface: `version`, `connect`, `disconnect`, `query`,
-  `tables`, `list_databases`, `describe_table`, `get_indexes`, `get_foreign_keys`,
-  `get_server_info`, `get_views`, `list_stored_procedures`, `bulk_insert`, `bulk_update`,
-  `bulk_delete`, and `shutdown`. Every response uses the standard `{ok, …}` envelope and every
-  command is logged via `arni-logging` with `cmd`, `profile`, and `duration_ms`.
 - **Full streaming coverage** — `execute_query_stream` now implemented for all seven adapters:
   - **MySQL**: `sqlx::query().fetch()` + `async-stream::try_stream!`, true cursor streaming
   - **MSSQL**: `bb8::Pool::get_owned()` + `tokio::mpsc` channel; tiberius `QueryStream<'_>`
