@@ -393,7 +393,11 @@ impl DbAdapter for KVAdapter {
         let base = self.ns_base()?;
         let client = self.client()?;
         let height = df.height();
-        let col_names: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
+        let col_names: Vec<String> = df
+            .get_column_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
 
         for i in 0..height {
             let mut obj = serde_json::Map::new();

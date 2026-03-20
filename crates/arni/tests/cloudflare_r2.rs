@@ -16,9 +16,9 @@ mod common;
 #[cfg(feature = "cloudflare-r2")]
 mod r2_tests {
     use super::common;
+    use arni::adapter::QueryValue;
     use arni::adapter::{Connection as ConnectionTrait, ConnectionConfig, DatabaseType, DbAdapter};
     use arni::adapters::cloudflare::r2::R2Adapter;
-    use arni::adapter::QueryValue;
     use std::collections::HashMap;
 
     fn r2_config() -> Option<ConnectionConfig> {
@@ -156,7 +156,10 @@ mod r2_tests {
                     total_bytes += chunk.len();
                 }
             }
-            assert!(total_bytes > 0, "streaming GET should yield at least one byte chunk");
+            assert!(
+                total_bytes > 0,
+                "streaming GET should yield at least one byte chunk"
+            );
 
             // DELETE
             DbAdapter::execute_query(&adapter, &format!("DELETE {key}"))
@@ -204,8 +207,14 @@ mod r2_tests {
             .expect("read_table should succeed");
         // Columns: key, size, etag, last_modified
         if !result.rows.is_empty() {
-            assert!(result.columns.contains(&"key".to_string()), "should have key column");
-            assert!(result.columns.contains(&"size".to_string()), "should have size column");
+            assert!(
+                result.columns.contains(&"key".to_string()),
+                "should have key column"
+            );
+            assert!(
+                result.columns.contains(&"size".to_string()),
+                "should have size column"
+            );
         }
     }
 

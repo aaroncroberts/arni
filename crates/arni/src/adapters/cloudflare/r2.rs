@@ -522,9 +522,7 @@ impl DbAdapter for R2Adapter {
                 .content_type("application/octet-stream")
                 .send()
                 .await
-                .map_err(|e| {
-                    DataError::Query(format!("R2 CreateMultipartUpload failed: {e}"))
-                })?;
+                .map_err(|e| DataError::Query(format!("R2 CreateMultipartUpload failed: {e}")))?;
             let upload_id = upload
                 .upload_id()
                 .ok_or_else(|| DataError::Query("R2 CreateMultipartUpload: no upload_id".into()))?
@@ -586,9 +584,7 @@ impl DbAdapter for R2Adapter {
                 )
                 .send()
                 .await
-                .map_err(|e| {
-                    DataError::Query(format!("R2 CompleteMultipartUpload failed: {e}"))
-                })?;
+                .map_err(|e| DataError::Query(format!("R2 CompleteMultipartUpload failed: {e}")))?;
         }
 
         Ok(row_count)

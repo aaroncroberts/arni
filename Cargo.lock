@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "arni"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "arni-logging",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "arni-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "arni",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "arni-logging"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "arni-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "arni",

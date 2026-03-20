@@ -330,7 +330,11 @@ impl DbAdapter for D1Adapter {
             return Ok(0);
         }
 
-        let col_names: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
+        let col_names: Vec<String> = df
+            .get_column_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
         let placeholders = col_names.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let insert_sql = format!(
             "INSERT INTO \"{table_name}\" ({}) VALUES ({})",

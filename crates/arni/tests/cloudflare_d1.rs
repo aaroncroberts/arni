@@ -109,11 +109,7 @@ mod d1_tests {
         };
         let table = "arni_test_d1_basic";
 
-        let _ = DbAdapter::execute_query(
-            &adapter,
-            &format!("DROP TABLE IF EXISTS {table}"),
-        )
-        .await;
+        let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
 
         DbAdapter::execute_query(
             &adapter,
@@ -155,12 +151,9 @@ mod d1_tests {
         let table = "arni_test_d1_list";
 
         let _ = DbAdapter::execute_query(&adapter, &format!("DROP TABLE IF EXISTS {table}")).await;
-        DbAdapter::execute_query(
-            &adapter,
-            &format!("CREATE TABLE {table} (x INTEGER)"),
-        )
-        .await
-        .unwrap();
+        DbAdapter::execute_query(&adapter, &format!("CREATE TABLE {table} (x INTEGER)"))
+            .await
+            .unwrap();
 
         let tables = DbAdapter::list_tables(&adapter, None)
             .await
@@ -211,9 +204,10 @@ mod d1_tests {
             None => return,
         };
         let cols = vec!["id".to_string(), "label".to_string()];
-        let rows = vec![
-            vec![QueryValue::Int(1), QueryValue::Text("one".to_string())],
-        ];
+        let rows = vec![vec![
+            QueryValue::Int(1),
+            QueryValue::Text("one".to_string()),
+        ]];
         // D1 uses execute_query for DML; bulk_insert is not implemented.
         let result = DbAdapter::bulk_insert(&adapter, "any_table", &cols, &rows, None).await;
         assert!(result.is_err(), "D1 bulk_insert should return NotSupported");

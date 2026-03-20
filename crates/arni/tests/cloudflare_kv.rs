@@ -15,9 +15,9 @@ mod common;
 #[cfg(feature = "cloudflare-kv")]
 mod kv_tests {
     use super::common;
+    use arni::adapter::QueryValue;
     use arni::adapter::{Connection as ConnectionTrait, ConnectionConfig, DatabaseType, DbAdapter};
     use arni::adapters::cloudflare::kv::KVAdapter;
-    use arni::adapter::QueryValue;
     use std::collections::HashMap;
 
     fn kv_config() -> Option<ConnectionConfig> {
@@ -209,8 +209,14 @@ mod kv_tests {
             result.rows.len()
         );
         // Columns should be key and value
-        assert!(result.columns.contains(&"key".to_string()), "should have key column");
-        assert!(result.columns.contains(&"value".to_string()), "should have value column");
+        assert!(
+            result.columns.contains(&"key".to_string()),
+            "should have key column"
+        );
+        assert!(
+            result.columns.contains(&"value".to_string()),
+            "should have value column"
+        );
 
         // Clean up
         let _ = DbAdapter::execute_query(&adapter, &format!("DELETE {prefix}/x")).await;
