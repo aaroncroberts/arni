@@ -218,7 +218,8 @@ mod tests {
         {
             let result = create_adapter(make_config(DatabaseType::Oracle));
             assert!(result.is_err());
-            assert!(result.unwrap_err().to_string().contains("not compiled in"));
+            let msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(msg.contains("not compiled in"), "got: {msg}");
         }
     }
 

@@ -41,7 +41,7 @@ arni-logging = { path = "../arni-logging" }
 arni-mcp = { path = "../arni-mcp" }
 
 # Workspace dependencies
-tokio = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["signal", "net", "io-util"] }
 clap = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

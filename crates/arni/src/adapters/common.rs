@@ -15,6 +15,7 @@ pub(crate) type Result<T> = std::result::Result<T, DataError>;
 ///
 /// Use as `.ok_or_else(super::common::not_connected_error)?` to replace the
 /// repeated inline closure pattern across all adapters.
+#[allow(dead_code)] // used by adapter impls gated on DB feature flags
 pub(crate) fn not_connected_error() -> DataError {
     DataError::Connection("Not connected — call connect() first".to_string())
 }
@@ -25,9 +26,9 @@ pub(crate) fn not_connected_error() -> DataError {
 /// the parse yields a non-finite value (overflow to ±infinity) or when the string
 /// representation is not a valid `f64` literal.
 ///
-/// Used by the PostgreSQL (`NUMERIC`) and MySQL (`DECIMAL`/`NUMERIC`) adapters.
+/// Used by the MySQL (`DECIMAL`/`NUMERIC`) adapter.
 /// Avoids calling `to_string()` twice compared to the inline version.
-#[cfg(any(feature = "postgres", feature = "mysql"))]
+#[cfg(feature = "mysql")]
 pub(crate) fn decimal_to_query_value(d: sqlx::types::Decimal) -> QueryValue {
     let s = d.to_string();
     s.parse::<f64>()
@@ -359,7 +360,7 @@ mod tests {
 
     // ── decimal_to_query_value ────────────────────────────────────────────────
 
-    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[cfg(feature = "mysql")]
     #[test]
     fn decimal_normal_value_becomes_float() {
         use std::str::FromStr;
@@ -370,7 +371,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[cfg(feature = "mysql")]
     #[test]
     fn decimal_integer_value_becomes_float() {
         use std::str::FromStr;
@@ -378,7 +379,7 @@ mod tests {
         assert!(matches!(decimal_to_query_value(d), QueryValue::Float(f) if f == 42.0));
     }
 
-    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[cfg(feature = "mysql")]
     #[test]
     fn decimal_very_large_value_falls_back_to_text() {
         // A decimal with more significant digits than f64 can represent accurately
@@ -393,7 +394,7 @@ mod tests {
         assert!(matches!(decimal_to_query_value(d), QueryValue::Float(_)));
     }
 
-    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[cfg(feature = "mysql")]
     #[test]
     fn decimal_zero_becomes_float_zero() {
         use std::str::FromStr;

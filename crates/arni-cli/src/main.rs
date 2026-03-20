@@ -1,5 +1,6 @@
 mod app_config;
 mod config;
+mod daemon;
 mod db;
 mod discovery;
 mod filter;
@@ -276,6 +277,23 @@ enum Commands {
         #[arg(long)]
         schema: Option<String>,
     },
+    /// Start a persistent background daemon on a Unix domain socket
+    ///
+    /// Accepts NDJSON commands (one JSON object per line) and responds in kind.
+    /// Maintains long-lived database connections across requests — ideal for
+    /// Cloudflare Workers, Node.js, and other runtimes that cannot embed Rust.
+    ///
+    /// Protocol: each request is a JSON line with "cmd" and optional fields.
+    /// Run `arni daemon --help-protocol` to see supported commands.
+    ///
+    /// Example:
+    ///   arni daemon --socket /tmp/arni.sock
+    ///   echo '{"cmd":"version"}' | nc -U /tmp/arni.sock
+    Daemon {
+        /// Unix socket path to listen on
+        #[arg(long, default_value = "/tmp/arni.sock")]
+        socket: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -546,6 +564,7 @@ async fn run_command(command: Commands, fmt: &OutputFormatter) -> Result<(), Box
             mode,
             schema,
         } => handle_find_tables_command(profile, pattern, mode, schema, fmt).await,
+        Commands::Daemon { socket } => daemon::run(&socket).await,
     }
 }
 
