@@ -5,19 +5,89 @@ Follow them in order. Do not skip steps.
 
 ---
 
-## Overview
+## Philosophy
+
+Work is visible from day one. The draft PR is opened at the **start** of the
+release cycle, not the end. Commits accumulate on `aaron/agentic-coder` and
+are pushed continuously. CI runs on every push. Contributors can participate
+via the open PR. The PR stays open until CI is fully green, then it is merged,
+tagged, and released.
 
 ```
-Local quality gates → Merge main → Push & PR → CI passes → Tag & Release
+Open draft PR → commit & push loop → CI passes → mark ready → merge → tag → release
 ```
 
 All work happens on `aaron/agentic-coder`. **Never delete this branch.**
 
 ---
 
-## Step 1 — Local quality gates
+## Step 1 — Open the draft PR
 
-Run all four checks locally before touching git. Fix any failures before proceeding.
+At the start of any release cycle, open a draft PR from `aaron/agentic-coder`
+targeting `main`. Do this before writing any code.
+
+```bash
+gh pr create \
+  --base main \
+  --draft \
+  --title "feat: vX.Y.Z — <brief summary of the release>" \
+  --body "$(cat <<'EOF'
+## Summary
+<!-- Fill in as work progresses -->
+
+## Changes
+<!-- Updated as commits land -->
+
+## Test plan
+- [ ] cargo test --workspace --lib passes
+- [ ] cargo clippy --workspace -- -D warnings clean
+- [ ] cargo fmt --check clean
+- [ ] All CI jobs green
+- [ ] CHANGELOG updated
+- [ ] Version bumped in Cargo.toml files
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+The PR number is your workspace. Reference it in commits if useful
+(`gh pr view` to retrieve it later).
+
+---
+
+## Step 2 — Development loop
+
+Work proceeds in normal commit cycles on `aaron/agentic-coder`. After each
+logical unit of work:
+
+```bash
+# Stage and commit
+git add <files>
+git commit -m "feat|fix|chore|docs: description"
+
+# Push — this triggers a CI run on the open PR
+git push origin aaron/agentic-coder
+```
+
+**Picking up main's changes** (do this whenever main advances):
+
+```bash
+git fetch origin main
+git merge origin/main --no-edit
+# Resolve any conflicts locally, then:
+git push origin aaron/agentic-coder
+```
+
+Never rebase a branch with an open PR — merge only. This preserves commit
+history and keeps collaborator forks in sync.
+
+---
+
+## Step 3 — Local quality gates (before marking ready)
+
+When all planned work is complete, run the full quality gate locally. Fix
+every failure before proceeding.
 
 ```bash
 # 1. Build
@@ -34,115 +104,63 @@ cargo clippy --workspace -- -D warnings
 cargo test --workspace --lib
 ```
 
-All four must exit 0. Do not proceed with a red check.
+All four must exit 0. Fix any failures and push before marking the PR ready.
 
 ---
 
-## Step 2 — Pull main and merge locally
+## Step 4 — Mark the PR ready for review
 
-Fetch the latest main and merge it into the working branch to pick up any
-changes merged since the last sync. Resolve all conflicts locally.
-
-```bash
-git fetch origin main
-git merge origin/main --no-edit
-```
-
-If there are conflicts:
+Convert the draft PR to ready-for-review:
 
 ```bash
-# Edit conflicted files, then:
-git add <resolved-files>
-git merge --continue
+gh pr ready <pr-number>
 ```
 
-After the merge, re-run the quality gates from Step 1 to confirm nothing
-broke during the merge:
-
-```bash
-cargo fmt --check
-cargo clippy --workspace -- -D warnings
-cargo test --workspace --lib
-```
-
----
-
-## Step 3 — Commit and push
-
-Stage any outstanding changes (e.g. the format pass), commit, and push.
-
-```bash
-git add -u
-git commit -m "style: apply rustfmt across all crates"   # only if fmt changed files
-git push origin aaron/agentic-coder
-```
-
----
-
-## Step 4 — Open the pull request
-
-Create the PR targeting `main`. Use a title that matches the version bump.
-
-```bash
-gh pr create \
-  --base main \
-  --title "feat: vX.Y.Z — <brief summary>" \
-  --body "$(cat <<'EOF'
-## Summary
-- Bullet 1
-- Bullet 2
-
-## Test plan
-- [ ] cargo test --workspace --lib passes
-- [ ] cargo clippy --workspace -- -D warnings clean
-- [ ] cargo fmt --check clean
-- [ ] CI passes
-- [ ] After merge: tag vX.Y.Z to trigger release workflow
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
-```
+Update the PR body to reflect the final state — fill in the Summary and
+Changes sections if not already done. CI will run automatically on the
+ready-for-review transition.
 
 ---
 
 ## Step 5 — Wait for CI
 
-Monitor the CI run triggered by the PR push:
+Monitor the CI run:
 
 ```bash
 gh run list --branch aaron/agentic-coder --limit 5
 gh run watch <run-id>
 ```
 
-**Do not proceed to Step 6 until CI is green.** If CI fails, fix the issue
-on `aaron/agentic-coder`, push the fix, and wait for CI to re-run.
+**Do not proceed to Step 6 until all CI jobs are green.** If CI fails, fix
+the issue on `aaron/agentic-coder`, push the fix, and wait for CI to re-run.
+The PR must not be merged while any CI job is red.
 
 ---
 
 ## Step 6 — Merge the PR
 
-Once CI is green, merge via the GitHub UI or:
+Once CI is fully green:
 
 ```bash
 gh pr merge <pr-number> --squash --delete-branch=false
 ```
 
-`--delete-branch=false` ensures `aaron/agentic-coder` is preserved on the remote.
+`--delete-branch=false` ensures `aaron/agentic-coder` is preserved on the
+remote. Never use `--delete-branch` or `--delete-branch=true`.
 
 ---
 
 ## Step 7 — Tag the release
 
-After the PR is merged, tag `main` with the version. This triggers the
-automated release workflow (`.github/workflows/release.yml`) which builds
-binaries, publishes to crates.io, and attaches artifacts.
+After the PR is merged, check out main, pull, and tag with the version.
+This triggers the automated release workflow (`.github/workflows/release.yml`)
+which builds binaries, publishes to crates.io, and attaches artifacts.
 
 ```bash
 git checkout main
 git pull origin main
-git tag v0.4.0
-git push origin v0.4.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 Verify the release workflow started:
@@ -159,7 +177,7 @@ Once the release workflow completes:
 
 ```bash
 # Check the release was created with artifacts
-gh release view v0.4.0
+gh release view vX.Y.Z
 
 # Verify crates.io publish (allow ~5 minutes)
 cargo search arni
@@ -175,7 +193,8 @@ Confirm:
 
 ## Step 9 — Return to aaron/agentic-coder
 
-Switch back to the working branch and sync it with the newly merged main:
+Switch back to the working branch and sync it with the newly merged main.
+This is the base for the next release cycle.
 
 ```bash
 git checkout aaron/agentic-coder
@@ -183,9 +202,6 @@ git fetch origin main
 git merge origin/main --no-edit
 git push origin aaron/agentic-coder
 ```
-
-The branch is now in sync with the release commit and ready for the next
-development cycle.
 
 ---
 
@@ -195,41 +211,62 @@ development cycle.
 | :--- | :--- | :--- |
 | `main` | Release branch — always green, always releasable | Never |
 | `aaron/agentic-coder` | Primary working branch | **Never** |
-| `feature/*`, `fix/*` | Short-lived topic branches | Yes, after merge |
+
+Short-lived topic branches are not used in this workflow. All work lands
+directly on `aaron/agentic-coder` via commits.
+
+---
+
+## Conflict resolution
+
+When `main` advances (another PR merges while this one is open):
+
+```bash
+git fetch origin main
+git merge origin/main --no-edit   # merge, never rebase
+# Fix any conflicts, re-run quality gates, then:
+git push origin aaron/agentic-coder
+```
+
+CI re-runs automatically after the push. GitHub will show the PR as
+conflict-free once the merge commit is pushed.
 
 ---
 
 ## Quick reference card
 
 ```bash
-# Step 1 — Quality gates
+# Start of cycle — open draft PR
+gh pr create --base main --draft --title "feat: vX.Y.Z — ..."
+
+# Development loop
+git commit -m "..." && git push origin aaron/agentic-coder
+
+# Pick up main changes
+git fetch origin main && git merge origin/main --no-edit && git push
+
+# Pre-merge quality gates
 cargo fmt --all && cargo fmt --check
 cargo clippy --workspace -- -D warnings
 cargo test --workspace --lib
 
-# Step 2 — Merge main
-git fetch origin main && git merge origin/main --no-edit
+# Mark ready
+gh pr ready <pr-number>
 
-# Step 3 — Push
-git add -u && git push origin aaron/agentic-coder
-
-# Step 4 — PR
-gh pr create --base main --title "feat: vX.Y.Z — ..."
-
-# Step 5 — Watch CI
+# Watch CI
 gh run list --branch aaron/agentic-coder --limit 5
 
-# Step 6 — Merge
+# Merge (only when CI green)
 gh pr merge <pr-number> --squash --delete-branch=false
 
-# Step 7 — Tag
+# Tag
 git checkout main && git pull origin main
 git tag vX.Y.Z && git push origin vX.Y.Z
 
-# Step 8 — Verify
+# Verify
 gh release view vX.Y.Z
 
-# Step 9 — Sync working branch
+# Sync working branch
 git checkout aaron/agentic-coder
 git fetch origin main && git merge origin/main --no-edit
 git push origin aaron/agentic-coder
