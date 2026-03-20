@@ -28,7 +28,9 @@ arni/
 │   │   └── tests/                 # Integration tests (per adapter)
 │   ├── arni-cli/                  # Command-line interface
 │   │   └── src/
-│   │       ├── main.rs            # clap commands: connect, query, export, metadata, mcp
+│   │       ├── main.rs            # clap commands: connect, query, export, metadata, mcp, daemon
+│   │       ├── daemon.rs          # Unix socket NDJSON daemon — persistent DB connections
+│   │       ├── output_formatter.rs # OutputFormatter — human/JSON output switching
 │   │       └── config.rs          # ~/.arni/connections.yml loader
 │   ├── arni-mcp/                  # MCP server — exposes arni as AI tool calls
 │   └── arni-logging/              # Structured tracing/logging infrastructure
@@ -61,6 +63,10 @@ The library is built around a single async trait that all adapters implement:
                           │                              │
                           │  Row-level operations         │
                           │    execute_query()           │
+                          │    execute_query_stream()    │
+                          │    execute_query_mapped()    │
+                          │    execute_query_json()²     │
+                          │    execute_query_csv()³      │
                           │                              │
                           │  Schema discovery             │
                           │    list_databases()          │

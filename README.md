@@ -72,10 +72,10 @@ arni/
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | `connect` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `execute_query` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `execute_query_stream`¹ | ✅ | 🔧 | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
-| `execute_query_mapped`¹ | ✅ | 🔧 | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
-| `execute_query_json`² | ✅ | 🔧 | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
-| `execute_query_csv`³ | ✅ | 🔧 | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
+| `execute_query_stream`¹ | ✅ | ✅ | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
+| `execute_query_mapped`¹ | ✅ | ✅ | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
+| `execute_query_json`² | ✅ | ✅ | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
+| `execute_query_csv`³ | ✅ | ✅ | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
 | `export_dataframe` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `list_tables` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `describe_table` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -94,7 +94,7 @@ arni/
 
 **Notes:**
 
-- ¹ `execute_query_stream` / `execute_query_mapped` — no extra feature flag; requires implementing [`FromQueryRow`](https://docs.rs/arni/latest/arni/trait.FromQueryRow.html) for your type. MySQL, MSSQL, MongoDB, Oracle return `NotSupported` by default.
+- ¹ `execute_query_stream` / `execute_query_mapped` — no extra feature flag; requires implementing [`FromQueryRow`](https://docs.rs/arni/latest/arni/trait.FromQueryRow.html) for your type. PostgreSQL, MySQL, DuckDB, SQLite implemented; MSSQL, MongoDB, Oracle return `NotSupported` by default.
 - ² `execute_query_json` — requires `--features json`
 - ³ `execute_query_csv` — requires `--features csv`
 - `row_count ⚠️ approx` — PostgreSQL, MySQL, Oracle use catalog statistics (fast, not exact); use `SELECT COUNT(*)` for precision
@@ -111,7 +111,7 @@ arni/
 ```toml
 [dependencies]
 # PostgreSQL only, no polars — minimal compile
-arni = { version = "0.3", default-features = false, features = ["postgres"] }
+arni = { version = "0.4", default-features = false, features = ["postgres"] }
 ```
 
 ```rust
@@ -128,7 +128,7 @@ for row in &result.rows {
 ```toml
 [dependencies]
 # DuckDB in-memory + DataFrame output
-arni = { version = "0.3", default-features = false, features = ["duckdb", "polars"] }
+arni = { version = "0.4", default-features = false, features = ["duckdb", "polars"] }
 ```
 
 ```rust
@@ -226,6 +226,28 @@ arni export "SELECT * FROM events WHERE date > '2024-01-01'" \
   --format csv \
   --output events.csv
 ```
+
+### Daemon (persistent connections over Unix socket)
+
+The `arni daemon` command starts a background process that accepts NDJSON commands over a Unix
+domain socket and keeps database connections alive between requests — useful for Cloudflare
+Workers, Node.js services, and any runtime that can't embed a Rust library directly.
+
+```bash
+# Start the daemon (default socket: /tmp/arni.sock)
+arni daemon --socket /tmp/arni.sock
+
+# Send a command with nc (or any Unix socket client)
+echo '{"cmd":"version"}' | nc -U /tmp/arni.sock
+# → {"ok":true,"protocol":"1.0","arni_version":"0.4.0"}
+
+echo '{"cmd":"connect","profile":"my-pg"}' | nc -U /tmp/arni.sock
+echo '{"cmd":"query","profile":"my-pg","sql":"SELECT count(*) FROM users"}' | nc -U /tmp/arni.sock
+echo '{"cmd":"shutdown"}' | nc -U /tmp/arni.sock
+```
+
+All responses use the same `{ok, …}` envelope as the `--json` flag.
+See [docs/mcp.md](docs/mcp.md) for agent integration patterns.
 
 ## Documentation
 

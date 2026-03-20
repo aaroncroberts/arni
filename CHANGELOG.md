@@ -11,6 +11,51 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.4.0] — 2026-03-19
+
+### Added
+- **`arni daemon`** — new CLI subcommand that starts a persistent background process on a Unix
+  domain socket (`/tmp/arni.sock` by default). Accepts NDJSON commands (one JSON object per
+  line) and responds in kind, maintaining long-lived database connections across requests.
+  Protocol covers the full `DbAdapter` surface: `version`, `connect`, `disconnect`, `query`,
+  `tables`, `list_databases`, `describe_table`, `get_indexes`, `get_foreign_keys`,
+  `get_server_info`, `get_views`, `list_stored_procedures`, `bulk_insert`, `bulk_update`,
+  `bulk_delete`, and `shutdown`. Every response uses the standard `{ok, …}` envelope and every
+  command is logged via `arni-logging` with `cmd`, `profile`, and `duration_ms`.
+- **True cursor streaming** for MySQL (`execute_query_stream`) — implemented via
+  `sqlx::query().fetch()` + `async-stream::try_stream!`, matching the SQLite, PostgreSQL, and
+  DuckDB implementations. Because `execute_query_json` and `execute_query_csv` are blanket impls
+  over `execute_query_stream`, MySQL gets JSON and CSV output tiers for free.
+
+### Changed
+- **Adapter functions decomposed** — `PostgresAdapter::export_dataframe` and
+  `::describe_table` (previously 89 and 116 lines) are extracted into focused private helpers
+  (`recreate_table`, `build_insert_sql`, `insert_rows_batch`, `fetch_column_metadata`,
+  `fetch_primary_keys`, `fetch_table_stats`). `OracleAdapter::execute_query_blocking` inner
+  closure is now a free function `collect_oracle_result`. `MySqlAdapter::execute_query` routes
+  through `run_dml_query` / `run_select_query` helpers.
+- **`OutputFormatter`** — replaces the scattered `json_mode: bool` branches throughout
+  `arni-cli`. All human-readable vs. JSON-envelope switching now goes through a single type,
+  keeping command handler code focused on logic rather than output formatting.
+- **`detect_sql_type` centralized** — per-adapter `is_dml`/`is_select_query` functions retired;
+  all adapters now route through `common::detect_sql_type()`.
+- **`not_connected_error` centralized** — repeated `DataError::Connection(…)` closures
+  across all adapters replaced by `common::not_connected_error()`.
+- **`polars_dtype_to_generic_sql` centralized** — extracted from individual adapters into
+  `common.rs` so the SQL DDL mapping is consistent across backends.
+- **`decimal_to_query_value` helper** — `NUMERIC`/`DECIMAL` to `QueryValue` conversion
+  centralized in `common.rs`; cfg narrowed to `mysql` only (the sole production caller).
+- **Feature rename**: `csv-output` → `csv` for consistency with the `json` feature name.
+  If you used `features = ["csv-output"]`, change to `features = ["csv"]`.
+
+### Fixed
+- Clippy clean across all feature-flag combinations (including no-features and full-features
+  builds). `dead_code` lints for `not_connected_error` and `decimal_to_query_value` resolved.
+- `db.rs` test for non-compiled adapters used `Result::unwrap_err()` which requires `T: Debug`;
+  replaced with `.err().unwrap()` since `SharedAdapter` is not `Debug`.
+
+---
+
 ## [0.3.0] — 2026-03-18
 
 ### Added
