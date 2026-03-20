@@ -495,13 +495,21 @@ impl DbAdapter for PostgresAdapter {
         &self,
         query: &str,
     ) -> Result<RowStream<Vec<QueryValue>>> {
-        // sqlx::query().fetch() supports true cursor-level streaming, but its lifetime
-        // is tied to the pool reference, preventing a 'static RowStream without an
-        // additional crate (e.g. async-stream). We materialise via execute_query and
-        // stream from the resulting Vec — identical in semantics at the API level.
-        // A true cursor-streaming path can replace this once async-stream is added.
-        let result = self.execute_query(query).await?;
-        let stream = futures_util::stream::iter(result.rows.into_iter().map(Ok));
+        use futures_util::TryStreamExt;
+        if !*self.connected.read().await {
+            return Err(super::common::not_connected_error());
+        }
+        let pool = self.pool.read().await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        let query = query.to_string();
+        let stream = async_stream::try_stream! {
+            let mut cursor = sqlx::query(&query).fetch(&pool);
+            while let Some(row) = cursor.try_next().await.map_err(|e| DataError::Query(format!("Stream fetch error: {}", e)))? {
+                yield PostgresAdapter::row_to_values(&row)?;
+            }
+        };
         Ok(Box::pin(stream))
     }
 

@@ -399,12 +399,18 @@ impl DbAdapter for SqliteAdapter {
         &self,
         query: &str,
     ) -> Result<RowStream<Vec<QueryValue>>> {
-        // SQLite is in-process: fetch_all has negligible overhead compared with a
-        // network database, so we materialise here and stream from the resulting Vec.
-        // This avoids the 'static lifetime constraint that a true cursor-based stream
-        // would require without an additional dependency (e.g. async-stream).
-        let result = self.execute_query(query).await?;
-        let stream = futures_util::stream::iter(result.rows.into_iter().map(Ok));
+        use futures_util::TryStreamExt;
+        if self.pool.is_none() {
+            return Err(super::common::not_connected_error());
+        }
+        let pool = self.pool.clone().ok_or_else(super::common::not_connected_error)?;
+        let query = query.to_string();
+        let stream = async_stream::try_stream! {
+            let mut cursor = sqlx::query(&query).fetch(&pool);
+            while let Some(row) = cursor.try_next().await.map_err(|e| DataError::Query(format!("Stream fetch error: {}", e)))? {
+                yield SqliteAdapter::row_to_values(&row)?;
+            }
+        };
         Ok(Box::pin(stream))
     }
 

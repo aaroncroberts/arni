@@ -46,7 +46,7 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection, ConnectionConfig,
     DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo, ProcedureInfo, QueryResult,
-    QueryValue, Result, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    QueryValue, Result, RowStream, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
 };
 use crate::DataError;
 #[cfg(feature = "polars")]
@@ -657,6 +657,27 @@ impl DbAdapter for MySqlAdapter {
             "DataFrame export complete"
         );
         Ok(rows_inserted)
+    }
+
+    // ===== Streaming =====
+
+    async fn execute_query_stream(
+        &self,
+        query: &str,
+    ) -> Result<RowStream<Vec<QueryValue>>> {
+        use futures_util::TryStreamExt;
+        if self.pool.is_none() {
+            return Err(super::common::not_connected_error());
+        }
+        let pool = self.pool.clone().ok_or_else(|| DataError::Connection("Pool not available".to_string()))?;
+        let query = query.to_string();
+        let stream = async_stream::try_stream! {
+            let mut cursor = sqlx::query(&query).fetch(&pool);
+            while let Some(row) = cursor.try_next().await.map_err(|e| DataError::Query(format!("Stream fetch error: {}", e)))? {
+                yield MySqlAdapter::row_to_values(&row)?;
+            }
+        };
+        Ok(Box::pin(stream))
     }
 
     // ===== Schema Discovery =====
@@ -2358,6 +2379,15 @@ mod tests {
         let filters = [FilterExpr::Eq("id".to_string(), QueryValue::Int(1))];
         let result = adapter.bulk_delete("t", &filters, None).await;
         assert!(result.is_err());
+    }
+
+    // ---- execute_query_stream tests ----
+
+    #[tokio::test]
+    async fn test_execute_query_stream_not_connected_returns_error() {
+        let adapter = MySqlAdapter::new(create_test_config());
+        let result = adapter.execute_query_stream("SELECT 1").await;
+        assert!(matches!(result, Err(DataError::Connection(_))));
     }
 
     // ---- helper unit tests ----
