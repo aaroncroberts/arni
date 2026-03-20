@@ -93,7 +93,7 @@ impl DuckDbAdapter {
                     operation = "execute_query",
                     "Not connected"
                 );
-                DataError::Connection("Not connected".to_string())
+                super::common::not_connected_error()
             })?;
 
             let mut stmt = conn
@@ -165,7 +165,7 @@ impl DuckDbAdapter {
                 .map_err(|_| DataError::Connection("Lock poisoned".to_string()))?;
             let conn = conn_guard
                 .as_ref()
-                .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+                .ok_or_else(super::common::not_connected_error)?;
             conn.execute(&sql, [])
                 .map(|n| n as u64)
                 .map_err(|e| DataError::Query(format!("Failed to execute statement: {}", e)))
@@ -409,9 +409,7 @@ impl DbAdapter for DuckDbAdapter {
     ) -> Result<u64> {
         if !ConnectionTrait::is_connected(self) {
             error!(adapter = "duckdb", operation = "export_dataframe", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let nrows = df.height();
@@ -516,9 +514,7 @@ impl DbAdapter for DuckDbAdapter {
         }
         if !ConnectionTrait::is_connected(self) {
             error!(adapter = "duckdb", operation = "bulk_insert", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         for (idx, row) in rows.iter().enumerate() {
@@ -571,9 +567,7 @@ impl DbAdapter for DuckDbAdapter {
         }
         if !ConnectionTrait::is_connected(self) {
             error!(adapter = "duckdb", operation = "bulk_update", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let mut total_affected = 0u64;
@@ -612,9 +606,7 @@ impl DbAdapter for DuckDbAdapter {
         }
         if !ConnectionTrait::is_connected(self) {
             error!(adapter = "duckdb", operation = "bulk_delete", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let mut total_affected = 0u64;

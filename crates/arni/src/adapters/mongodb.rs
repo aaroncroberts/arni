@@ -325,7 +325,7 @@ impl ConnectionTrait for MongoDbAdapter {
         debug!("Performing health check");
         let client = self.client.as_ref().ok_or_else(|| {
             warn!("Health check called but not connected");
-            DataError::Connection("Not connected".to_string())
+            super::common::not_connected_error()
         })?;
 
         let db_name = self
@@ -375,7 +375,7 @@ impl DbAdapter for MongoDbAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            DataError::Connection("Not connected".to_string())
+            super::common::not_connected_error()
         })?;
 
         let db_name = self
@@ -569,7 +569,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
         let collection = client.database(db_name).collection::<Document>(table_name);
 
@@ -615,7 +615,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
         let collection = client.database(db_name).collection::<Document>(table_name);
 
@@ -659,7 +659,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
         let db_name = self.current_database.as_deref().unwrap_or("test");
         let collection = client.database(db_name).collection::<Document>(table_name);
 
@@ -680,7 +680,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected to database".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self.current_database.as_deref().unwrap_or("admin");
         let db = client.database(db_name);
@@ -721,7 +721,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_names = client
             .list_database_names()
@@ -736,7 +736,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self
             .current_database
@@ -762,7 +762,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self
             .current_database
@@ -801,7 +801,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self
             .current_database
@@ -877,7 +877,7 @@ impl DbAdapter for MongoDbAdapter {
         let client = self
             .client
             .as_ref()
-            .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+            .ok_or_else(super::common::not_connected_error)?;
 
         let db_name = self
             .current_database

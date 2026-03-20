@@ -91,9 +91,7 @@ impl SqliteAdapter {
     /// Uses `sqlx::query::execute` rather than `fetch_all` so DML operations
     /// correctly return the row count instead of an empty result set.
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
-        let pool = self.pool.as_ref().ok_or_else(|| {
-            DataError::Connection("Not connected - call connect() first".to_string())
-        })?;
+        let pool = self.pool.as_ref().ok_or_else(super::common::not_connected_error)?;
 
         let result = sqlx::query(sql)
             .execute(pool)
@@ -374,7 +372,7 @@ impl DbAdapter for SqliteAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            DataError::Connection("Not connected - call connect() first".to_string())
+            super::common::not_connected_error()
         })?;
 
         let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
@@ -471,7 +469,7 @@ impl DbAdapter for SqliteAdapter {
                 operation = "find_tables",
                 "Not connected"
             );
-            DataError::Connection("Not connected - call connect() first".to_string())
+            super::common::not_connected_error()
         })?;
 
         let escaped = escape_like_pattern(pattern);
@@ -739,9 +737,7 @@ impl DbAdapter for SqliteAdapter {
         {
             if self.pool.is_none() {
                 error!(adapter = "sqlite", operation = "export_dataframe", table = %table_name, "Not connected");
-                return Err(DataError::Connection(
-                    "Not connected - call connect() first".to_string(),
-                ));
+                return Err(super::common::not_connected_error());
             }
         }
 
@@ -836,9 +832,7 @@ impl DbAdapter for SqliteAdapter {
         {
             if self.pool.is_none() {
                 error!(adapter = "sqlite", operation = "bulk_insert", table = %table_name, "Not connected");
-                return Err(DataError::Connection(
-                    "Not connected - call connect() first".to_string(),
-                ));
+                return Err(super::common::not_connected_error());
             }
         }
 
@@ -892,9 +886,7 @@ impl DbAdapter for SqliteAdapter {
         {
             if self.pool.is_none() {
                 error!(adapter = "sqlite", operation = "bulk_update", table = %table_name, "Not connected");
-                return Err(DataError::Connection(
-                    "Not connected - call connect() first".to_string(),
-                ));
+                return Err(super::common::not_connected_error());
             }
         }
 
@@ -935,9 +927,7 @@ impl DbAdapter for SqliteAdapter {
         {
             if self.pool.is_none() {
                 error!(adapter = "sqlite", operation = "bulk_delete", table = %table_name, "Not connected");
-                return Err(DataError::Connection(
-                    "Not connected - call connect() first".to_string(),
-                ));
+                return Err(super::common::not_connected_error());
             }
         }
 

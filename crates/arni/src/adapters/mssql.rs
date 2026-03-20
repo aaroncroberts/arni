@@ -465,7 +465,7 @@ impl SqlServerAdapter {
     /// Execute a DML or DDL statement, returning rows affected
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
         let pool = self.pool.as_ref().ok_or_else(|| {
-            DataError::Connection("Not connected - call connect() first".to_string())
+            super::common::not_connected_error()
         })?;
         let mut conn = pool
             .get()
@@ -630,7 +630,7 @@ impl DbAdapter for SqlServerAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            DataError::Connection("Not connected - call connect() first".to_string())
+            super::common::not_connected_error()
         })?;
         let mut conn = pool.get().await.map_err(|e| {
             error!(
@@ -1126,9 +1126,7 @@ impl DbAdapter for SqlServerAdapter {
         replace: bool,
     ) -> Result<u64> {
         if self.pool.is_none() {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let nrows = df.height();

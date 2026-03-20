@@ -258,9 +258,7 @@ impl Connection for PostgresAdapter {
         debug!("Performing health check");
         if !*self.connected.read().await {
             warn!("Health check failed: not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool_guard = self.pool.read().await;
@@ -406,9 +404,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool_guard = self.pool.read().await;
@@ -538,9 +534,7 @@ impl DbAdapter for PostgresAdapter {
         // Check connection
         if !*self.connected.read().await {
             error!(adapter = "postgres", operation = "export_dataframe", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool_guard = self.pool.read().await;
@@ -624,9 +618,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "list_databases",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get client
@@ -667,9 +659,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "list_tables",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get client
@@ -728,9 +718,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "find_tables",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool_guard = self.pool.read().await;
@@ -785,9 +773,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "describe_table",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get client
@@ -898,9 +884,7 @@ impl DbAdapter for PostgresAdapter {
         // Check connection
         if !*self.connected.read().await {
             error!(adapter = "postgres", operation = "get_indexes", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let schema_name = schema.unwrap_or("public");
@@ -966,9 +950,7 @@ impl DbAdapter for PostgresAdapter {
         // Check connection
         if !*self.connected.read().await {
             error!(adapter = "postgres", operation = "get_foreign_keys", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let schema_name = schema.unwrap_or("public");
@@ -1067,9 +1049,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "get_views",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let schema_name = schema.unwrap_or("public");
@@ -1124,9 +1104,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "get_view_definition",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let schema_name = schema.unwrap_or("public");
@@ -1168,9 +1146,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "list_stored_procedures",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let schema_name = schema.unwrap_or("public");
@@ -1226,9 +1202,7 @@ impl DbAdapter for PostgresAdapter {
                 operation = "get_server_info",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
         let pool_guard = self.pool.read().await;
         let pool = pool_guard
@@ -1270,9 +1244,7 @@ impl DbAdapter for PostgresAdapter {
         // Check connection
         if !*self.connected.read().await {
             error!(adapter = "postgres", operation = "bulk_insert", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Validate all rows have the same column count
@@ -1357,9 +1329,7 @@ impl DbAdapter for PostgresAdapter {
 
         if !*self.connected.read().await {
             error!(adapter = "postgres", operation = "bulk_update", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let schema_name = schema.unwrap_or("public");
@@ -1415,9 +1385,7 @@ impl DbAdapter for PostgresAdapter {
 
         if !*self.connected.read().await {
             error!(adapter = "postgres", operation = "bulk_delete", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let schema_name = schema.unwrap_or("public");

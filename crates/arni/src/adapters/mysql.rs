@@ -352,9 +352,7 @@ impl MySqlAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -525,9 +523,7 @@ impl Connection for MySqlAdapter {
         // Check internal state first
         if self.pool.is_none() {
             warn!("Health check failed: not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -666,9 +662,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "export_dataframe", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -755,9 +749,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "list_databases",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -787,9 +779,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "list_tables",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -850,9 +840,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "find_tables",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool = self
@@ -904,9 +892,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "describe_table",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1002,9 +988,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "get_indexes", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1067,9 +1051,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "get_foreign_keys", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1142,9 +1124,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "get_views", "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1189,9 +1169,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "get_view_definition",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1230,9 +1208,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "list_stored_procedures",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Get pool
@@ -1277,9 +1253,7 @@ impl DbAdapter for MySqlAdapter {
                 operation = "get_server_info",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
         let pool = self
             .pool
@@ -1320,9 +1294,7 @@ impl DbAdapter for MySqlAdapter {
         // Check connection
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "bulk_insert", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Validate all rows have the same column count
@@ -1398,9 +1370,7 @@ impl DbAdapter for MySqlAdapter {
 
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "bulk_update", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool = self
@@ -1468,9 +1438,7 @@ impl DbAdapter for MySqlAdapter {
 
         if self.pool.is_none() {
             error!(adapter = "mysql", operation = "bulk_delete", table = %table_name, "Not connected");
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let pool = self

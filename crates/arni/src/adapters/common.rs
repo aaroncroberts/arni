@@ -4,13 +4,20 @@
 //! They are `pub(crate)` — internal to arni, not part of the public API.
 
 use crate::adapter::QueryValue;
-#[cfg(feature = "polars")]
 use crate::DataError;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 
 #[cfg(feature = "polars")]
 pub(crate) type Result<T> = std::result::Result<T, DataError>;
+
+/// Return the standard "not connected" [`DataError`].
+///
+/// Use as `.ok_or_else(super::common::not_connected_error)?` to replace the
+/// repeated inline closure pattern across all adapters.
+pub(crate) fn not_connected_error() -> DataError {
+    DataError::Connection("Not connected — call connect() first".to_string())
+}
 
 #[cfg(feature = "polars")]
 /// Convert a single value from a Polars [`Series`] at `row_idx` to an SQL literal string.

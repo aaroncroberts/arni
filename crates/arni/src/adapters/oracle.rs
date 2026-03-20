@@ -437,7 +437,7 @@ impl OracleAdapter {
             let conn_guard = handle.block_on(connection.read());
             let conn = conn_guard
                 .as_ref()
-                .ok_or_else(|| DataError::Connection("Not connected".to_string()))?;
+                .ok_or_else(super::common::not_connected_error)?;
             let mut stmt = conn
                 .statement(&sql)
                 .build()
@@ -474,7 +474,7 @@ impl OracleAdapter {
             let conn_guard = handle.block_on(connection.read());
             let conn = conn_guard.as_ref().ok_or_else(|| {
                 error!(adapter = "oracle", operation = "execute_query", "Not connected");
-                DataError::Connection("Not connected".to_string())
+                super::common::not_connected_error()
             })?;
 
             // Prepare and execute the statement
@@ -708,9 +708,7 @@ impl DbAdapter for OracleAdapter {
                 operation = "execute_query",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         // Oracle's `stmt.query()` only accepts SELECT-like statements.
@@ -752,9 +750,7 @@ impl DbAdapter for OracleAdapter {
         replace: bool,
     ) -> Result<u64> {
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let nrows = df.height();
@@ -859,9 +855,7 @@ impl DbAdapter for OracleAdapter {
                 operation = "list_tables",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let owner = schema
@@ -906,9 +900,7 @@ impl DbAdapter for OracleAdapter {
                 operation = "find_tables",
                 "Not connected"
             );
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let owner = schema
@@ -952,9 +944,7 @@ impl DbAdapter for OracleAdapter {
     #[instrument(skip(self), fields(adapter = "oracle", table = %table_name, schema = ?schema))]
     async fn describe_table(&self, table_name: &str, schema: Option<&str>) -> Result<TableInfo> {
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let owner = schema
@@ -1098,9 +1088,7 @@ impl DbAdapter for OracleAdapter {
 
     async fn get_indexes(&self, table_name: &str, schema: Option<&str>) -> Result<Vec<IndexInfo>> {
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let owner = schema
@@ -1161,9 +1149,7 @@ impl DbAdapter for OracleAdapter {
         schema: Option<&str>,
     ) -> Result<Vec<ForeignKeyInfo>> {
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let owner = schema
@@ -1244,9 +1230,7 @@ impl DbAdapter for OracleAdapter {
 
     async fn get_views(&self, schema: Option<&str>) -> Result<Vec<ViewInfo>> {
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let owner = schema
@@ -1283,9 +1267,7 @@ impl DbAdapter for OracleAdapter {
         schema: Option<&str>,
     ) -> Result<Option<String>> {
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let owner = schema
@@ -1310,9 +1292,7 @@ impl DbAdapter for OracleAdapter {
 
     async fn list_stored_procedures(&self, schema: Option<&str>) -> Result<Vec<ProcedureInfo>> {
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
 
         let owner = schema
@@ -1350,9 +1330,7 @@ impl DbAdapter for OracleAdapter {
     #[instrument(skip(self), fields(adapter = "oracle"))]
     async fn get_server_info(&self) -> Result<ServerInfo> {
         if !*self.connected.read().await {
-            return Err(DataError::Connection(
-                "Not connected - call connect() first".to_string(),
-            ));
+            return Err(super::common::not_connected_error());
         }
         let query = "SELECT banner FROM v$version WHERE ROWNUM = 1".to_string();
         let result = self.execute_query_blocking(query).await?;
