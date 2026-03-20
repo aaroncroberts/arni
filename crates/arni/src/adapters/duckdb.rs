@@ -1,7 +1,8 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
-    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    ProcedureInfo, QueryResult, QueryValue, RowStream, ServerInfo, TableInfo, TableSearchMode,
+    ViewInfo,
 };
 use crate::DataError;
 #[cfg(feature = "polars")]
@@ -384,6 +385,17 @@ impl DbAdapter for DuckDbAdapter {
 
     async fn execute_query(&self, query: &str) -> Result<QueryResult> {
         self.execute_query_blocking(query.to_string()).await
+    }
+
+    async fn execute_query_stream(
+        &self,
+        query: &str,
+    ) -> Result<RowStream<Vec<QueryValue>>> {
+        // DuckDB uses a synchronous driver wrapped in spawn_blocking, so all rows
+        // are materialised in the blocking task. We stream from the resulting Vec.
+        let result = self.execute_query_blocking(query.to_string()).await?;
+        let stream = futures_util::stream::iter(result.rows.into_iter().map(Ok));
+        Ok(Box::pin(stream))
     }
 
     #[cfg(feature = "polars")]
@@ -1219,6 +1231,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "polars")]
     #[tokio::test]
     async fn test_query_df_invalid_sql_returns_err() {
         let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
@@ -1566,5 +1579,93 @@ mod tests {
             .unwrap();
         let n = adapter.bulk_delete("any_table", &[], None).await.unwrap();
         assert_eq!(n, 0);
+    }
+
+    // ── execute_query_stream ───────────────────────────────────────────────────
+
+    async fn connected_adapter() -> DuckDbAdapter {
+        let mut adapter = DuckDbAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+        adapter
+    }
+
+    #[tokio::test]
+    async fn stream_rows_match_execute_query() {
+        use crate::adapter::DbAdapter;
+        use futures_util::TryStreamExt;
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE st (id INTEGER, name VARCHAR)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO st VALUES (1, 'Alpha'), (2, 'Beta'), (3, 'Gamma')")
+            .await
+            .unwrap();
+
+        let expected = adapter.execute_query("SELECT id, name FROM st").await.unwrap();
+
+        let mut stream = adapter
+            .execute_query_stream("SELECT id, name FROM st")
+            .await
+            .unwrap();
+
+        let mut streamed_rows: Vec<Vec<QueryValue>> = Vec::new();
+        while let Some(row) = stream.try_next().await.unwrap() {
+            streamed_rows.push(row);
+        }
+
+        assert_eq!(streamed_rows.len(), expected.rows.len());
+        for (got, want) in streamed_rows.iter().zip(expected.rows.iter()) {
+            assert_eq!(got, want);
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_maps_to_struct_via_from_query_row() {
+        use crate::adapter::{DbAdapterExt, FromQueryRow};
+
+        #[derive(Debug, PartialEq)]
+        struct Row {
+            id: i64,
+            label: String,
+        }
+
+        impl FromQueryRow for Row {
+            fn from_row(row: Vec<QueryValue>) -> std::result::Result<Self, crate::DataError> {
+                let id = match row.get(0) {
+                    Some(QueryValue::Int(n)) => *n,
+                    _ => return Err(crate::DataError::TypeConversion("id".into())),
+                };
+                let label = match row.get(1) {
+                    Some(QueryValue::Text(s)) => s.clone(),
+                    _ => return Err(crate::DataError::TypeConversion("label".into())),
+                };
+                Ok(Row { id, label })
+            }
+        }
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE mapped (id INTEGER, label VARCHAR)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO mapped VALUES (10, 'X'), (20, 'Y')")
+            .await
+            .unwrap();
+
+        let rows: Vec<Row> = adapter
+            .execute_query_mapped("SELECT id, label FROM mapped")
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], Row { id: 10, label: "X".to_string() });
+        assert_eq!(rows[1], Row { id: 20, label: "Y".to_string() });
     }
 }

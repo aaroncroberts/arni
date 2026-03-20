@@ -46,7 +46,8 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, query_value_to_sql_literal, AdapterMetadata, Connection,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
-    ProcedureInfo, QueryResult, QueryValue, Result, ServerInfo, TableSearchMode, ViewInfo,
+    ProcedureInfo, QueryResult, QueryValue, Result, RowStream, ServerInfo, TableSearchMode,
+    ViewInfo,
 };
 use crate::DataError;
 #[cfg(feature = "polars")]
@@ -500,6 +501,20 @@ impl DbAdapter for PostgresAdapter {
             rows: result_rows,
             rows_affected: Some(rows.len() as u64),
         })
+    }
+
+    async fn execute_query_stream(
+        &self,
+        query: &str,
+    ) -> Result<RowStream<Vec<QueryValue>>> {
+        // sqlx::query().fetch() supports true cursor-level streaming, but its lifetime
+        // is tied to the pool reference, preventing a 'static RowStream without an
+        // additional crate (e.g. async-stream). We materialise via execute_query and
+        // stream from the resulting Vec — identical in semantics at the API level.
+        // A true cursor-streaming path can replace this once async-stream is added.
+        let result = self.execute_query(query).await?;
+        let stream = futures_util::stream::iter(result.rows.into_iter().map(Ok));
+        Ok(Box::pin(stream))
     }
 
     #[cfg(feature = "polars")]

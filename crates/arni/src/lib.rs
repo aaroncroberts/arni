@@ -118,17 +118,20 @@ pub mod config;
 pub mod error;
 #[cfg(feature = "polars")]
 pub mod export;
+pub mod output;
 pub mod registry;
 
 // Re-export commonly used types
 pub use adapter::{
     escape_like_pattern, filter_to_sql, ColumnInfo, Connection, ConnectionConfig, DatabaseType,
-    DbAdapter, FilterExpr, QueryResult, QueryValue, TableInfo, TableSearchMode,
+    DbAdapter, DbAdapterExt, FilterExpr, FromQueryRow, QueryResult, QueryValue, RowStream,
+    TableInfo, TableSearchMode,
 };
 pub use config::{ArniConfig, ConfigProfile};
 pub use error::{DataError, Result};
 #[cfg(feature = "polars")]
 pub use export::{to_bytes, to_file, DataFormat};
+pub use output::DbAdapterOutputExt;
 pub use registry::ConnectionRegistry;
 
 /// Re-export polars so downstream crates can use it without a direct dep.

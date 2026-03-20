@@ -44,6 +44,9 @@ quick-xml = "0.39"
 # Pattern matching
 regex = "1"
 
+# Lightweight output convenience layers (optional, gate-guarded)
+csv = { version = "1", optional = true }
+
 # Database drivers (optional, enabled via features)
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "chrono", "rust_decimal"], optional = true }
 oracle = { workspace = true, optional = true }
@@ -93,6 +96,12 @@ oracle = ["dep:oracle"]
 # duckdb-bundled: builds DuckDB from source (large compile, no system install needed)
 duckdb = ["dep:duckdb"]
 duckdb-bundled = ["duckdb", "duckdb/bundled"]
+
+# ── Lightweight output convenience layers ──────────────────────────────────────
+# execute_query_json: serde_json is already a required dep — feature just gates the method.
+json = []
+# execute_query_csv: adds the csv crate (~100 KB, no heavy transitive deps).
+csv-output = ["dep:csv"]
 
 # Convenience bundles
 all-databases = ["postgres", "mysql", "sqlite", "mongodb", "mssql", "oracle", "duckdb"]

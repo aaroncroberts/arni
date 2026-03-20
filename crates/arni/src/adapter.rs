@@ -3,15 +3,20 @@
 //! This module defines the core [`DbAdapter`] trait that all database adapters must implement,
 //! along with supporting types for configuration, query results, and schema information.
 //!
-//! The trait is designed around Polars DataFrames as the primary data interchange format,
-//! while maintaining support for traditional row-based queries through [`QueryResult`].
+//! The default API returns [`QueryResult`] — a lightweight `Vec<Vec<QueryValue>>` wrapper
+//! with no heavy dependencies. Adapters may also implement the consumer-controlled mapping
+//! API ([`execute_query_mapped`](DbAdapter::execute_query_mapped),
+//! [`execute_query_stream`](DbAdapter::execute_query_stream)) so callers bind rows directly
+//! to their own domain types. Enable the `polars` feature for DataFrame-based methods.
 
 use async_trait::async_trait;
+use futures_util::stream::Stream;
 #[cfg(feature = "polars")]
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use std::pin::Pin;
 
 // Re-export error types (will be defined in error.rs)
 pub type Result<T> = std::result::Result<T, crate::DataError>;
@@ -731,11 +736,50 @@ impl<'a> AdapterMetadata<'a> {
     }
 }
 
+/// Conversion from a single database row into a typed domain value.
+///
+/// Implement this trait for any type you want to bind directly from a query result.
+/// The library calls [`from_row`](FromQueryRow::from_row) once per row, passing the
+/// full row as an owned `Vec<QueryValue>`. Return `Err(DataError::TypeConversion(…))`
+/// when a column is missing or has an unexpected type.
+///
+/// # Examples
+///
+/// ```rust
+/// use arni::{FromQueryRow, QueryValue, DataError};
+///
+/// struct User { id: i64, name: String }
+///
+/// impl FromQueryRow for User {
+///     fn from_row(row: Vec<QueryValue>) -> Result<Self, DataError> {
+///         let id = match row.get(0) {
+///             Some(QueryValue::Int(n)) => *n,
+///             _ => return Err(DataError::TypeConversion("expected Int for id".into())),
+///         };
+///         let name = match row.get(1) {
+///             Some(QueryValue::Text(s)) => s.clone(),
+///             _ => return Err(DataError::TypeConversion("expected Text for name".into())),
+///         };
+///         Ok(User { id, name })
+///     }
+/// }
+/// ```
+pub trait FromQueryRow: Sized {
+    /// Convert an owned row of [`QueryValue`]s into `Self`.
+    fn from_row(row: Vec<QueryValue>) -> std::result::Result<Self, crate::DataError>;
+}
+
+/// A pinned, heap-allocated async stream of mapped rows.
+///
+/// This is the return type of [`DbAdapter::execute_query_stream`].
+pub type RowStream<T> = Pin<Box<dyn Stream<Item = std::result::Result<T, crate::DataError>> + Send>>;
+
 /// Main trait that all database adapters must implement
 ///
-/// This trait provides a unified interface for database access with two data formats:
-/// - **DataFrame-based**: Primary format using Polars DataFrames for efficient data manipulation
-/// - **Row-based**: Traditional QueryResult format for compatibility and bulk operations
+/// This trait provides a unified interface for database access with three data tiers:
+/// - **Mapped rows**: Consumer-controlled binding via [`FromQueryRow`] — zero extra deps
+/// - **Raw rows**: Lightweight [`QueryResult`] — always available, no heavy deps
+/// - **DataFrames**: Full Polars API — requires the `polars` feature
 ///
 /// # Metadata Access
 ///
@@ -833,6 +877,40 @@ pub trait DbAdapter: Send + Sync {
         let schema_prefix = schema.map(|s| format!("{}.", s)).unwrap_or_default();
         let query = format!("SELECT * FROM {}{}", schema_prefix, table_name);
         self.execute_query(&query).await
+    }
+
+    // ===== Consumer-Controlled Streaming (always available, zero extra deps) =====
+
+    /// Execute a query and return a lazy async stream of raw rows.
+    ///
+    /// Each item in the stream is a `Vec<QueryValue>` representing one row. Rows are
+    /// yielded as they arrive from the database without materialising the full result set.
+    ///
+    /// To map rows directly into your own types, pair this with [`FromQueryRow`] and
+    /// the [`DbAdapterExt::execute_query_mapped`] blanket helper (available on all
+    /// concrete adapters that implement this method).
+    ///
+    /// Returns [`DataError::NotSupported`] by default; adapters override to provide a
+    /// true streaming implementation.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use futures_util::StreamExt;
+    ///
+    /// let mut stream = adapter.execute_query_stream("SELECT id, name FROM users").await?;
+    /// while let Some(row) = stream.next().await {
+    ///     let row = row?;
+    ///     println!("{:?}", row);
+    /// }
+    /// ```
+    async fn execute_query_stream(
+        &self,
+        _query: &str,
+    ) -> Result<RowStream<Vec<QueryValue>>> {
+        Err(crate::DataError::NotSupported(
+            "execute_query_stream is not implemented for this adapter".into(),
+        ))
     }
 
     // ===== DataFrame Operations (require `polars` feature) =====
@@ -1027,6 +1105,70 @@ pub trait DbAdapter: Send + Sync {
         ))
     }
 }
+
+// ─── DbAdapterExt: typed mapping over execute_query_stream ───────────────────
+
+/// Extension methods for typed row mapping, automatically available on all
+/// concrete adapters that implement [`DbAdapter::execute_query_stream`].
+///
+/// This trait is a blanket impl — you don't implement it yourself.
+/// Because it contains a generic method it is not dyn-compatible; use it
+/// with concrete adapter types or `impl DbAdapter` bounds.
+///
+/// # Examples
+///
+/// ```ignore
+/// use arni::{DbAdapterExt, FromQueryRow, QueryValue, DataError};
+///
+/// struct User { id: i64, name: String }
+///
+/// impl FromQueryRow for User {
+///     fn from_row(row: Vec<QueryValue>) -> Result<Self, DataError> {
+///         let id   = match row.get(0) { Some(QueryValue::Int(n))  => *n, _ => return Err(DataError::TypeConversion("id".into())) };
+///         let name = match row.get(1) { Some(QueryValue::Text(s)) => s.clone(), _ => return Err(DataError::TypeConversion("name".into())) };
+///         Ok(User { id, name })
+///     }
+/// }
+///
+/// // Using a concrete adapter:
+/// let users: Vec<User> = adapter.execute_query_mapped("SELECT id, name FROM users").await?;
+///
+/// // Using the stream directly for large result sets:
+/// use futures_util::StreamExt;
+/// let mut stream = adapter.execute_query_stream("SELECT id, name FROM users").await?;
+/// while let Some(row) = stream.next().await {
+///     let values = row?;
+///     let user = User::from_row(values)?;
+///     println!("{}: {}", user.id, user.name);
+/// }
+/// ```
+pub trait DbAdapterExt: DbAdapter {
+    /// Execute `query` and map every row into `T` via [`FromQueryRow`], returning
+    /// the full result as `Vec<T>`.
+    ///
+    /// This is a convenience wrapper over [`execute_query_stream`](DbAdapter::execute_query_stream).
+    /// For large result sets that should not be fully materialised, consume the stream directly.
+    fn execute_query_mapped<'a, T>(
+        &'a self,
+        query: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<T>>> + Send + 'a>>
+    where
+        T: FromQueryRow + Send + 'static,
+    {
+        Box::pin(async move {
+            use futures_util::{StreamExt, TryStreamExt};
+            self.execute_query_stream(query)
+                .await?
+                .map(|r| r.and_then(T::from_row))
+                .try_collect::<Vec<T>>()
+                .await
+        })
+    }
+}
+
+/// Blanket impl: every type that implements [`DbAdapter`] automatically gets
+/// [`DbAdapterExt`] with no additional code.
+impl<A: DbAdapter + ?Sized> DbAdapterExt for A {}
 
 #[cfg(test)]
 mod tests {
@@ -1904,5 +2046,70 @@ mod tests {
         // NOT (col IS NULL) is semantically the same as IS NOT NULL
         let not_null = FilterExpr::Not(Box::new(FilterExpr::IsNull("email".to_string())));
         assert_eq!(filter_to_sql(&not_null), "NOT (email IS NULL)");
+    }
+
+    // ── FromQueryRow ───────────────────────────────────────────────────────────
+
+    /// Minimal domain type used in FromQueryRow tests.
+    #[derive(Debug)]
+    struct User {
+        id: i64,
+        name: String,
+    }
+
+    impl FromQueryRow for User {
+        fn from_row(row: Vec<QueryValue>) -> std::result::Result<Self, crate::DataError> {
+            let id = match row.get(0) {
+                Some(QueryValue::Int(n)) => *n,
+                _ => {
+                    return Err(crate::DataError::TypeConversion(
+                        "expected Int at column 0".into(),
+                    ))
+                }
+            };
+            let name = match row.get(1) {
+                Some(QueryValue::Text(s)) => s.clone(),
+                _ => {
+                    return Err(crate::DataError::TypeConversion(
+                        "expected Text at column 1".into(),
+                    ))
+                }
+            };
+            Ok(User { id, name })
+        }
+    }
+
+    #[test]
+    fn from_query_row_happy_path() {
+        let row = vec![QueryValue::Int(42), QueryValue::Text("Alice".to_string())];
+        let user = User::from_row(row).unwrap();
+        assert_eq!(user.id, 42);
+        assert_eq!(user.name, "Alice");
+    }
+
+    #[test]
+    fn from_query_row_type_mismatch_returns_err() {
+        // Pass a Text where an Int is expected in column 0.
+        let row = vec![
+            QueryValue::Text("not-an-int".to_string()),
+            QueryValue::Text("Alice".to_string()),
+        ];
+        let err = User::from_row(row).unwrap_err();
+        assert!(matches!(err, crate::DataError::TypeConversion(_)));
+    }
+
+    #[test]
+    fn from_query_row_missing_column_returns_err() {
+        // Empty row — get(0) returns None, should propagate as TypeConversion.
+        let err = User::from_row(vec![]).unwrap_err();
+        assert!(matches!(err, crate::DataError::TypeConversion(_)));
+    }
+
+    #[test]
+    fn from_query_row_null_in_non_nullable_column_returns_err() {
+        // Null in column 0 where Int is required.
+        let row = vec![QueryValue::Null, QueryValue::Text("Alice".to_string())];
+        let err = User::from_row(row).unwrap_err();
+        assert!(matches!(err, crate::DataError::TypeConversion(_)));
     }
 }

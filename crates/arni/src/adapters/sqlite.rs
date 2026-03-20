@@ -9,7 +9,8 @@
 use crate::adapter::{
     escape_like_pattern, filter_to_sql, AdapterMetadata, ColumnInfo, Connection as ConnectionTrait,
     ConnectionConfig, DatabaseType, DbAdapter, FilterExpr, ForeignKeyInfo, IndexInfo,
-    ProcedureInfo, QueryResult, QueryValue, ServerInfo, TableInfo, TableSearchMode, ViewInfo,
+    ProcedureInfo, QueryResult, QueryValue, RowStream, ServerInfo, TableInfo, TableSearchMode,
+    ViewInfo,
 };
 use crate::DataError;
 #[cfg(feature = "polars")]
@@ -415,6 +416,19 @@ impl DbAdapter for SqliteAdapter {
             rows: result_rows,
             rows_affected: None,
         })
+    }
+
+    async fn execute_query_stream(
+        &self,
+        query: &str,
+    ) -> Result<RowStream<Vec<QueryValue>>> {
+        // SQLite is in-process: fetch_all has negligible overhead compared with a
+        // network database, so we materialise here and stream from the resulting Vec.
+        // This avoids the 'static lifetime constraint that a true cursor-based stream
+        // would require without an additional dependency (e.g. async-stream).
+        let result = self.execute_query(query).await?;
+        let stream = futures_util::stream::iter(result.rows.into_iter().map(Ok));
+        Ok(Box::pin(stream))
     }
 
     #[instrument(skip(self), fields(adapter = "sqlite"))]
@@ -1330,5 +1344,124 @@ mod tests {
             _ => -1,
         };
         assert_eq!(count, 2);
+    }
+
+    // ── execute_query_stream ───────────────────────────────────────────────────
+
+    /// Helper: connect a fresh in-memory adapter.
+    async fn connected_adapter() -> SqliteAdapter {
+        let mut adapter = SqliteAdapter::new(make_config(":memory:"));
+        let config = adapter.config.clone();
+        DbAdapter::connect(&mut adapter, &config, None)
+            .await
+            .unwrap();
+        adapter
+    }
+
+    #[tokio::test]
+    async fn stream_rows_match_execute_query() {
+        use futures_util::TryStreamExt;
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE st (id INTEGER, name TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO st VALUES (1, 'Alpha'), (2, 'Beta'), (3, 'Gamma')")
+            .await
+            .unwrap();
+
+        let expected = adapter.execute_query("SELECT id, name FROM st").await.unwrap();
+
+        let mut stream = adapter
+            .execute_query_stream("SELECT id, name FROM st")
+            .await
+            .unwrap();
+
+        let mut streamed_rows: Vec<Vec<QueryValue>> = Vec::new();
+        while let Some(row) = stream.try_next().await.unwrap() {
+            streamed_rows.push(row);
+        }
+
+        assert_eq!(streamed_rows.len(), expected.rows.len());
+        for (got, want) in streamed_rows.iter().zip(expected.rows.iter()) {
+            assert_eq!(got, want);
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_maps_to_struct_via_from_query_row() {
+        use crate::adapter::DbAdapterExt;
+
+        #[derive(Debug, PartialEq)]
+        struct Row {
+            id: i64,
+            label: String,
+        }
+
+        impl crate::adapter::FromQueryRow for Row {
+            fn from_row(row: Vec<QueryValue>) -> std::result::Result<Self, DataError> {
+                let id = match row.get(0) {
+                    Some(QueryValue::Int(n)) => *n,
+                    _ => return Err(DataError::TypeConversion("id".into())),
+                };
+                let label = match row.get(1) {
+                    Some(QueryValue::Text(s)) => s.clone(),
+                    _ => return Err(DataError::TypeConversion("label".into())),
+                };
+                Ok(Row { id, label })
+            }
+        }
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE mapped (id INTEGER, label TEXT)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO mapped VALUES (10, 'X'), (20, 'Y')")
+            .await
+            .unwrap();
+
+        let rows: Vec<Row> = adapter
+            .execute_query_mapped("SELECT id, label FROM mapped")
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], Row { id: 10, label: "X".to_string() });
+        assert_eq!(rows[1], Row { id: 20, label: "Y".to_string() });
+    }
+
+    #[tokio::test]
+    async fn stream_propagates_from_query_row_error() {
+        use crate::adapter::DbAdapterExt;
+
+        #[derive(Debug)]
+        struct BadMapper;
+
+        impl crate::adapter::FromQueryRow for BadMapper {
+            fn from_row(_row: Vec<QueryValue>) -> std::result::Result<Self, DataError> {
+                Err(DataError::TypeConversion("always fails".into()))
+            }
+        }
+
+        let adapter = connected_adapter().await;
+        adapter
+            .execute_query("CREATE TABLE errtest (x INTEGER)")
+            .await
+            .unwrap();
+        adapter
+            .execute_query("INSERT INTO errtest VALUES (1)")
+            .await
+            .unwrap();
+
+        let result: Result<Vec<BadMapper>> = adapter
+            .execute_query_mapped("SELECT x FROM errtest")
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), DataError::TypeConversion(_)));
     }
 }
