@@ -530,12 +530,6 @@ impl OracleAdapter {
         Ok(result)
     }
 
-    /// Returns `true` when the SQL starts with a keyword that produces a result
-    /// set (SELECT, WITH …). Everything else is treated as DDL/DML.
-    fn is_select_query(sql: &str) -> bool {
-        let first = sql.split_whitespace().next().unwrap_or("");
-        matches!(first.to_uppercase().as_str(), "SELECT" | "WITH")
-    }
 }
 
 #[async_trait::async_trait]
@@ -714,10 +708,10 @@ impl DbAdapter for OracleAdapter {
         // Oracle's `stmt.query()` only accepts SELECT-like statements.
         // Route DDL/DML through the execute path and wrap the affected-row count
         // in a QueryResult so callers get a uniform return type.
-        if Self::is_select_query(query) {
+        let sql_type = super::common::detect_sql_type(query);
+        if matches!(sql_type, "SELECT" | "WITH") {
             self.execute_query_blocking(query.to_string()).await
         } else {
-            let sql_type = super::common::detect_sql_type(query);
             debug!(
                 sql_type,
                 sql_preview = %super::common::sql_preview(query, 100),

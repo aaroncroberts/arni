@@ -237,6 +237,7 @@ pub(crate) fn detect_sql_type(sql: &str) -> &'static str {
         "DROP" => "DROP",
         "ALTER" => "ALTER",
         "TRUNCATE" => "TRUNCATE",
+        "REPLACE" => "REPLACE",
         "WITH" => "WITH",
         _ => "OTHER",
     }
@@ -387,6 +388,8 @@ mod tests {
         assert_eq!(detect_sql_type("INSERT INTO t VALUES (1)"), "INSERT");
         assert_eq!(detect_sql_type("UPDATE t SET a=1"), "UPDATE");
         assert_eq!(detect_sql_type("DELETE FROM t"), "DELETE");
+        assert_eq!(detect_sql_type("REPLACE INTO t VALUES (1)"), "REPLACE");
+        assert_eq!(detect_sql_type("replace into t values (1)"), "REPLACE");
     }
 
     #[test]

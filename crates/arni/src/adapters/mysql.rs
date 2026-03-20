@@ -300,18 +300,6 @@ impl MySqlAdapter {
         Ok(values)
     }
 
-    /// Return true when `sql` is a DML statement (INSERT/UPDATE/DELETE/REPLACE/TRUNCATE)
-    /// that does not return rows but does report `rows_affected`.
-    /// These must be run with `execute()` rather than `fetch_all()`.
-    fn is_dml(sql: &str) -> bool {
-        let upper = sql.trim_start().to_uppercase();
-        upper.starts_with("INSERT")
-            || upper.starts_with("UPDATE")
-            || upper.starts_with("DELETE")
-            || upper.starts_with("REPLACE")
-            || upper.starts_with("TRUNCATE")
-    }
-
     /// Execute a SQL query and return results
     ///
     /// This method executes any SQL statement (SELECT, INSERT, UPDATE, DELETE, etc.)
@@ -384,7 +372,7 @@ impl MySqlAdapter {
         // DML statements (INSERT/UPDATE/DELETE) don't return rows; use execute()
         // so that the engine's rows_affected count is captured accurately.
         let start = std::time::Instant::now();
-        if Self::is_dml(query) {
+        if matches!(sql_type, "INSERT" | "UPDATE" | "DELETE" | "REPLACE" | "TRUNCATE") {
             let result = sqlx::query(query).execute(pool).await.map_err(map_err)?;
             let affected = result.rows_affected();
             let duration = start.elapsed();
