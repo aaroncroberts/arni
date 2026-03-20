@@ -97,7 +97,8 @@ fi
 CLIPPY_CMD="cargo clippy"
 
 if [[ "$ALL_TARGETS" == "true" ]]; then
-    CLIPPY_CMD="$CLIPPY_CMD --all-targets"
+    # Match CI exactly: --all-targets --all-features catches feature-gated code
+    CLIPPY_CMD="$CLIPPY_CMD --all-targets --all-features"
 fi
 
 # Add deny warnings flag
@@ -107,7 +108,7 @@ if [[ "$FIX" == "true" ]]; then
     # For fixes, use clippy-fix instead
     CLIPPY_CMD="cargo clippy --fix"
     if [[ "$ALL_TARGETS" == "true" ]]; then
-        CLIPPY_CMD="$CLIPPY_CMD --all-targets"
+        CLIPPY_CMD="$CLIPPY_CMD --all-targets --all-features"
     fi
     CLIPPY_CMD="$CLIPPY_CMD -- -D warnings"
     print_msg "$YELLOW" "Running clippy with automatic fixes..."
