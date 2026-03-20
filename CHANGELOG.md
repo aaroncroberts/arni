@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [0.5.0] — 2026-03-20
+
 ### Added
 - **Cloudflare D1 adapter** (`cloudflare-d1` feature) — SQL-over-REST adapter using Cloudflare's
   D1 `/raw` endpoint. Supports `execute_query` (SQL), `read_table`, `describe_table`
@@ -164,7 +168,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-[Unreleased]: https://github.com/aaroncroberts/arni/compare/v0.3.0...HEAD
+[0.5.0]: https://github.com/aaroncroberts/arni/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/aaroncroberts/arni/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/aaroncroberts/arni/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/aaroncroberts/arni/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/aaroncroberts/arni/releases/tag/v0.1.0

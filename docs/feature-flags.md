@@ -115,16 +115,16 @@ When adding `arni` as a Cargo dependency, specify only the features you need:
 ```toml
 [dependencies]
 # Minimal: QueryResult-only API, no polars, no DB drivers
-arni = { version = "0.4", default-features = false }
+arni = { version = "0.5", default-features = false }
 
 # PostgreSQL + lightweight QueryResult rows
-arni = { version = "0.4", default-features = false, features = ["postgres"] }
+arni = { version = "0.5", default-features = false, features = ["postgres"] }
 
 # PostgreSQL + DataFrame API
-arni = { version = "0.4", default-features = false, features = ["postgres", "polars"] }
+arni = { version = "0.5", default-features = false, features = ["postgres", "polars"] }
 
 # Everything
-arni = { version = "0.4", features = ["full"] }
+arni = { version = "0.5", features = ["full"] }
 ```
 
 ### API tiers
