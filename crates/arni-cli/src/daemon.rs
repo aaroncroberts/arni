@@ -159,6 +159,9 @@ async fn dispatch(
         "bulk_insert" => cmd_bulk_insert(cmd, connections, store).await,
         "bulk_update" => cmd_bulk_update(cmd, connections, store).await,
         "bulk_delete" => cmd_bulk_delete(cmd, connections, store).await,
+        "get_server_info" => cmd_get_server_info(cmd, connections, store).await,
+        "get_views" => cmd_get_views(cmd, connections, store).await,
+        "list_stored_procedures" => cmd_list_stored_procedures(cmd, connections, store).await,
         "shutdown" => {
             let _ = shutdown_tx.send(());
             json!({"ok": true, "_shutdown": true})
@@ -413,6 +416,64 @@ async fn cmd_bulk_delete(cmd: &Value, connections: &ConnectionMap, store: &Confi
     let filters = [filter];
     match adapter.bulk_delete(table, &filters, schema).await {
         Ok(n) => json!({"ok": true, "rows_affected": n}),
+        Err(e) => err_response("QUERY_FAILED", &e.to_string()),
+    }
+}
+
+async fn cmd_get_server_info(cmd: &Value, connections: &ConnectionMap, store: &ConfigStore) -> Value {
+    let profile = match str_field(cmd, "profile") { Ok(p) => p, Err(e) => return err_response("INVALID_ARGS", &e) };
+    let adapter = match get_or_connect(connections, store, profile).await {
+        Ok(a) => a,
+        Err(e) => return err_response("CONNECT_FAILED", &e),
+    };
+    match adapter.get_server_info().await {
+        Ok(info) => {
+            let extra: serde_json::Map<String, Value> = info.extra_info.into_iter()
+                .map(|(k, v)| (k, json!(v)))
+                .collect();
+            json!({"ok": true, "server_type": info.server_type, "version": info.version, "extra_info": extra})
+        }
+        Err(e) => err_response("QUERY_FAILED", &e.to_string()),
+    }
+}
+
+async fn cmd_get_views(cmd: &Value, connections: &ConnectionMap, store: &ConfigStore) -> Value {
+    let profile = match str_field(cmd, "profile") { Ok(p) => p, Err(e) => return err_response("INVALID_ARGS", &e) };
+    let schema = opt_str(cmd, "schema");
+    let adapter = match get_or_connect(connections, store, profile).await {
+        Ok(a) => a,
+        Err(e) => return err_response("CONNECT_FAILED", &e),
+    };
+    match adapter.get_views(schema).await {
+        Ok(views) => {
+            let arr: Vec<Value> = views.iter().map(|v| json!({
+                "name": v.name,
+                "schema": v.schema,
+                "definition": v.definition,
+            })).collect();
+            json!({"ok": true, "views": arr})
+        }
+        Err(e) => err_response("QUERY_FAILED", &e.to_string()),
+    }
+}
+
+async fn cmd_list_stored_procedures(cmd: &Value, connections: &ConnectionMap, store: &ConfigStore) -> Value {
+    let profile = match str_field(cmd, "profile") { Ok(p) => p, Err(e) => return err_response("INVALID_ARGS", &e) };
+    let schema = opt_str(cmd, "schema");
+    let adapter = match get_or_connect(connections, store, profile).await {
+        Ok(a) => a,
+        Err(e) => return err_response("CONNECT_FAILED", &e),
+    };
+    match adapter.list_stored_procedures(schema).await {
+        Ok(procs) => {
+            let arr: Vec<Value> = procs.iter().map(|p| json!({
+                "name": p.name,
+                "schema": p.schema,
+                "return_type": p.return_type,
+                "language": p.language,
+            })).collect();
+            json!({"ok": true, "procedures": arr})
+        }
         Err(e) => err_response("QUERY_FAILED", &e.to_string()),
     }
 }
