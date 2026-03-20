@@ -347,7 +347,25 @@ export LD_LIBRARY_PATH=~/Oracle/instantclient_23_3    # Linux
 
 ## Next Steps
 
+You've connected to a database, run a query, written a DataFrame, introspected a schema, and
+used bulk operations with typed filters. Here's where to go depending on what you want next:
+
+**I want to see real-world patterns and know when to use each arni surface:**
+→ **[Use Cases](use-cases.md)** — concrete examples for the library, MCP server, and CLI.
+Covers analytics pipelines, data migration, web API backends, zero-setup test fixtures,
+streaming ETL, and more.
+
+**I want Claude to query and explore my databases for me:**
+→ **[MCP Server](mcp.md)** — register `arni mcp` with Claude Desktop or Claude Code in
+two minutes. Claude gains live access to your schemas and data: it calls `describe_table`
+before generating code, queries live data during incident investigation, and drafts
+migrations grounded in your real schema.
+
+**I want to connect to a real database (Postgres, MySQL, MongoDB, …):**
+→ **[Local Databases](local-databases.md)** — spin up PostgreSQL, MySQL, MongoDB, SQL Server,
+and Oracle locally via Docker/Podman with one command.
+
+**Reference material:**
+- **[Configuration Reference](configuration.md)** — full YAML/TOML config schema, all fields, env var substitution
 - **[Architecture Guide](architecture.md)** — how arni works internally, and how to add a new adapter
-- **[Examples](../crates/arni/examples/README.md)** — runnable programs for real-world patterns
-- **[Local Databases](local-databases.md)** — spin up PostgreSQL, MySQL, MongoDB and more via Docker/Podman
-- **[Configuration Reference](configuration.md)** — full YAML/TOML config schema
+- **[Examples](../crates/arni/examples/README.md)** — runnable programs covering additional patterns

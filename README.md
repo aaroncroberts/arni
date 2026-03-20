@@ -20,10 +20,26 @@ Base queries return a lightweight `QueryResult`; add the `polars` feature to get
 
 ## Overview
 
-Arni is a multi-database adapter library for Rust with a unified `DbAdapter` trait across seven backends.
-The default API returns `QueryResult` (a thin `Vec<Vec<QueryValue>>` wrapper) with no heavy dependencies.
-Enable the `polars` feature for `DataFrame`-based methods, CSV/JSON/Parquet/Excel export, and the full analytics API.
+Writing database code in Rust today means picking a driver per database, learning its async model,
+writing your own type-mapping, and starting over when you swap backends. arni removes that friction.
+
+**One trait. Seven databases. Three ways to use it:**
+
+- **Library** — embed arni in your Rust application. Write your query logic once against `DbAdapter`;
+  switch from DuckDB to Postgres to MySQL by changing one line. Use DuckDB in-memory for zero-setup
+  unit tests, stream large result sets row-by-row with `execute_query_stream`, or pull results
+  straight into Polars DataFrames for analytics.
+
+- **MCP server** — run `arni mcp` and register it with Claude Desktop or Claude Code. Claude gains
+  live access to your database schemas and data: it calls `describe_table` before writing a struct,
+  queries live data during an incident investigation, and drafts migrations that account for your
+  real indexes and foreign keys — all without you copy-pasting schemas into the chat.
+
+- **CLI** — inspect tables, run queries, export to CSV/Parquet/JSON, and perform bulk operations
+  from the shell. One binary, no database-specific client tools required.
+
 Database drivers are individually opt-in via feature flags — compile only what you need.
+See [docs/use-cases.md](docs/use-cases.md) for concrete examples of each surface in action.
 
 ## Project Structure
 
@@ -232,8 +248,9 @@ arni export "SELECT * FROM events WHERE date > '2024-01-01'" \
 | Guide | Description |
 | :--- | :--- |
 | **[Getting Started](docs/getting-started.md)** | Five-minute introduction: first query, bulk ops, CLI tour, common errors |
-| **[Configuration Reference](docs/configuration.md)** | Full YAML/TOML schema, all fields, environment variable substitution |
+| **[Use Cases](docs/use-cases.md)** | Real-world patterns for the library, MCP server, and CLI — when to use each and what it looks like |
 | **[MCP Server](docs/mcp.md)** | Connect Claude and other AI agents directly to your databases |
+| **[Configuration Reference](docs/configuration.md)** | Full YAML/TOML schema, all fields, environment variable substitution |
 | **[Architecture Guide](docs/architecture.md)** | Codebase internals, trait hierarchy, and how to add a new adapter |
 | **[Examples](crates/arni/examples/README.md)** | Runnable programs: analytics, multi-adapter comparison |
 | **[Axum API Example](examples/axum-api/README.md)** | Full Axum HTTP server using arni as a library — zero-config SQLite, swap to any database |
