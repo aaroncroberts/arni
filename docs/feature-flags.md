@@ -16,6 +16,8 @@ Without feature flags, building `arni` would pull in every database driver (Post
 |---------|-------------|------|
 | `polars` | DataFrame API: `read_table_df`, `query_df`, `export_dataframe`, `export` module | ~1.2 GB rlibs |
 | `dataframe` | Alias for `polars` | (same) |
+| `json` | `DbAdapterOutputExt::execute_query_json` — rows as `Vec<serde_json::Value>` | serde_json (already a dep, near-zero cost) |
+| `csv-output` | `DbAdapterOutputExt::execute_query_csv` — stream rows to any `impl Write` | csv crate (~100 KB) |
 | `postgres` | PostgreSQL adapter via sqlx | sqlx + native-tls |
 | `mysql` | MySQL adapter via sqlx | sqlx + native-tls |
 | `sqlite` | SQLite adapter via sqlx | sqlx (small) |
@@ -111,24 +113,74 @@ arni = { version = "0.3", default-features = false, features = ["postgres", "pol
 arni = { version = "0.3", features = ["full"] }
 ```
 
-### API without polars
+### API tiers
 
-When the `polars` feature is **not** enabled, the adapter trait provides:
+Arni provides three data-access tiers, each a superset of the one below:
 
+**Tier 1 — always available (no extra features)**
 ```rust
-// Always available — returns lightweight Vec<Vec<QueryValue>>
+// Lightweight Vec<Vec<QueryValue>> — no heavy deps
 let result: QueryResult = adapter.execute_query("SELECT * FROM users").await?;
 let result: QueryResult = adapter.read_table("users", None).await?;
 ```
 
-When the `polars` feature **is** enabled, additional methods become available:
+**Tier 2 — consumer-controlled row mapping (no extra features)**
 
+Implement `FromQueryRow` for your domain type and use the blanket-impl helpers:
+
+```rust
+use arni::{FromQueryRow, QueryValue, DataError, DbAdapterExt};
+
+struct User { id: i64, name: String }
+
+impl FromQueryRow for User {
+    fn from_row(row: Vec<QueryValue>) -> Result<Self, DataError> {
+        let id   = match row.get(0) { Some(QueryValue::Int(n))  => *n, _ => return Err(DataError::TypeConversion("id".into())) };
+        let name = match row.get(1) { Some(QueryValue::Text(s)) => s.clone(), _ => return Err(DataError::TypeConversion("name".into())) };
+        Ok(User { id, name })
+    }
+}
+
+// Collect all rows as Vec<User> in one call (SQLite, DuckDB, PostgreSQL)
+let users: Vec<User> = adapter.execute_query_mapped("SELECT id, name FROM users").await?;
+
+// Process rows as they arrive without materialising the full set
+use futures_util::StreamExt;
+let mut stream = adapter.execute_query_stream("SELECT id, name FROM users").await?;
+while let Some(row) = stream.next().await {
+    let values = row?;
+    let user = User::from_row(values)?;
+    println!("{}: {}", user.id, user.name);
+}
+```
+
+**Tier 2a — json output (feature: `json`)**
+```rust
+use arni::output::DbAdapterOutputExt;
+
+// Each row becomes a serde_json::Value object with column names as keys
+let rows = adapter.execute_query_json("SELECT id, name FROM users").await?;
+println!("{}", serde_json::to_string_pretty(&rows)?);
+```
+
+**Tier 2b — csv output (feature: `csv-output`)**
+```rust
+use arni::output::DbAdapterOutputExt;
+
+// Write directly into any impl Write — file, Vec<u8>, HTTP response body, …
+let mut file = std::fs::File::create("users.csv")?;
+adapter.execute_query_csv("SELECT id, name FROM users", &mut file).await?;
+```
+
+**Tier 3 — Polars DataFrame (feature: `polars`)**
 ```rust
 // Only with --features polars
 let df: DataFrame = adapter.read_table_df("users", None).await?;
 let df: DataFrame = adapter.query_df("SELECT * FROM users").await?;
 adapter.export_dataframe(&df, "users", None, false).await?;
 ```
+
+See [`examples/row_mapping.rs`](../crates/arni/examples/row_mapping.rs) for a full runnable demo of Tiers 1–2b.
 
 ### Re-exported polars
 

@@ -67,6 +67,10 @@ name = "quickstart"
 required-features = ["duckdb", "polars"]
 
 [[example]]
+name = "row_mapping"
+required-features = ["duckdb", "json", "csv-output"]
+
+[[example]]
 name = "multi_adapter"
 required-features = ["duckdb", "sqlite", "polars"]
 

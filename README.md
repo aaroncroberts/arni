@@ -72,6 +72,10 @@ arni/
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | `connect` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `execute_query` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `execute_query_stream`¹ | ✅ | 🔧 | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
+| `execute_query_mapped`¹ | ✅ | 🔧 | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
+| `execute_query_json`² | ✅ | 🔧 | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
+| `execute_query_csv`³ | ✅ | 🔧 | 🔧 | 🔧 | 🔧 | ✅ | ✅ |
 | `export_dataframe` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `list_tables` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `describe_table` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -90,6 +94,9 @@ arni/
 
 **Notes:**
 
+- ¹ `execute_query_stream` / `execute_query_mapped` — no extra feature flag; requires implementing [`FromQueryRow`](https://docs.rs/arni/latest/arni/trait.FromQueryRow.html) for your type. MySQL, MSSQL, MongoDB, Oracle return `NotSupported` by default.
+- ² `execute_query_json` — requires `--features json`
+- ³ `execute_query_csv` — requires `--features csv-output`
 - `row_count ⚠️ approx` — PostgreSQL, MySQL, Oracle use catalog statistics (fast, not exact); use `SELECT COUNT(*)` for precision
 - `get_views ⚠️` MongoDB — views not enumerable via driver; returns empty list
 - `get_indexes ⚠️` DuckDB — index introspection limited; returns empty list
