@@ -40,3 +40,4 @@ target
 .env.test
 .env.local
 .env*.local
+.playwright-mcp/
