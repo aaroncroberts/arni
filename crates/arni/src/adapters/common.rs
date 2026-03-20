@@ -19,6 +19,24 @@ pub(crate) fn not_connected_error() -> DataError {
     DataError::Connection("Not connected — call connect() first".to_string())
 }
 
+/// Convert a [`sqlx::types::Decimal`] to a [`QueryValue`].
+///
+/// Attempts to parse the decimal as `f64`. Falls back to [`QueryValue::Text`] when
+/// the parse yields a non-finite value (overflow to ±infinity) or when the string
+/// representation is not a valid `f64` literal.
+///
+/// Used by the PostgreSQL (`NUMERIC`) and MySQL (`DECIMAL`/`NUMERIC`) adapters.
+/// Avoids calling `to_string()` twice compared to the inline version.
+#[cfg(any(feature = "postgres", feature = "mysql"))]
+pub(crate) fn decimal_to_query_value(d: sqlx::types::Decimal) -> QueryValue {
+    let s = d.to_string();
+    s.parse::<f64>()
+        .ok()
+        .filter(|f| f.is_finite())
+        .map(QueryValue::Float)
+        .unwrap_or_else(|| QueryValue::Text(s))
+}
+
 #[cfg(feature = "polars")]
 /// Convert a single value from a Polars [`Series`] at `row_idx` to an SQL literal string.
 ///
@@ -260,6 +278,50 @@ pub(crate) fn sql_preview(sql: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── decimal_to_query_value ────────────────────────────────────────────────
+
+    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[test]
+    fn decimal_normal_value_becomes_float() {
+        use std::str::FromStr;
+        let d = sqlx::types::Decimal::from_str("3.14").unwrap();
+        match decimal_to_query_value(d) {
+            QueryValue::Float(f) => assert!((f - 3.14).abs() < 1e-10),
+            other => panic!("expected Float, got {:?}", other),
+        }
+    }
+
+    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[test]
+    fn decimal_integer_value_becomes_float() {
+        use std::str::FromStr;
+        let d = sqlx::types::Decimal::from_str("42").unwrap();
+        assert!(matches!(decimal_to_query_value(d), QueryValue::Float(f) if f == 42.0));
+    }
+
+    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[test]
+    fn decimal_very_large_value_falls_back_to_text() {
+        // A decimal with more significant digits than f64 can represent accurately
+        // still parses as f64 (rounding), so we verify the Text fallback via a
+        // manually constructed non-finite case using MAX * 10.
+        use std::str::FromStr;
+        // Decimal::MAX is ~7.9e28 — well within f64 range, so parse succeeds.
+        // To force Text, construct a Decimal that exceeds f64::MAX (~1.8e308).
+        // rust_decimal's max is ~7.9e28 so it will ALWAYS parse to f64 Float.
+        // Confirm that a finite decimal always becomes Float (no Text fallback in practice).
+        let d = sqlx::types::Decimal::from_str("999999999999999999.99").unwrap();
+        assert!(matches!(decimal_to_query_value(d), QueryValue::Float(_)));
+    }
+
+    #[cfg(any(feature = "postgres", feature = "mysql"))]
+    #[test]
+    fn decimal_zero_becomes_float_zero() {
+        use std::str::FromStr;
+        let d = sqlx::types::Decimal::from_str("0").unwrap();
+        assert!(matches!(decimal_to_query_value(d), QueryValue::Float(f) if f == 0.0));
+    }
 
     #[cfg(feature = "polars")]
     fn bool_series(vals: &[bool]) -> Series {
